@@ -9,8 +9,8 @@ import {
   shell, card, tbl, dl, statusBadge, field, select, input, textarea, registerNav, kpis, tabs, emptyState,
 } from '../../ui/ui.ts';
 import { donut, bars } from '../../lib/charts.ts';
-import { llm } from '../../lib/sim/llm.ts';
-import { AGENTS, decideAction, autonomyFor, type AgentKey, type Autonomy } from './framework.ts';
+import { llm, llmStatus } from '../../lib/sim/llm.ts';
+import { AGENTS, decideAction, autonomyFor, aiEnabled, type AgentKey, type Autonomy } from './framework.ts';
 import { handleLeadInbound, draftCollectionsOutreach, draftRenewalOutreach, evaluateCounter, triageRequest, setAiHooksLive } from './agents.ts';
 import { analyzeNewCalls, callRollup } from './analysis.ts';
 import { askStayLeased } from './ask.ts';
@@ -52,12 +52,17 @@ export function routes(r: Router): void {
     const cnt = (s: string): number => counts.find((x) => x.status === s)?.n || 0;
     const props = q<any>('SELECT id, name FROM properties WHERE org_id=? ORDER BY name', ctx.orgId);
     const canApprove = can(ctx, 'ai:approve');
+    const canConfigure = can(ctx, 'ai:configure');
+    const st = llmStatus();
+    const on = aiEnabled(ctx);
+    const brainBadge = html`<span class="badge ${st.live ? 'ok' : ''}" title="${st.live ? 'Live LLM active' : 'Deterministic demo brain'}">${st.mode} brain${st.live ? ` · ${st.model}` : ''}</span>`;
     return shell(rq, {
       title: 'AI Activity',
       active: '/ai',
-      subtitle: html`Every agent action with its input, output and approval trail — powered by <b>${llm().name}</b>. Supervision is the product.`,
-      actions: html`<a class="btn btn-ghost" href="/ai/calls">Call analysis</a><a class="btn btn-ghost" href="/ai/essentials">Content studio</a>`,
+      subtitle: html`Every agent action with its input, output and approval trail — powered by <b>${st.live ? st.model : llm().name}</b>. Supervision is the product. ${brainBadge}`,
+      actions: html`${when(canConfigure, () => html`<form method="post" action="/ai/kill-switch" data-confirm="${on ? 'Pause ALL AI agents org-wide? Nothing will send until re-enabled.' : 'Re-enable AI agents?'}"><button class="btn ${on ? 'btn-danger' : ''}">${on ? '⏻ Kill switch' : '▶ Resume AI'}</button></form>`)}<a class="btn btn-ghost" href="/ai/calls">Call analysis</a><a class="btn btn-ghost" href="/ai/essentials">Content studio</a>`,
       content: html`
+        ${when(!on, () => html`<div class="callout bad">🛑 <b>AI is paused by the global kill switch.</b> Agents keep recording proposals for audit, but nothing sends and nothing runs autonomously until an admin resumes.</div>`)}
         ${kpis([
           { label: 'Awaiting approval', value: String(pending.length), tone: pending.length ? 'warn' : 'ok' },
           { label: 'Executed on approval', value: String(cnt('executed')) },
@@ -167,6 +172,14 @@ export function routes(r: Router): void {
     setSetting(ctx, 'ai_autonomy', conf, propertyId);
     audit(ctx, 'settings', `ai_autonomy${propertyId ? ':' + propertyId : ''}`, 'ai_dial_change', null, { agent, level });
     return redirect('/ai?view=dials', `${agent} → ${level}${propertyId ? ' (property override)' : ' (org default)'}`);
+  });
+
+  r.post('/ai/kill-switch', requirePerm('ai:configure'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const now = aiEnabled(ctx);
+    setSetting(ctx, 'ai_enabled', !now);
+    audit(ctx, 'settings', 'ai_enabled', now ? 'ai_kill_switch_engaged' : 'ai_resumed', { value: now }, { value: !now });
+    return redirect('/ai', now ? '🛑 AI paused org-wide. Proposals still record for audit; nothing sends.' : '▶ AI resumed.');
   });
 
   r.post('/ai/:id/approve', requirePerm('ai:approve'), (rq) => {

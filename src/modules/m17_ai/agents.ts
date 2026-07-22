@@ -7,6 +7,7 @@ import { on, emit } from '../../lib/events.ts';
 import { getSetting } from '../../lib/settings.ts';
 import { getDials } from '../../lib/sim/dials.ts';
 import { llm } from '../../lib/sim/llm.ts';
+import { screenFairHousing } from '../../lib/fairhousing.ts';
 import { sendEmail } from '../../lib/sim/messaging.ts';
 import { propose, registerExecutor, type ActionOutput } from './framework.ts';
 import { messageLead, bookTour, tourSlots, quotedRent } from '../m3_crm/service.ts';
@@ -89,16 +90,24 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
     facts.tourLine = `If you'd like to see it in person, tomorrow has openings at ${slots.join(', ')} — I can book any of them for you.`;
   }
 
-  const draft = llm().complete('lead_reply', facts);
+  const rawDraft = llm().complete('lead_reply', facts);
+  // Fair-housing guardrail on prospect-facing text: rewrite any flagged phrase
+  // to the approved neutral wording before it can be sent.
+  const fh = screenFairHousing(rawDraft);
+  const draft = fh.ok ? rawDraft : fh.safe;
   const confidence = intent.wantsHuman ? 0.4 : 0.92;
   const oh = afterHours(ctx);
+  const notes = [
+    intent.wantsHuman ? 'low confidence: prospect asked for a person — held for staff even on autonomous' : null,
+    fh.ok ? null : `fair-housing guardrail rewrote ${fh.flags.length} phrase(s): ${[...new Set(fh.flags.map((f) => f.category))].join(', ')}`,
+  ].filter(Boolean);
   return propose(ctx, {
     agent: 'leasing',
     propertyId: lead.property_id,
     entity: 'lead',
     entityId: leadId,
     title: `${oh ? 'After-hours reply' : 'Reply'} to ${lead.first_name} ${lead.last_name}${tour ? ' + book tour' : ''}${intent.wantsHuman ? ' — HUMAN REQUESTED' : ''}`,
-    input: { message, intent, afterHours: oh, groundedUnits: units.map((u) => u.unit_number) },
+    input: { message, intent, afterHours: oh, groundedUnits: units.map((u) => u.unit_number), fairHousingFlags: fh.flags },
     output: {
       kind: 'leasing.send_reply',
       draft,
@@ -107,7 +116,7 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
       tour,
     },
     confidence,
-    guardrailNote: intent.wantsHuman ? 'low confidence: prospect asked for a person — held for staff even on autonomous' : undefined,
+    guardrailNote: notes.length ? notes.join(' · ') : undefined,
   });
 }
 

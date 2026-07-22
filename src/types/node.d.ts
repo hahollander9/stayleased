@@ -40,6 +40,7 @@ declare module 'node:http' {
   export interface IncomingMessage {
     method?: string;
     url?: string;
+    statusCode?: number;
     headers: Record<string, string | string[] | undefined>;
     socket: { remoteAddress?: string };
     on(ev: 'data', fn: (chunk: Buffer) => void): IncomingMessage;
@@ -64,6 +65,26 @@ declare module 'node:http' {
   export function createServer(
     handler: (req: IncomingMessage, res: ServerResponse) => void,
   ): Server;
+}
+
+declare module 'node:https' {
+  import type { IncomingMessage } from 'node:http';
+  export interface ClientRequest {
+    on(ev: 'error', fn: (e: Error) => void): ClientRequest;
+    on(ev: 'timeout', fn: () => void): ClientRequest;
+    write(chunk: string | Uint8Array): boolean;
+    end(cb?: () => void): void;
+    destroy(e?: Error): void;
+  }
+  export interface RequestOptions {
+    hostname?: string;
+    port?: number;
+    path?: string;
+    method?: string;
+    headers?: Record<string, string | number>;
+    timeout?: number;
+  }
+  export function request(opts: RequestOptions, cb: (res: IncomingMessage) => void): ClientRequest;
 }
 
 declare module 'node:crypto' {

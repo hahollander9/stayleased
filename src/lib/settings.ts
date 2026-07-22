@@ -57,6 +57,7 @@ export const SETTING_DEFAULTS: Record<string, any> = {
     'O-3': { with_deps: 253500, without_deps: 214500 },
   },
   // AI layer (M17)
+  ai_enabled: true, // global kill switch — false pauses every AI agent org-wide
   ai_autonomy: { leasing: 'approve', maintenance: 'approve', payments: 'draft', renewals: 'draft' },
   ai_plan_bounds: { maxInstallments: 4, minInstallmentCents: 15000 },
   ai_renewal_max_discount_pct: 2.5,

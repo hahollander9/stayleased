@@ -102,24 +102,123 @@ export const MockLlm: LlmProvider = {
   },
 };
 
-/** Optional real adapter (never required; demos run fully offline). */
+/** Optional real adapter (never required; demos run fully offline). The sync
+ * `complete` still returns the deterministic MockLlm fill — a real API call is
+ * asynchronous, so live generation goes through `llmGenerate` (below). */
 export function makeAnthropicLlm(apiKey: string): LlmProvider {
-  return {
-    name: 'AnthropicLlm',
-    complete(task, facts): string {
-      // The product treats LLM calls as synchronous template fills; a real
-      // adapter would call the API here. We keep the deterministic fallback
-      // so a missing/failed key can never break a workflow.
-      void apiKey;
-      return MockLlm.complete(task, facts);
-    },
-  };
+  void apiKey;
+  return { name: 'AnthropicLlm', complete: (task, facts) => MockLlm.complete(task, facts) };
 }
 
+// ------------------------------------------------------------------
+// Live Anthropic adapter — raw HTTPS to api.anthropic.com (no SDK).
+// Server-side only. If the key is absent or any call fails/times out we
+// fall back to the caller-supplied deterministic text, so demo mode and the
+// public site never break and the key/raw errors are never exposed to clients.
+// ------------------------------------------------------------------
+
+import { request as httpsRequest } from 'node:https';
+
+const API_KEY = process.env.ANTHROPIC_API_KEY || env('LLM_KEY') || '';
+export const AI_MODEL = process.env.STAYLEASED_AI_MODEL || 'claude-opus-4-8';
+const TOKENS_PER_CALL_CAP = Math.max(64, parseInt(process.env.STAYLEASED_AI_MAX_TOKENS || '700', 10) || 700);
+const DAILY_TOKEN_CAP = Math.max(0, parseInt(process.env.STAYLEASED_AI_DAILY_TOKEN_CAP || '250000', 10) || 250000);
+const CALL_TIMEOUT_MS = 12000;
+
 let provider: LlmProvider = MockLlm;
-const _llmKey = process.env.ANTHROPIC_API_KEY || env('LLM_KEY');
-if (_llmKey) provider = makeAnthropicLlm(_llmKey);
+if (API_KEY) provider = makeAnthropicLlm(API_KEY);
 
 export function llm(): LlmProvider {
   return provider;
+}
+
+/** Which brain is active — surfaced (never the key) in the AI console. */
+export function llmStatus(): { live: boolean; mode: 'Live' | 'Demo'; model: string; spentToday: number; dailyCap: number } {
+  return { live: !!API_KEY, mode: API_KEY ? 'Live' : 'Demo', model: API_KEY ? AI_MODEL : 'MockLlm (deterministic)', spentToday: spend.tokens, dailyCap: DAILY_TOKEN_CAP };
+}
+
+// daily spend accounting (wall-clock day; resets on date change)
+const spend = { day: '', tokens: 0 };
+function accountDay(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+function withinDailyCap(): boolean {
+  const d = accountDay();
+  if (spend.day !== d) { spend.day = d; spend.tokens = 0; }
+  return DAILY_TOKEN_CAP === 0 || spend.tokens < DAILY_TOKEN_CAP;
+}
+
+// small response cache (bounded, in-process)
+const cache = new Map<string, string>();
+const CACHE_MAX = 500;
+function cacheGet(k: string): string | undefined { return cache.get(k); }
+function cachePut(k: string, v: string): void {
+  if (cache.size >= CACHE_MAX) { const first = cache.keys().next().value; if (first !== undefined) cache.delete(first); }
+  cache.set(k, v);
+}
+
+function anthropicCall(system: string | undefined, prompt: string, maxTokens: number): Promise<{ text: string; outTokens: number }> {
+  return new Promise((resolve, reject) => {
+    const body = JSON.stringify({
+      model: AI_MODEL,
+      max_tokens: Math.min(maxTokens, TOKENS_PER_CALL_CAP),
+      ...(system ? { system } : {}),
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const req = httpsRequest(
+      {
+        hostname: 'api.anthropic.com',
+        path: '/v1/messages',
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': API_KEY,
+          'anthropic-version': '2023-06-01',
+          'content-length': Buffer.byteLength(body),
+        },
+        timeout: CALL_TIMEOUT_MS,
+      },
+      (res) => {
+        let buf = '';
+        res.on('data', (c) => (buf += c));
+        res.on('end', () => {
+          if ((res.statusCode ?? 500) >= 400) { reject(new Error(`anthropic_status_${res.statusCode}`)); return; }
+          try {
+            const parsed = JSON.parse(buf) as { content?: { type: string; text?: string }[]; usage?: { output_tokens?: number }; stop_reason?: string };
+            const text = (parsed.content || []).filter((b) => b.type === 'text').map((b) => b.text || '').join('').trim();
+            resolve({ text, outTokens: parsed.usage?.output_tokens ?? 0 });
+          } catch { reject(new Error('anthropic_parse')); }
+        });
+      },
+    );
+    req.on('error', (e) => reject(e));
+    req.on('timeout', () => req.destroy(new Error('anthropic_timeout')));
+    req.write(body);
+    req.end();
+  });
+}
+
+export interface LlmResult { text: string; live: boolean; cached: boolean; }
+
+/**
+ * Live-or-fallback generation. `fallback` is the deterministic text used when
+ * the key is absent, the daily cap is hit, or any call fails — so callers get a
+ * useful answer no matter what, and the demo stays reproducible. Raw model
+ * errors are swallowed; only the boolean `live` reaches the UI.
+ */
+export async function llmGenerate(opts: { system?: string; prompt: string; fallback: string; maxTokens?: number; cacheKey?: string }): Promise<LlmResult> {
+  if (!API_KEY) return { text: opts.fallback, live: false, cached: false };
+  const key = opts.cacheKey ?? String(h((opts.system || '') + ' ' + opts.prompt + ' ' + AI_MODEL));
+  const hit = cacheGet(key);
+  if (hit !== undefined) return { text: hit, live: true, cached: true };
+  if (!withinDailyCap()) return { text: opts.fallback, live: false, cached: false };
+  try {
+    const { text, outTokens } = await anthropicCall(opts.system, opts.prompt, opts.maxTokens ?? TOKENS_PER_CALL_CAP);
+    if (!text) return { text: opts.fallback, live: false, cached: false };
+    spend.tokens += outTokens || Math.ceil(text.length / 4);
+    cachePut(key, text);
+    return { text, live: true, cached: false };
+  } catch {
+    return { text: opts.fallback, live: false, cached: false };
+  }
 }

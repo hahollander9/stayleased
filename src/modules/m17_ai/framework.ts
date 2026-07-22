@@ -25,6 +25,12 @@ export const AGENTS: { key: AgentKey; name: string; dial: boolean; describe: str
   { key: 'ask', name: 'Ask StayLeased', dial: false, describe: 'Staff questions answered from the org\'s own data through service APIs — never raw SQL from the model.' },
 ];
 
+/** Global kill switch — when the org setting `ai_enabled` is false, no agent
+ * may propose or execute. Defaults to on. */
+export function aiEnabled(ctx: Ctx): boolean {
+  return getSetting<boolean>(ctx, 'ai_enabled') !== false;
+}
+
 export function autonomyFor(ctx: Ctx, agent: AgentKey, propertyId?: string | null): Autonomy {
   // layered: code default ← org setting ← property override (partial objects merge)
   const def = (SETTING_DEFAULTS.ai_autonomy || {}) as Record<string, Autonomy>;
@@ -67,6 +73,7 @@ export function registerExecutor(kind: string, fn: Executor): void {
 }
 
 export function executeAction(ctx: Ctx, actionId: string): string {
+  if (!aiEnabled(ctx)) throw new Error('AI is paused by the global kill switch');
   const action = q1<any>('SELECT * FROM ai_actions WHERE id=? AND org_id=?', actionId, ctx.orgId);
   if (!action) throw new Error('action not found');
   if (['executed', 'auto_executed', 'rejected'].includes(action.status)) throw new Error('action already settled');
@@ -86,13 +93,16 @@ export function executeAction(ctx: Ctx, actionId: string): string {
 
 /** stage an agent proposal; autonomous dials execute immediately (with audit) */
 export function propose(ctx: Ctx, p: Proposal): { id: string; status: string; autonomy: Autonomy } {
-  const autonomy = AGENTS.find((a) => a.key === p.agent)?.dial ? autonomyFor(ctx, p.agent, p.propertyId) : 'auto';
+  // Global kill switch: still record the proposal (auditable) but force it to
+  // draft-only so nothing can send until AI is re-enabled.
+  const killed = !aiEnabled(ctx);
+  const autonomy = killed ? 'draft' : (AGENTS.find((a) => a.key === p.agent)?.dial ? autonomyFor(ctx, p.agent, p.propertyId) : 'auto');
   const aid = id('aia');
   insert('ai_actions', {
     id: aid, org_id: ctx.orgId, property_id: p.propertyId || null, agent: p.agent,
     entity: p.entity || null, entity_id: p.entityId || null, title: p.title,
     input: js(p.input), output: js(p.output), confidence: p.confidence ?? 0.9,
-    autonomy, status: 'proposed', guardrail_note: p.guardrailNote || null,
+    autonomy, status: 'proposed', guardrail_note: killed ? `${p.guardrailNote ? p.guardrailNote + ' · ' : ''}AI paused (global kill switch) — held as draft` : (p.guardrailNote || null),
     decided_by: null, decided_at: null, executed_at: null, result: null, created_at: nowIso(),
   });
   audit(ctx, 'ai_action', aid, 'propose', null, { agent: p.agent, title: p.title, autonomy });
