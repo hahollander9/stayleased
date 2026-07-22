@@ -1,0 +1,26 @@
+{
+  "name": "oriel",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Oriel — full-suite property management platform (Entrata-parity replica, original work, simulated rails)",
+  "engines": { "node": ">=22.11" },
+  "scripts": {
+    "dev": "node scripts/noderun.mjs src/server/main.ts",
+    "start": "node scripts/noderun.mjs src/server/main.ts",
+    "seed": "node scripts/noderun.mjs src/seed/seed.ts",
+    "test": "sh scripts/test.sh",
+    "e2e": "sh scripts/e2e.sh",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm test",
+    "shots": "node scripts/noderun.mjs e2e/shots.ts",
+    "gen:docs": "node scripts/noderun.mjs scripts/gendocs.ts"
+  },
+  "dependencies": {
+    "pdf-lib": "^1.17.1"
+  },
+  "devDependencies": {
+    "typescript": "^6.0.3",
+    "playwright": "^1.56.0"
+  }
+}

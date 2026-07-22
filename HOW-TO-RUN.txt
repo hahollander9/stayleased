@@ -1,0 +1,68 @@
+ORIEL - HOW TO RUN IT ON YOUR COMPUTER
+======================================
+
+You only need to do two things:
+
+1) INSTALL NODE.JS (one time)
+   Go to https://nodejs.org and click the big green LTS download button,
+   then run the installer with all the default choices.
+   (Any version 22.11 or newer works, including the current 24 LTS.
+    Already have it? You're done with this step.)
+
+2) DOUBLE-CLICK THE LAUNCHER in this folder
+   - Windows:  Start-Oriel.bat
+       If you see "Windows protected your PC", click "More info",
+       then "Run anyway". (It's a plain script - you can open it in
+       Notepad to see everything it does.)
+   - Mac:      Start-Oriel.command
+       The FIRST time, right-click it and choose "Open", then "Open"
+       again in the warning dialog. (Downloaded scripts are blocked on
+       plain double-click until you've opened them once this way.)
+
+The one dependency is already bundled in this folder, so nothing gets
+downloaded. The FIRST launch builds the whole demo world - give it about a
+minute; every launch after that takes a few seconds. Your browser opens to
+the app automatically; if it doesn't, go to:
+
+    http://localhost:3000
+
+SIGNING IN
+----------
+Every demo password is:  demo1234
+
+  admin@summitridge.demo      Org admin - sees everything
+  regional@summitridge.demo   Regional manager - dashboards & reports
+  manager.cardinal@summitridge.demo   Property manager, Cardinal Flats
+  leasing.cardinal@summitridge.demo   Leasing agent
+  maintenance.cardinal@summitridge.demo   Maintenance tech (My Day)
+  vendor@brightplumb.demo     Vendor portal
+  maya.torres@resident.demo   Resident portal (current resident)
+  derrick.cole@resident.demo  Resident on a payment plan
+  guarantor.cardinal@family.demo  Student guarantor portal
+
+The full cast is in docs/demo-logins.md, and the README's "15-minute demo
+tour" section is a good guided walk-through once you're in.
+
+EVERYDAY USE
+------------
+- Leave the launcher window open while you click around; closing it (or
+  pressing Ctrl+C in it) stops the app. Nothing else on your computer is
+  touched - everything lives in this folder.
+- Your changes are saved between launches (it's a real database in the
+  "data" folder).
+- Want the pristine demo world back? Delete the "data" folder and
+  double-click the launcher again (it rebuilds the world in about a
+  minute).
+
+IF SOMETHING GOES WRONG
+-----------------------
+- "Node.js is not installed" / "too old": do step 1, then relaunch.
+- "address already in use": something else is using port 3000. Close it
+  and relaunch (the Mac launcher will hop to 3001 automatically).
+- Anything else: the error text in the launcher window says what failed -
+  paste it back into the Claude conversation and I'll fix it with you.
+
+Prefer the terminal? The same thing by hand:
+    npm install
+    npm run seed
+    npm run dev        ->  http://localhost:3000

@@ -1,0 +1,3 @@
+*.bat text eol=crlf
+docs/screenshots/** export-ignore
+docs/screenshots export-ignore

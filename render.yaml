@@ -1,0 +1,13 @@
+# One-click Render blueprint: https://render.com → New → Blueprint → point at this repo.
+# Deploys the Docker image (seeded demo world baked in) on the free plan with
+# a free <name>.onrender.com URL. Free instances sleep when idle and reset to
+# the pristine seed on wake — exactly right for a demo.
+services:
+  - type: web
+    name: oriel-demo
+    runtime: docker
+    plan: free
+    healthCheckPath: /login
+    envVars:
+      - key: ORIEL_MODE
+        value: demo
