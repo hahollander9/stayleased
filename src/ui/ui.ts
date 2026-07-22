@@ -54,6 +54,72 @@ export function registerNav(section: string, item: NavItem): void {
   navSections.set(section, list);
 }
 
+// ---------- top module bar (Entrata-style) ----------
+// The desktop chrome is a top module bar with dropdowns; the sidebar becomes a
+// mobile-only drawer. Tabs group the same nav items modules already register,
+// so nothing downstream changes. A gear → /setup holds administration.
+const TAB_ORDER = ['Dashboard', 'Leasing', 'Residents', 'Financials', 'Property', 'Operations', 'Marketing', 'Messages', 'Reports'];
+const SECTION_TO_TAB: Record<string, string> = {
+  '': 'Dashboard', Leasing: 'Leasing', Residents: 'Residents', Money: 'Financials',
+  Property: 'Property', Operations: 'Operations', Marketing: 'Marketing',
+  Intelligence: 'Reports', Admin: 'Setup', Developer: 'Setup',
+};
+const HREF_TO_TAB: Record<string, string> = { '/inbox': 'Messages', '/comms': 'Messages' };
+
+function tabItems(ctx: Ctx): Map<string, NavItem[]> {
+  const out = new Map<string, NavItem[]>();
+  for (const [sec, items] of navSections) {
+    for (const it of items) {
+      if (it.perm && !can(ctx, it.perm)) continue;
+      const tab = HREF_TO_TAB[it.href] || SECTION_TO_TAB[sec] || 'Reports';
+      const list = out.get(tab) || [];
+      list.push(it);
+      out.set(tab, list);
+    }
+  }
+  return out;
+}
+
+function itemActive(active: string, i: NavItem): boolean {
+  return active === i.href || (i.match || []).some((m) => active.startsWith(m));
+}
+
+const CARET = raw('<svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
+const GEAR = raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>');
+
+function moduleBar(ctx: Ctx, active: string): Raw {
+  const tabs = tabItems(ctx);
+  return html`<nav class="modulebar" aria-label="Modules">${join(TAB_ORDER.map((label, idx) => {
+    if (label === 'Dashboard') {
+      return html`<a class="mtab-btn ${active === '/' ? 'active' : ''}" href="/">Dashboard</a>`;
+    }
+    const items = tabs.get(label) || [];
+    if (!items.length) return null;
+    const act = items.some((i) => itemActive(active, i));
+    return html`<div class="mtab ${act ? 'active' : ''}">
+      <button class="mtab-btn" data-toggle="#mt-${idx}" aria-haspopup="true">${label}${CARET}</button>
+      <div class="menu mmenu" id="mt-${idx}">
+        ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}
+      </div>
+    </div>`;
+  }))}</nav>`;
+}
+
+function setupMenu(ctx: Ctx, active: string): Raw {
+  const setup = tabItems(ctx).get('Setup') || [];
+  if (!setup.length && !can(ctx, 'properties:manage')) return html``;
+  return html`<div class="usermenu">
+    <button class="icon-btn ${active.startsWith('/setup') ? 'active' : ''}" data-toggle="#setup-pop" aria-label="Setup and administration" title="Setup &amp; administration">${GEAR}</button>
+    <div class="menu" id="setup-pop">
+      <div class="menu-head">Setup &amp; administration</div>
+      <a href="/setup" class="${active === '/setup' ? 'active' : ''}">Setup hub</a>
+      ${when(can(ctx, 'properties:manage'), () => html`<a href="/setup/wizard" class="${active === '/setup/wizard' ? 'active' : ''}">Add a property (wizard)</a>`)}
+      ${when(can(ctx, 'properties:manage'), () => html`<a href="/setup/import" class="${active.startsWith('/setup/import') ? 'active' : ''}">Migration Center (CSV import)</a>`)}
+      ${when(setup.length, () => html`<hr />${setup.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}`)}
+    </div>
+  </div>`;
+}
+
 // ---------- search registry (⌘K) ----------
 
 export interface SearchHit {
@@ -131,25 +197,25 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     }),
   );
 
-  const body = html`<div class="frame">
-    <aside class="sidebar" id="sidebar">
-      <div class="brand">${logo(22, '#7aa8ff')} <span class="brand-name">Stay<span class="wm-accent">Leased</span><span class="org">${orgName}</span></span></div>
-      <nav class="nav">${nav}</nav>
-    </aside>
-    <div class="main">
-      ${when(ctx.impersonatorId, () => html`<div class="impersonation">You are viewing StayLeased as <b>${ctx.userName}</b> (impersonation is audited). <a href="/unimpersonate">Return to my account</a></div>`)}
-      <header class="topbar">
+  const propSwitch = when(props.length > 0, () => html`<form method="post" action="/switch-property" class="prop-switch" data-autosubmit>
+    <select name="property_id" aria-label="Property context">
+      <option value="all" ${!ctx.currentPropertyId ? 'selected' : ''}>All properties</option>
+      ${props.map((p) => html`<option value="${p.id}" ${ctx.currentPropertyId === p.id ? 'selected' : ''}>${p.name}</option>`)}
+    </select>
+  </form>`);
+
+  const body = html`<div class="app">
+    <header class="topchrome">
+      <div class="brandbar">
         <button class="menu-btn" data-toggle="#sidebar" aria-label="Menu">${raw('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>')}</button>
-        ${when(props.length > 0, () => html`<form method="post" action="/switch-property" class="prop-switch" data-autosubmit>
-          <select name="property_id" aria-label="Property context">
-            <option value="all" ${!ctx.currentPropertyId ? 'selected' : ''}>All properties</option>
-            ${props.map((p) => html`<option value="${p.id}" ${ctx.currentPropertyId === p.id ? 'selected' : ''}>${p.name}</option>`)}
-          </select>
-        </form>`)}
-        <button class="searchbtn" data-palette-open type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="stext">Search everything…</span><kbd>⌘K</kbd></button>
-        ${when(can(ctx, 'ai:view'), () => html`<a class="searchbtn" href="/ask" title="Ask StayLeased — questions over your own data" style="text-decoration:none">✨<span class="stext">Ask StayLeased</span></a>`)}
+        <a class="brand brand-top" href="/">${logo(22, '#7aa8ff')} <span class="brand-name">Stay<span class="wm-accent">Leased</span></span></a>
+        ${when(orgName && orgName !== 'Platform', () => html`<span class="org-chip" title="Your organization">${orgName}</span>`)}
         <div class="spacer"></div>
+        ${propSwitch}
+        <button class="searchbtn" data-palette-open type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="stext">Search…</span><kbd>⌘K</kbd></button>
+        ${when(can(ctx, 'ai:view'), () => html`<a class="askbtn" href="/ask" title="Ask StayLeased — questions over your own data">✨<span class="stext">Ask StayLeased</span></a>`)}
         <a class="bizdate" href="/dev/sim" title="Simulated business date — open Simulator Console"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</a>
+        ${setupMenu(ctx, opts.active)}
         <div class="usermenu">
           <button class="avatar" data-toggle="#usermenu-pop" aria-label="Account menu">${initials(ctx.userName)}</button>
           <div class="menu" id="usermenu-pop">
@@ -160,7 +226,11 @@ export function shell(r: Rq, opts: ShellOpts): Res {
             <form method="post" action="/logout"><button type="submit">Sign out</button></form>
           </div>
         </div>
-      </header>
+      </div>
+      ${moduleBar(ctx, opts.active)}
+    </header>
+    ${when(ctx.impersonatorId, () => html`<div class="impersonation">You are viewing StayLeased as <b>${ctx.userName}</b> (impersonation is audited). <a href="/unimpersonate">Return to my account</a></div>`)}
+    <div class="main">
       <main class="content ${opts.wide ? 'wide' : ''}">
         ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
         <div class="page-head">
@@ -174,6 +244,10 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         ${opts.content}
       </main>
     </div>
+    <aside class="sidebar drawer" id="sidebar">
+      <div class="brand">${logo(22, '#7aa8ff')} <span class="brand-name">Stay<span class="wm-accent">Leased</span><span class="org">${orgName}</span></span></div>
+      <nav class="nav">${nav}</nav>
+    </aside>
   </div>
   <div class="palette-back" id="palette">
     <div class="palette" role="dialog" aria-label="Global search">

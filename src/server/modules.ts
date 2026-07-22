@@ -25,6 +25,7 @@ import * as m13 from '../modules/m13_pricing/pages.ts'; // also registers pricin
 import * as m14 from '../modules/m14_reports/pages.ts'; // also registers metric_snapshots + report_delivery jobs
 import * as m17 from '../modules/m17_ai/pages.ts'; // also registers ai_call_analysis job + agent event hooks
 import * as m18 from '../modules/m18_verticals/pages.ts'; // also registers affordable_recerts job + PCS lease action
+import * as setup from '../modules/setup/pages.ts'; // M2.5: setup hub, property wizard, CSV Migration Center
 import '../modules/m8_receivables/service.ts'; // registers rent_posting job
 import '../modules/m8_receivables/payments.ts'; // registers settlement/late-fee/autopay/plan jobs
 
@@ -59,4 +60,5 @@ export function registerModules(r: Router): void {
   m14.routes(r); // Phase 15: report library, custom builder, saved/scheduled, dashboards
   m17.routes(r); // Phase 16: AI activity/approvals, agents, call analysis, Ask StayLeased, Essentials
   m18.routes(r); // Phase 17: student board, affordable compliance, military/CAM toolkits
+  setup.routes(r); // M2.5: setup hub, property wizard, CSV Migration Center
 }
