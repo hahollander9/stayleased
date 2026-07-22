@@ -437,6 +437,14 @@ a.kpi:hover { text-decoration: none; border-color: var(--accent); }
 .brandbar :focus-visible, .modulebar :focus-visible { outline-color: #7aa8ff; }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 
+/* ---------- dashboard trend sparklines ---------- */
+.trend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
+.trend-tile { min-width: 0; }
+.trend-tile .tt-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.trend-tile .tt-value { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 1px 0 4px; }
+.trend-tile svg { display: block; width: 100%; height: auto; }
+.trend-tile .tt-range { margin-top: 2px; }
+
 /* ---------- setup hub + wizard + migration center ---------- */
 .setup-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
 .setup-card {

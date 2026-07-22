@@ -515,11 +515,65 @@ function propertyDashboard(rq: Rq, propertyId: string) {
   });
 }
 
+/** 12-month org trends for the dashboard sparklines (occupancy %, delinquency $,
+ * collections %). Occupancy/delinquency read the monthly MetricSnapshots; the
+ * collection rate is billed-vs-collected per month. Self-contained (no
+ * cross-module import) so it can never introduce a cycle. */
+function orgTrends(ctx: Ctx): { labels: string[]; occ: number[]; deliq: number[]; coll: number[] } | null {
+  const snaps = q<{ property_id: string; date: string; metrics: string }>(
+    `SELECT ms.property_id, ms.date, ms.metrics FROM metric_snapshots ms
+     JOIN properties p ON p.id=ms.property_id WHERE p.org_id=? ORDER BY ms.date`,
+    ctx.orgId,
+  );
+  if (snaps.length < 4) return null;
+  // keep the last snapshot per (property, month), then aggregate by month
+  const perPropMonth = new Map<string, { occ: number; rent: number; deliq: number }>();
+  for (const s of snaps) {
+    const m = j<any>(s.metrics, {});
+    perPropMonth.set(`${s.property_id}|${s.date.slice(0, 7)}`, { occ: m.occupied || 0, rent: m.rentable || 0, deliq: m.delinquent_cents || 0 });
+  }
+  const byMonth = new Map<string, { occ: number; rent: number; deliq: number }>();
+  for (const [k, v2] of perPropMonth) {
+    const mk = k.split('|')[1]!;
+    const b = byMonth.get(mk) || { occ: 0, rent: 0, deliq: 0 };
+    b.occ += v2.occ; b.rent += v2.rent; b.deliq += v2.deliq;
+    byMonth.set(mk, b);
+  }
+  const keys = [...byMonth.keys()].sort().slice(-12);
+  if (keys.length < 3) return null;
+  const occ = keys.map((k) => { const b = byMonth.get(k)!; return b.rent ? Math.round((b.occ / b.rent) * 1000) / 10 : 0; });
+  const deliq = keys.map((k) => Math.round(byMonth.get(k)!.deliq / 100));
+  const coll = keys.map((mk) => {
+    const billed = val<number>(`SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND month_key=? AND status='active' AND kind NOT IN ('deposit')`, ctx.orgId, mk) || 0;
+    const collected = val<number>(`SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE org_id=? AND received_date LIKE ? AND status IN ('pending','settled') AND method != 'credit'`, ctx.orgId, `${mk}%`) || 0;
+    return billed ? Math.round((collected / billed) * 1000) / 10 : 0;
+  });
+  return { labels: keys.map((k) => k.slice(5)), occ, deliq, coll };
+}
+
+function trendsCard(ctx: Ctx): ReturnType<typeof card> | null {
+  const t = orgTrends(ctx);
+  if (!t) return null;
+  const last = <T>(a: T[]): T => a[a.length - 1]!;
+  const tile = (label: string, value: string, points: number[], tone: string): ReturnType<typeof html> => html`<div class="trend-tile">
+    <div class="tt-label">${label}</div>
+    <div class="tt-value">${value}</div>
+    ${sparkline(points, { tone, w: 200, h: 36 })}
+    <div class="tt-range small muted">${t.labels[0]} → ${last(t.labels)}</div>
+  </div>`;
+  return card('Portfolio trends · last 12 months', html`<div class="trend-grid">
+    ${tile('Occupancy', `${last(t.occ)}%`, t.occ, 'ok')}
+    ${tile('Delinquency', usd(last(t.deliq) * 100), t.deliq, 'bad')}
+    ${tile('Collections', `${last(t.coll)}%`, t.coll, 'accent')}
+  </div>`);
+}
+
 function portfolioDashboard(rq: Rq) {
   const ctx = rq.ctx as Ctx;
   const sums = propertySummaries(ctx);
   const org = unitStats(ctx, null);
   const extra = dashboardExtras(ctx, null);
+  const trends = trendsCard(ctx);
   return shell(rq, {
     title: 'Portfolio',
     active: '/',
@@ -533,6 +587,7 @@ function portfolioDashboard(rq: Rq) {
         { label: 'Avg market rent', value: usd(org.avgMarketRentCents) },
         ...extra.kpis,
       ])}
+      ${trends || ''}
       ${card('Property comparison', tbl(
         [{ label: 'Property' }, { label: 'Type' }, { label: 'Units', num: true }, { label: 'Occupancy', num: true }, { label: 'Notice', num: true }, { label: 'Vacant ready', num: true }, { label: 'Exposure', num: true }, { label: 'Avg rent', num: true }],
         sums.map((p) => ({
