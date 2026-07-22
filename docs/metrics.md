@@ -1,4 +1,4 @@
-# Oriel metric definitions (M14.5)
+# StayLeased metric definitions (M14.5)
 
 One definition per metric, used consistently everywhere — dashboards, reports,
 statements and module screens all call the same code paths listed here.

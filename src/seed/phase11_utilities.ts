@@ -95,7 +95,7 @@ export function setupUtilities(s: SeedCtx): { vendorFor: (service: string) => st
       // master policy from day one: recurring line bills through the rent run
       insert('insurance_policies', {
         id: id('pol'), org_id: s.orgId, property_id: l.property_id, lease_id: l.id,
-        kind: 'master', carrier: 'Oriel Community Master Policy (sim)', policy_number: `MP-${l.id.slice(-6).toUpperCase()}`,
+        kind: 'master', carrier: 'StayLeased Community Master Policy (sim)', policy_number: `MP-${l.id.slice(-6).toUpperCase()}`,
         liability_cents: 10000000, start_date: l.start_date, end_date: null,
         status: 'active', verified_at: nowIso(), source: 'enroll', created_at: nowIso(),
       });

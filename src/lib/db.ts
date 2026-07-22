@@ -2,6 +2,7 @@ import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { readFileSync, mkdirSync, existsSync } from 'node:fs';
 import { dirname, join as pjoin } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { env } from './env.ts';
 
 /**
  * Database layer on node:sqlite (synchronous, in-process).
@@ -17,7 +18,7 @@ let _db: DatabaseSync | null = null;
 const stmtCache = new Map<string, StatementSync>();
 
 export function dbPath(): string {
-  return pjoin(ROOT, process.env.ORIEL_DB || 'data/oriel.db');
+  return pjoin(ROOT, env('DB') || 'data/stayleased.db');
 }
 
 export function db(): DatabaseSync {

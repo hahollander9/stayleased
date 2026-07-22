@@ -9,7 +9,7 @@ import { receivablesStats } from '../m8_receivables/payments.ts';
 import { computeDayMetrics } from '../m14_reports/snapshots.ts';
 import { reportDefs } from '../m14_reports/engine.ts';
 
-/** M17.7 "Ask Oriel": staff questions answered over the org's own data by
+/** M17.7 "Ask StayLeased": staff questions answered over the org's own data by
  * calling the same service-layer read APIs the screens use — the model never
  * writes SQL. Every answer is an audited ai_action. */
 
@@ -177,7 +177,7 @@ const HANDLERS: Handler[] = [
   },
 ];
 
-export function askOriel(ctx: Ctx, question: string): AskAnswer {
+export function askStayLeased(ctx: Ctx, question: string): AskAnswer {
   let answer: AskAnswer | null = null;
   for (const h of HANDLERS) {
     answer = h(ctx, question);

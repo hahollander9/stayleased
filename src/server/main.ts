@@ -6,6 +6,7 @@ import { db, ROOT } from '../lib/db.ts';
 import { startPoller } from '../lib/jobs.ts';
 import { html } from '../lib/html.ts';
 import { shell, card, emptyState } from '../ui/ui.ts';
+import { env } from '../lib/env.ts';
 
 // module route registrations (each module wires nav/search/api in its import)
 import * as auth from '../modules/auth/pages.ts';
@@ -36,7 +37,7 @@ export function buildRouter(): Router {
   if (!r.routes.some((x) => x.pattern === '/' && x.method === 'GET')) {
     r.get('/', requireStaff, (rq: Rq) =>
       shell(rq, {
-        title: 'Welcome to Oriel',
+        title: 'Welcome to StayLeased',
         active: '/',
         content: card(null, emptyState('Foundation is up', 'Portfolio, units, and dashboards arrive in Phase 1.', null)),
       }),
@@ -55,8 +56,8 @@ export function startServer(port: number): ReturnType<typeof createApp> {
     onError: (e, rq) => console.error(`[500] ${rq.method} ${rq.path}:`, e.stack || e.message),
   });
   app.listen(port, () => {
-    const dbFile = process.env.ORIEL_DB || 'data/oriel.db';
-    console.log(`Oriel listening on http://localhost:${port}  (db: ${dbFile}, mode: ${process.env.ORIEL_MODE || 'dev'})`);
+    const dbFile = env('DB') || 'data/stayleased.db';
+    console.log(`StayLeased listening on http://localhost:${port}  (db: ${dbFile}, mode: ${env('MODE') || 'dev'})`);
   });
   return app;
 }
@@ -65,5 +66,5 @@ const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split
 if (isMain) {
   const port = parseInt(process.env.PORT || '3000', 10);
   startServer(port);
-  if (process.env.ORIEL_MODE !== 'test') startPoller(60000);
+  if (env('MODE') !== 'test') startPoller(60000);
 }

@@ -7,7 +7,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf
 const INK = rgb(0.11, 0.14, 0.19);
 const MUTED = rgb(0.42, 0.46, 0.52);
 const LINE = rgb(0.88, 0.9, 0.92);
-const ACCENT = rgb(0.27, 0.33, 0.9);
+const ACCENT = rgb(0.145, 0.388, 0.922); // StayLeased brand #2563eb
 
 export interface PdfTableCol {
   label: string;
@@ -50,11 +50,13 @@ export class Pdf {
   }
 
   brandHeader(orgLine: string, subLines: string[] = []): void {
-    this.page.drawText('ORIEL', { x: this.margin, y: this.y - 12, size: 13, font: this.bold, color: ACCENT });
-    this.page.drawText(orgLine, { x: this.margin + 52, y: this.y - 12, size: 10.5, font: this.bold, color: INK });
+    const brand = 'StayLeased';
+    this.page.drawText(brand, { x: this.margin, y: this.y - 12, size: 13, font: this.bold, color: ACCENT });
+    const indent = this.margin + this.bold.widthOfTextAtSize(brand, 13) + 14;
+    this.page.drawText(orgLine, { x: indent, y: this.y - 12, size: 10.5, font: this.bold, color: INK });
     let yy = this.y - 25;
     for (const line of subLines) {
-      this.page.drawText(line, { x: this.margin + 52, y: yy, size: 8.5, font: this.font, color: MUTED });
+      this.page.drawText(line, { x: indent, y: yy, size: 8.5, font: this.font, color: MUTED });
       yy -= 11;
     }
     this.y = yy - 8;

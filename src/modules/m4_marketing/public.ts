@@ -26,7 +26,7 @@ export interface Marketing {
 }
 
 export const DEFAULT_MARKETING: Marketing = {
-  theme: '#4653e5',
+  theme: '#2563eb',
   heroTitle: 'Come home to something better',
   heroSub: 'Thoughtful floorplans, resident-first service, and a location you will love.',
   about: 'Professionally managed homes with responsive maintenance, easy online payments, and a community team that knows your name.',
@@ -79,6 +79,9 @@ function siteDoc(prop: any, mk: Marketing, title: string, body: Raw, extraHead: 
     <meta property="og:title" content="${title}" />
     <meta property="og:description" content="${mk.heroSub}" />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="StayLeased" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="theme-color" content="${mk.theme}" />
     <link rel="stylesheet" href="/assets/theme.css" />
     <link rel="icon" href="/assets/favicon.svg" />
     <style>.site .hero{background:linear-gradient(160deg,#242b47,${mk.theme})} .site .btn{background:${mk.theme};border-color:${mk.theme}} .site a{color:${mk.theme}}</style>
@@ -99,7 +102,8 @@ function siteNav(prop: any): Raw {
 function siteFooter(prop: any): Raw {
   return html`<footer class="foot">
     <div><b>${prop.name}</b> · ${prop.address1}, ${prop.city}, ${prop.state} ${prop.zip} · ${prop.phone || ''}</div>
-    <div style="margin-top:6px">Professionally managed with Oriel · <span title="We follow all fair housing laws">⌂ Equal Housing Opportunity</span></div>
+    <div style="margin-top:6px">Professionally managed with StayLeased · <span title="We follow all fair housing laws">⌂ Equal Housing Opportunity</span></div>
+    <div class="foot-copy">© 2026 StayLeased</div>
   </footer>`;
 }
 
@@ -278,8 +282,9 @@ export function routes(r: Router): void {
           <p>${avail > 0 ? html`<b class="pos">${avail} available</b>${cheapest ? html` · from ${usd(cheapest)}` : ''}` : html`<span class="muted">Join the waitlist</span>`}</p>
         </div></a>`)}</div>
       </section>
-      <footer class="foot">${org.name} · professionally managed with Oriel · ⌂ Equal Housing Opportunity</footer>`;
-    return htmlRes(`<!doctype html>${html`<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${org.name} — Communities</title><link rel="stylesheet" href="/assets/theme.css" /><link rel="icon" href="/assets/favicon.svg" /></head><body class="site">${body}</body></html>`.s}`);
+      <footer class="foot">${org.name} · professionally managed with StayLeased · ⌂ Equal Housing Opportunity<div class="foot-copy">© 2026 StayLeased</div></footer>`;
+    const desc = `${org.name} — ${props.length} professionally managed communities. Live availability and pricing, powered by StayLeased.`;
+    return htmlRes(`<!doctype html>${html`<html lang="en"><head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>${org.name} — Communities</title><meta name="description" content="${desc}" /><meta property="og:title" content="${org.name} — Communities" /><meta property="og:description" content="${desc}" /><meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" /><meta name="twitter:card" content="summary_large_image" /><link rel="stylesheet" href="/assets/theme.css" /><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" /></head><body class="site">${body}</body></html>`.s}`);
   });
 
   // ---------- SEO plumbing ----------

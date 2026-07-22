@@ -22,7 +22,7 @@ export const AGENTS: { key: AgentKey; name: string; dial: boolean; describe: str
   { key: 'renewals', name: 'Renewals AI', dial: true, describe: 'Personalized renewal outreach from resident history; evaluates counters within matrix bounds, escalates beyond.' },
   { key: 'call_analysis', name: 'ELI Call Analysis', dial: false, describe: 'Summaries, sentiment, intents, action items and coaching notes from call transcripts. Always audited.' },
   { key: 'content', name: 'Essentials (content)', dial: false, describe: 'Listing descriptions, template drafts, review responses, alt text — generate buttons in the editors.' },
-  { key: 'ask', name: 'Ask Oriel', dial: false, describe: 'Staff questions answered from the org\'s own data through service APIs — never raw SQL from the model.' },
+  { key: 'ask', name: 'Ask StayLeased', dial: false, describe: 'Staff questions answered from the org\'s own data through service APIs — never raw SQL from the model.' },
 ];
 
 export function autonomyFor(ctx: Ctx, agent: AgentKey, propertyId?: string | null): Autonomy {

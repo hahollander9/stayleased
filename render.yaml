@@ -4,10 +4,10 @@
 # the pristine seed on wake — exactly right for a demo.
 services:
   - type: web
-    name: oriel-demo
+    name: stayleased
     runtime: docker
     plan: free
     healthCheckPath: /login
     envVars:
-      - key: ORIEL_MODE
+      - key: STAYLEASED_MODE
         value: demo

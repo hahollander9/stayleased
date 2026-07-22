@@ -13,19 +13,19 @@ import { llm } from '../../lib/sim/llm.ts';
 import { AGENTS, decideAction, autonomyFor, type AgentKey, type Autonomy } from './framework.ts';
 import { handleLeadInbound, draftCollectionsOutreach, draftRenewalOutreach, evaluateCounter, triageRequest, setAiHooksLive } from './agents.ts';
 import { analyzeNewCalls, callRollup } from './analysis.ts';
-import { askOriel } from './ask.ts';
+import { askStayLeased } from './ask.ts';
 import { generateListing, generateTemplateDraft, generateReviewResponse } from './content.ts';
 
 /** M17 screens: AI Activity (approval queue + full audit + autonomy dials),
- * call analysis rollup, Ask Oriel, and the Essentials content studio. */
+ * call analysis rollup, Ask StayLeased, and the Essentials content studio. */
 
 registerNav('Intelligence', { href: '/ai', label: 'AI Activity', perm: 'ai:view', match: ['/ai'] });
-registerNav('Intelligence', { href: '/ask', label: 'Ask Oriel', perm: 'ai:view' });
+registerNav('Intelligence', { href: '/ask', label: 'Ask StayLeased', perm: 'ai:view' });
 
 function agentBadge(agent: string): ReturnType<typeof html> {
   const names: Record<string, string> = {
     leasing: 'Leasing AI', maintenance: 'Maintenance AI', payments: 'Payments AI',
-    renewals: 'Renewals AI', call_analysis: 'Call Analysis', content: 'Essentials', ask: 'Ask Oriel',
+    renewals: 'Renewals AI', call_analysis: 'Call Analysis', content: 'Essentials', ask: 'Ask StayLeased',
   };
   return html`<span class="badge violet">${names[agent] || agent}</span>`;
 }
@@ -140,7 +140,7 @@ export function routes(r: Router): void {
         <li>Renewals AI never commits below the approved matrix band — out-of-band counters always escalate to the PM.</li>
         <li>Maintenance AI can never <i>downgrade</i> an emergency — keyword escalation is unconditional.</li>
         <li>Leasing AI hands off whenever a prospect asks for a human, even on autonomous.</li>
-        <li>Ask Oriel reads through service APIs only — the model never writes SQL.</li>
+        <li>Ask StayLeased reads through service APIs only — the model never writes SQL.</li>
       </ul>`)}`;
   }
 
@@ -283,13 +283,13 @@ export function routes(r: Router): void {
     return redirect('/ai/calls', n ? `${n} calls analyzed.` : 'Nothing new to analyze.');
   });
 
-  // ---------- Ask Oriel ----------
+  // ---------- Ask StayLeased ----------
   r.get('/ask', requirePerm('ai:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const question = (rq.query.get('q') || '').slice(0, 200);
-    const answer = question ? askOriel(ctx, question) : null;
+    const answer = question ? askStayLeased(ctx, question) : null;
     return shell(rq, {
-      title: 'Ask Oriel',
+      title: 'Ask StayLeased',
       active: '/ask',
       subtitle: 'Questions over your own data — answered through the same service APIs the screens use, never raw SQL.',
       content: html`

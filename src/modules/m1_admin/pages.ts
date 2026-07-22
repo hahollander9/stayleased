@@ -443,7 +443,7 @@ export function routes(r: Router): void {
               m.template_key ? html`<span class="mono small">${m.template_key}</span>` : '—',
             ],
           })),
-          { empty: 'No messages yet. Actions across Oriel (receipts, reminders, letters) will land here.' },
+          { empty: 'No messages yet. Actions across StayLeased (receipts, reminders, letters) will land here.' },
         )}${pager(rq, total)}`, { flush: true })}`,
     });
   });
@@ -528,7 +528,7 @@ export function routes(r: Router): void {
           { empty: 'No webhook endpoints registered.' },
         )}
         <div class="card-body"><form method="post" action="/admin/api/webhooks" class="toolbar">
-          ${field('Endpoint URL', input('url', { type: 'url', placeholder: 'https://example.com/hooks/oriel', required: true }))}
+          ${field('Endpoint URL', input('url', { type: 'url', placeholder: 'https://example.com/hooks/stayleased', required: true }))}
           ${field('Events (comma or *)', input('events', { value: '*' }))}
           <button class="btn">Add endpoint</button>
         </form>

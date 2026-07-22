@@ -101,7 +101,7 @@ export function enrollMaster(ctx: Ctx, leaseId: string, source: 'enroll' | 'auto
   tx(() => {
     insert('insurance_policies', {
       id: pid, org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId,
-      kind: 'master', carrier: 'Oriel Community Master Policy (sim)', policy_number: `MP-${leaseId.slice(-6).toUpperCase()}`,
+      kind: 'master', carrier: 'StayLeased Community Master Policy (sim)', policy_number: `MP-${leaseId.slice(-6).toUpperCase()}`,
       liability_cents: requiredLiability(ctx, lease.property_id), start_date: ctx.businessDate, end_date: null,
       status: 'active', verified_at: nowIso(), source, created_at: nowIso(),
     });

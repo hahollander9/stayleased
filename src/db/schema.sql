@@ -1,5 +1,5 @@
 -- ============================================================
--- Oriel schema. Written Postgres-compatible (TEXT/INTEGER, no
+-- StayLeased schema. Written Postgres-compatible (TEXT/INTEGER, no
 -- SQLite-only features); money is INTEGER cents; dates are
 -- TEXT 'YYYY-MM-DD'; timestamps TEXT ISO-8601 UTC; JSON in TEXT.
 -- Executed idempotently at boot (CREATE TABLE IF NOT EXISTS).

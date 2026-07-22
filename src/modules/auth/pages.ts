@@ -11,14 +11,15 @@ import {
 import { q, q1, run } from '../../lib/db.ts';
 import { nowIso } from '../../lib/dates.ts';
 import { audit } from '../../lib/audit.ts';
-import { authShell, logo, runSearch, shell, card, dl } from '../../ui/ui.ts';
+import { authShell, logo, wordmark, runSearch, shell, card, dl } from '../../ui/ui.ts';
 import { ROLE_LABELS, type Role } from '../../lib/rbac.ts';
+import { env } from '../../lib/env.ts';
 
 export function routes(r: Router): void {
   r.get('/login', (rq) => {
     if (rq.user) return redirect(landingFor(rq.user as UserRow));
     const flash = takeFlash(rq);
-    const personas = process.env.ORIEL_MODE !== 'production'
+    const personas = env('MODE') !== 'production'
       ? q<{ email: string; name: string; role: string }>(
           `SELECT u.email, u.name, COALESCE(ra.role, u.kind) AS role FROM users u
            LEFT JOIN role_assignments ra ON ra.user_id = u.id
@@ -28,8 +29,8 @@ export function routes(r: Router): void {
     return authShell(
       'Sign in',
       html`
-        <div class="auth-brand">${logo(26, '#4653e5')} Oriel</div>
-        <div class="auth-sub">Property management, end to end.</div>
+        <div class="auth-brand">${wordmark(28)}</div>
+        <div class="auth-sub">Property management, run by AI.</div>
         ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
         <form method="post" action="/login">
           <input type="hidden" name="next" value="${rq.query.get('next') || ''}" />
@@ -76,7 +77,7 @@ export function routes(r: Router): void {
     const pid = String(rq.body.property_id || 'all');
     const ctx = rq.ctx as Ctx;
     if (pid !== 'all' && !canAccessProperty(ctx, pid)) return forbidden();
-    rq.setCookies.push(cookie('oriel_prop', pid === 'all' ? '' : pid, { maxAge: 30 * 86400, httpOnly: false }));
+    rq.setCookies.push(cookie('sl_prop', pid === 'all' ? '' : pid, { maxAge: 30 * 86400, httpOnly: false }));
     const ref = String(rq.raw.headers.referer || '/');
     return redirect(ref.startsWith('http') ? new URL(ref).pathname : '/');
   });
@@ -109,19 +110,19 @@ export function routes(r: Router): void {
     const t = createSession(target.id, ctx.userId);
     // keep admin session in a backup cookie to restore later
     const cur = getSessionToken(rq);
-    if (cur) rq.setCookies.push(cookie('oriel_s_admin', cur, { maxAge: 86400 }));
+    if (cur) rq.setCookies.push(cookie('sl_admin', cur, { maxAge: 86400 }));
     setSessionCookie(rq, t);
     audit(ctx, 'user', target.id, 'impersonate_start');
     return redirect(landingFor(target), `Now viewing as ${target.name}.`);
   });
 
   r.get('/unimpersonate', (rq) => {
-    const backup = rq.cookies['oriel_s_admin'];
+    const backup = rq.cookies['sl_admin'];
     const cur = getSessionToken(rq);
     if (cur) destroySession(cur);
     if (backup) {
       setSessionCookie(rq, backup);
-      rq.setCookies.push(cookie('oriel_s_admin', '', { expire: true }));
+      rq.setCookies.push(cookie('sl_admin', '', { expire: true }));
       return redirect('/', 'Back to your own account.');
     }
     clearSessionCookie(rq);

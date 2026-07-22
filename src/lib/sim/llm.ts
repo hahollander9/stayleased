@@ -1,10 +1,11 @@
 import { GLOBAL_SEED } from '../rng.ts';
+import { env } from '../env.ts';
 
 /** LlmProvider (§3.4): the AI layer's brain. MockLlm is the default — fully
  * deterministic, template-based, grounded ONLY in the structured facts the
  * calling agent passes in — so every AI feature demos offline and tests
  * reproducibly. AnthropicLlm is an optional adapter picked up when
- * ORIEL_LLM_KEY is set; nothing in the product requires it. */
+ * ANTHROPIC_API_KEY is set; nothing in the product requires it. */
 
 export interface LlmProvider {
   name: string;
@@ -116,7 +117,8 @@ export function makeAnthropicLlm(apiKey: string): LlmProvider {
 }
 
 let provider: LlmProvider = MockLlm;
-if (process.env.ORIEL_LLM_KEY) provider = makeAnthropicLlm(process.env.ORIEL_LLM_KEY);
+const _llmKey = process.env.ANTHROPIC_API_KEY || env('LLM_KEY');
+if (_llmKey) provider = makeAnthropicLlm(_llmKey);
 
 export function llm(): LlmProvider {
   return provider;

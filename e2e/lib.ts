@@ -3,19 +3,20 @@ import { join } from 'node:path';
 import { chromium, type Browser, type Page } from 'playwright';
 import { startServer } from '../src/server/main.ts';
 import { ROOT, closeDb } from '../src/lib/db.ts';
+import { env, setEnv } from '../src/lib/env.ts';
 
 /** Playwright e2e helpers. The server runs in-process against the DB named by
- * ORIEL_DB (scripts/e2e.sh seeds data/e2e.db; shots use the dev db).
+ * STAYLEASED_DB (scripts/e2e.sh seeds data/e2e.db; shots use the dev db).
  *
- * Isolation: when ORIEL_E2E_ISOLATE=1 (set by scripts/e2e.sh), each test file
- * (its own node:test process) boots against a private copy of the pristine
+ * Isolation: when STAYLEASED_E2E_ISOLATE=1 (set by scripts/e2e.sh), each test
+ * file (its own node:test process) boots against a private copy of the pristine
  * seeded DB, so files that advance the business date or mutate data can never
  * bleed into each other's expectations. */
 
 export async function boot(): Promise<{ base: string; browser: Browser; close: () => Promise<void> }> {
   let clone: string | null = null;
-  if (process.env.ORIEL_E2E_ISOLATE === '1') {
-    const src = join(ROOT, process.env.ORIEL_DB || 'data/e2e.db');
+  if (env('E2E_ISOLATE') === '1') {
+    const src = join(ROOT, env('DB') || 'data/e2e.db');
     clone = `data/e2e-run-${process.pid}.db`;
     const dst = join(ROOT, clone);
     copyFileSync(src, dst);
@@ -23,7 +24,7 @@ export async function boot(): Promise<{ base: string; browser: Browser; close: (
       if (existsSync(src + sfx)) copyFileSync(src + sfx, dst + sfx);
       else rmSync(dst + sfx, { force: true });
     }
-    process.env.ORIEL_DB = clone;
+    setEnv('DB', clone);
   }
   const app = startServer(0);
   const base: string = await new Promise((resolve) => {
@@ -34,7 +35,10 @@ export async function boot(): Promise<{ base: string; browser: Browser; close: (
     };
     tick();
   });
-  const browser = await chromium.launch();
+  // Use the environment's pre-installed Chromium when the bundled browser
+  // revision differs from this Playwright build (falls back to the default).
+  const exe = process.env.PLAYWRIGHT_EXECUTABLE_PATH || '/opt/pw-browsers/chromium';
+  const browser = await chromium.launch(existsSync(exe) ? { executablePath: exe } : {});
   return {
     base,
     browser,

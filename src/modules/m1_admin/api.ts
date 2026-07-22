@@ -43,11 +43,11 @@ export function mountApi(r: Router): void {
 
   r.get('/developers', (rq) => {
     const body = html`<div style="max-width:880px;margin:0 auto;padding:30px 20px">
-      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">${logo(26, '#4653e5')}<h1 style="font-size:24px">Oriel API v1</h1></div>
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:6px">${logo(26, 'var(--accent)')}<h1 style="font-size:24px">StayLeased API v1</h1></div>
       <p class="muted">REST over HTTPS. Authenticate with an org-scoped key in the <code>X-Api-Key</code> header (create keys in <a href="/admin/api">Admin → API &amp; webhooks</a>). Rate limit 240 req/min per key. All money values are integer cents; dates are <code>YYYY-MM-DD</code>.</p>
       <div class="card"><div class="card-body">
         <h2>Webhooks</h2>
-        <p class="small">Register endpoint URLs in Admin → API &amp; webhooks. Oriel POSTs JSON on major domain events with an <code>X-Oriel-Signature: sha256=&lt;hmac&gt;</code> header (HMAC-SHA256 of the raw body with your endpoint secret). Deliveries retry with backoff (1m/5m/15m/60m, 5 attempts).</p>
+        <p class="small">Register endpoint URLs in Admin → API &amp; webhooks. StayLeased POSTs JSON on major domain events with an <code>X-StayLeased-Signature: sha256=&lt;hmac&gt;</code> header (HMAC-SHA256 of the raw body with your endpoint secret). Deliveries retry with backoff (1m/5m/15m/60m, 5 attempts).</p>
         <p class="small mono">event envelope: { id, type, orgId, businessDate, data }</p>
       </div></div>
       ${endpoints.map(

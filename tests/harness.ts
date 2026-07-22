@@ -6,7 +6,7 @@ import { createHash } from 'node:crypto';
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 
-/** Shared test fixtures + HTTP helpers. Tests run against ORIEL_DB=data/test.db
+/** Shared test fixtures + HTTP helpers. Tests run against STAYLEASED_DB=data/test.db
  * (wiped per run by scripts/test.sh). */
 
 export interface TwoOrgs {
@@ -104,9 +104,9 @@ export async function loginAs(base: string, email: string, password = 'demo1234'
     redirect: 'manual',
   });
   const setCookie = resp.headers.get('set-cookie') || '';
-  const m = /oriel_s=([^;]+)/.exec(setCookie);
+  const m = /sl_s=([^;]+)/.exec(setCookie);
   if (!m) throw new Error(`login failed for ${email}: ${resp.status} ${setCookie}`);
-  return `oriel_s=${m[1]}`;
+  return `sl_s=${m[1]}`;
 }
 
 export async function get(base: string, path: string, cookie?: string): Promise<{ status: number; text: string }> {

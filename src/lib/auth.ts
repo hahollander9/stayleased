@@ -4,6 +4,7 @@ import { id, token } from './ids.ts';
 import { nowIso } from './dates.ts';
 import { cookie, forbidden, redirect, type Middleware, type Rq, type Res } from './http.ts';
 import { expandPerms, type Role } from './rbac.ts';
+import { env } from './env.ts';
 
 // ---------- passwords ----------
 
@@ -23,7 +24,7 @@ export function verifyPassword(pw: string, stored: string): boolean {
 
 // ---------- sessions ----------
 
-const SESSION_COOKIE = 'oriel_s';
+const SESSION_COOKIE = 'sl_s';
 const SESSION_DAYS = 7;
 
 function tokenHash(t: string): string {
@@ -155,7 +156,7 @@ export function sysCtx(orgId: string, businessDate?: string): Ctx {
     orgId,
     userId: 'system',
     userName: 'System',
-    userEmail: 'system@oriel',
+    userEmail: 'system@stayleased',
     kind: 'system',
     roles: [],
     perms: expandPerms(['ORG_ADMIN'] as Role[]),
@@ -183,7 +184,7 @@ export const attachSession: Middleware = (r) => {
   if (!user) return;
   r.session = ses;
   r.user = user;
-  const propCookie = r.cookies['oriel_prop'] || null;
+  const propCookie = r.cookies['sl_prop'] || null;
   const ctx = buildCtx(user, null, ses.impersonator_user_id);
   // validate switcher cookie against accessible properties
   if (propCookie && propCookie !== 'all' && canAccessProperty(ctx, propCookie)) {
@@ -233,7 +234,7 @@ export const requireVendor: Middleware = (r) => {
 };
 
 export const devOnly: Middleware = (r) => {
-  if (process.env.ORIEL_MODE === 'production') return forbidden('Not available in production mode.');
+  if (env('MODE') === 'production') return forbidden('Not available in production mode.');
   if (!r.user) return loginRedirect(r);
   return;
 };

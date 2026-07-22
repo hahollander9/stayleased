@@ -1,4 +1,4 @@
-/* Oriel client enhancements — no framework, progressive enhancement only. */
+/* StayLeased client enhancements — no framework, progressive enhancement only. */
 (function () {
   'use strict';
 

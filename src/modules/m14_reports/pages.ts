@@ -373,7 +373,7 @@ export function routes(r: Router): void {
       return fileRes(new TextEncoder().encode(reportCsv(rendered)), 'text/csv', { filename: `${def.key}-${ctx.businessDate}.csv` });
     }
     if (format === 'pdf') {
-      const orgName = q1<any>('SELECT name FROM orgs WHERE id=?', ctx.orgId)?.name || 'Oriel';
+      const orgName = q1<any>('SELECT name FROM orgs WHERE id=?', ctx.orgId)?.name || 'StayLeased';
       const bytes = await reportPdf(def.name, orgName, paramLine, rendered);
       return fileRes(bytes, 'application/pdf', { filename: `${def.key}-${ctx.businessDate}.pdf`, inline: true });
     }

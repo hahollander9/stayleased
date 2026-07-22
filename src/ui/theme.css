@@ -1,5 +1,5 @@
 /* ============================================================
-   Oriel design system — original branding, single accent color.
+   StayLeased design system — original branding, single accent color.
    Neutral surfaces, dense-but-calm layout for staff software.
    ============================================================ */
 
@@ -13,10 +13,10 @@
   --faint: #98a1ae;
   --line: #e4e7ec;
   --line-2: #eef0f3;
-  --accent: #4653e5;
-  --accent-strong: #3a45c8;
-  --accent-soft: #eef0fe;
-  --accent-ink: #323cae;
+  --accent: #2563eb;
+  --accent-strong: #1d4ed8;
+  --accent-soft: #e8effc;
+  --accent-ink: #1e40af;
   --ok: #157f3d;      --ok-soft: #e7f5ec;
   --warn: #a95c08;    --warn-soft: #fdf3e2;
   --bad: #b3261e;     --bad-soft: #fdecea;
@@ -373,6 +373,24 @@ a.kpi:hover { text-decoration: none; border-color: var(--accent); }
   body { background: #fff; }
   .card { border: 0; box-shadow: none; }
 }
+
+/* ---------- brand wordmark ---------- */
+.brand .brand-name { display: inline; }
+.brand .wm-accent { color: #7aa8ff; }
+.wordmark { display: inline-flex; align-items: center; gap: 9px; font-weight: 800; letter-spacing: -.01em; line-height: 1; }
+.wordmark .wm-text { font-size: 1.02em; color: var(--ink); }
+.wordmark .wm-accent { color: var(--accent); }
+.wordmark.on-dark .wm-text { color: #fff; }
+.wordmark.on-dark .wm-accent { color: #7aa8ff; }
+
+/* ---------- branded error / 404 ---------- */
+.err-box .err-brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 800; font-size: 20px; color: var(--ink); margin-bottom: 14px; text-decoration: none; }
+.err-box .err-brand:hover { text-decoration: none; }
+.err-box .err-brand .wm-accent { color: var(--accent); }
+.err-box .err-code { font-size: 64px; font-weight: 800; line-height: 1; color: var(--accent); }
+.err-box .err-head { font-size: 20px; margin: 4px 0 6px; color: var(--ink); }
+.err-box .err-actions { margin-top: 18px; display: flex; gap: 8px; justify-content: center; }
+.site .foot .foot-copy { margin-top: 8px; font-size: 12px; opacity: .72; }
 
 /* ---------- responsive ---------- */
 .menu-btn { display: none; }

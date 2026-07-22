@@ -9,6 +9,7 @@ import { Rng, GLOBAL_SEED } from '../lib/rng.ts';
 import { ROLE_LABELS, type Role } from '../lib/rbac.ts';
 import { setDials, DEFAULT_DIALS } from '../lib/sim/dials.ts';
 import { seedPhases } from './parts.ts';
+import { env } from '../lib/env.ts';
 
 /** Deterministic demo seed (§8): Summit Ridge Management Co., three
  * properties, staff for every role, and (as phases land) 14 months of
@@ -31,7 +32,7 @@ export interface SeedCtx {
 
 async function main(): Promise<void> {
   const t0 = Date.now();
-  if (RESET || process.env.ORIEL_SEED_FRESH === '1') {
+  if (RESET || env('SEED_FRESH') === '1') {
     closeDb();
     for (const suffix of ['', '-wal', '-shm']) {
       const p = dbPath() + suffix;
@@ -50,7 +51,7 @@ async function main(): Promise<void> {
 
   // Business date: 26th of the *fixed demo month* so a rent cycle, late-fee day
   // and month-end are all near (kept deterministic rather than wall-clock).
-  const businessDate = process.env.ORIEL_SEED_DATE || mkDate(2026, 7, 26);
+  const businessDate = env('SEED_DATE') || mkDate(2026, 7, 26);
 
   const orgId = id('org');
   tx(() => {
@@ -86,10 +87,10 @@ async function main(): Promise<void> {
 
   tx(() => {
     insert('users', {
-      id: id('usr'), org_id: null, email: 'platform@oriel.demo', name: 'Oriel Platform Ops',
+      id: id('usr'), org_id: null, email: 'platform@stayleased.demo', name: 'StayLeased Platform Ops',
       kind: 'platform', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
     });
-    seedCtx.demoLogins.push(['Platform Admin', 'platform@oriel.demo', 'org onboarding']);
+    seedCtx.demoLogins.push(['Platform Admin', 'platform@stayleased.demo', 'org onboarding']);
     for (const [name, local, role, notes] of staff) {
       const uid = id('usr');
       insert('users', {

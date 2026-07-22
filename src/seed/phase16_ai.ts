@@ -6,7 +6,7 @@ import {
   handleLeadInbound, draftCollectionsOutreach, draftRenewalOutreach, evaluateCounter, triageRequest,
 } from '../modules/m17_ai/agents.ts';
 import { analyzeNewCalls } from '../modules/m17_ai/analysis.ts';
-import { askOriel } from '../modules/m17_ai/ask.ts';
+import { askStayLeased } from '../modules/m17_ai/ask.ts';
 import { generateListing } from '../modules/m17_ai/content.ts';
 import type { SeedCtx } from './seed.ts';
 import { log } from './seed.ts';
@@ -109,8 +109,8 @@ export function seedAi(s: SeedCtx): void {
     `SELECT f.id, f.property_id FROM floorplans f JOIN properties p ON p.id=f.property_id AND p.slug='summit-ridge' ORDER BY f.market_rent_cents LIMIT 1`,
   );
   if (srPlan) generateListing(ctx, srPlan.property_id, srPlan.id);
-  askOriel({ ...ctx, userName: 'Marcus Bell' }, 'delinquency over $500 at Summit Ridge');
-  askOriel({ ...ctx, userName: 'Elena Ruiz' }, 'which units turn this month');
+  askStayLeased({ ...ctx, userName: 'Marcus Bell' }, 'delinquency over $500 at Summit Ridge');
+  askStayLeased({ ...ctx, userName: 'Elena Ruiz' }, 'which units turn this month');
 
   const total = val<number>('SELECT COUNT(*) FROM ai_actions WHERE org_id=?', s.orgId) || 0;
   const pending = val<number>(`SELECT COUNT(*) FROM ai_actions WHERE org_id=? AND status='proposed'`, s.orgId) || 0;

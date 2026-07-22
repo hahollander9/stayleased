@@ -1,9 +1,9 @@
 {
-  "name": "oriel",
+  "name": "stayleased",
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Oriel — full-suite property management platform (Entrata-parity replica, original work, simulated rails)",
+  "description": "StayLeased — full-suite property management platform, run by AI (Entrata-parity, original work, simulated rails)",
   "engines": { "node": ">=22.11" },
   "scripts": {
     "dev": "node scripts/noderun.mjs src/server/main.ts",

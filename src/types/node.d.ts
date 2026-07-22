@@ -2,7 +2,7 @@
  * Minimal Node.js built-in type shims.
  * The sandbox this project was built in has no npm registry access, so
  * @types/node cannot be installed. These declarations cover exactly the
- * Node APIs Oriel uses, keeping `tsc --strict` meaningful. If @types/node
+ * Node APIs StayLeased uses, keeping `tsc --strict` meaningful. If @types/node
  * is available in your environment, delete this file and add it instead.
  */
 

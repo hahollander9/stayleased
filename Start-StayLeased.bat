@@ -1,12 +1,12 @@
 @echo off
-rem Oriel demo launcher (Windows). Double-click me.
+rem StayLeased demo launcher (Windows). Double-click me.
 rem If Windows shows "Windows protected your PC", click "More info" then "Run anyway".
 setlocal
 cd /d "%~dp0"
 
-echo ======================================
-echo   Oriel - Summit Ridge demo launcher
-echo ======================================
+echo ==========================================
+echo   StayLeased - Summit Ridge demo launcher
+echo ==========================================
 echo.
 
 rem 1) Node present and new enough?
@@ -20,7 +20,7 @@ if errorlevel 1 (
 )
 node -e "const v=process.versions.node.split('.').map(Number);process.exit(v[0]>22||(v[0]===22&&v[1]>=11)?0:1)"
 if errorlevel 1 (
-  echo Your Node.js is too old - Oriel needs Node 22.11 or newer.
+  echo Your Node.js is too old - StayLeased needs Node 22.11 or newer.
   echo Install the current LTS from https://nodejs.org, then run this again.
   pause
   exit /b 1
@@ -60,7 +60,7 @@ if not exist data\.seeded (
 
 rem 4) Start the server and open the browser
 echo.
-echo Starting Oriel at http://localhost:3000
+echo Starting StayLeased at http://localhost:3000
 echo Sign in as admin@summitridge.demo with password demo1234
 echo (all demo logins are listed in HOW-TO-RUN.txt)
 echo.

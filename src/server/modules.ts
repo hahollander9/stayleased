@@ -57,6 +57,6 @@ export function registerModules(r: Router): void {
   m15.portalRoutes(r); // Phase 13: portal communication preferences
   m13.routes(r); // Phase 14: pricing queue, comps, term rates, renewal batch, analytics
   m14.routes(r); // Phase 15: report library, custom builder, saved/scheduled, dashboards
-  m17.routes(r); // Phase 16: AI activity/approvals, agents, call analysis, Ask Oriel, Essentials
+  m17.routes(r); // Phase 16: AI activity/approvals, agents, call analysis, Ask StayLeased, Essentials
   m18.routes(r); // Phase 17: student board, affordable compliance, military/CAM toolkits
 }

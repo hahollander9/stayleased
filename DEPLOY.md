@@ -1,4 +1,4 @@
-# Putting the Oriel demo on the web
+# Putting the StayLeased demo on the web
 
 Three paths, easiest first. The app is a single Node 22 process with a SQLite
 file — no external database or services to set up. Everything in it is
@@ -11,8 +11,8 @@ restart resets the world to the pristine seed.
 No terminal needed — see **HOW-TO-RUN.txt**:
 
 1. Install the Node.js LTS from nodejs.org (anything 22.11+, current 24 LTS included).
-2. Unzip `oriel-source.zip` and double-click **Start-Oriel.bat** (Windows) or
-   **Start-Oriel.command** (Mac — right-click → Open the first time).
+2. Unzip `stayleased-source.zip` and double-click **Start-StayLeased.bat** (Windows) or
+   **Start-StayLeased.command** (Mac — right-click → Open the first time).
 
 The zip ships with the one runtime dependency bundled (no npm needed). The
 first launch builds the demo world (~1 minute), then opens
@@ -32,17 +32,17 @@ fine for a demo. The Dockerfile bakes the seeded world into the image, so
 every wake/redeploy starts instantly from the same pristine data.
 
 1. **Put the code on GitHub** (free account at github.com):
-   - Create a new repository (private is fine), e.g. `oriel`.
+   - Create a new repository (private is fine), e.g. `stayleased`.
    - From the unzipped folder:
      ```bash
-     git init && git add -A && git commit -m "Oriel"
+     git init && git add -A && git commit -m "StayLeased"
      git branch -M main
-     git remote add origin https://github.com/<you>/oriel.git
+     git remote add origin https://github.com/<you>/stayleased.git
      git push -u origin main
      ```
 2. **Create the service on Render** (free account at render.com, no card
    needed for the free plan):
-   - New → **Blueprint** → connect your GitHub → pick the `oriel` repo.
+   - New → **Blueprint** → connect your GitHub → pick the `stayleased` repo.
      Render reads `render.yaml` and sets everything up (Docker, free plan,
      health check). Or: New → Web Service → pick the repo → Language:
      **Docker** → Instance type: **Free**.

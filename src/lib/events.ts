@@ -82,8 +82,8 @@ export async function deliverWebhooks(ctx: Ctx): Promise<number> {
         method: 'POST',
         headers: {
           'content-type': 'application/json',
-          'x-oriel-signature': `sha256=${sig}`,
-          'x-oriel-event': String(d.event_type),
+          'x-stayleased-signature': `sha256=${sig}`,
+          'x-stayleased-event': String(d.event_type),
         },
         body: String(d.payload),
         signal: AbortSignal.timeout(4000),

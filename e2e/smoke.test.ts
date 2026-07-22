@@ -18,14 +18,14 @@ after(async () => close());
 
 const PERSONAS: [string, string][] = [
   // [email, expected content marker after login]
-  ['admin@summitridge.demo', 'Oriel'],
-  ['regional@summitridge.demo', 'Oriel'],
-  ['manager@summitridge.demo', 'Oriel'],
-  ['agent@summitridge.demo', 'Oriel'],
-  ['maintsup@summitridge.demo', 'Oriel'],
-  ['tech@summitridge.demo', 'Oriel'],
-  ['accountant@summitridge.demo', 'Oriel'],
-  ['marketing@summitridge.demo', 'Oriel'],
+  ['admin@summitridge.demo', 'StayLeased'],
+  ['regional@summitridge.demo', 'StayLeased'],
+  ['manager@summitridge.demo', 'StayLeased'],
+  ['agent@summitridge.demo', 'StayLeased'],
+  ['maintsup@summitridge.demo', 'StayLeased'],
+  ['tech@summitridge.demo', 'StayLeased'],
+  ['accountant@summitridge.demo', 'StayLeased'],
+  ['marketing@summitridge.demo', 'StayLeased'],
 ];
 
 test('every staff persona can log in and sees the app shell', async () => {
@@ -34,7 +34,7 @@ test('every staff persona can log in and sees the app shell', async () => {
     await login(page, base, email);
     assert.equal(page.url().includes('/login'), false, `${email} should be past login`);
     const brand = await page.locator('.brand, .auth-brand').first().textContent();
-    assert.match(brand || '', /Oriel/);
+    assert.match(brand || '', /StayLeased/);
     await page.close();
   }
 });

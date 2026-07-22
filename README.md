@@ -1,4 +1,4 @@
-# Oriel
+# StayLeased
 
 A multi-tenant property management platform with functional parity to Entrata's suite — property operations, resident experience, accounting, payments, utilities, insurance, revenue intelligence, BI, communications, procurement, an AI-agent layer, and vertical modes — built as **original work** with every external rail (payments, screening bureaus, SMS/email, bank feeds, meters, insurers, LLMs) implemented as a **deterministic simulator** behind a provider interface, so the whole platform runs end-to-end in a sandbox with no real money and no real consumer data.
 
@@ -6,7 +6,7 @@ A multi-tenant property management platform with functional parity to Entrata's 
 
 Requires Node ≥ 22.11. The runtime uses only Node built-ins; dev tooling (typescript, playwright) and pdf-lib come from npm.
 
-Not a terminal person? Double-click **Start-Oriel.bat** (Windows) or **Start-Oriel.command** (Mac) — see **HOW-TO-RUN.txt**.
+Not a terminal person? Double-click **Start-StayLeased.bat** (Windows) or **Start-StayLeased.command** (Mac) — see **HOW-TO-RUN.txt**.
 
 ```bash
 npm install
@@ -25,7 +25,7 @@ Sign in as any persona — every demo account uses password **`demo1234`** (full
 | Maintenance supervisor / tech | `maintsup@` / `tech@summitridge.demo` |
 | Accountant | `accountant@summitridge.demo` |
 | Marketing manager | `marketing@summitridge.demo` |
-| Platform admin | `platform@oriel.demo` |
+| Platform admin | `platform@stayleased.demo` |
 
 The **simulated business date** (starts 2026-07-26) drives all time-based behavior — rent posting, late fees, ACH settlement, lead flow, renewals. Advance it in **Developer → Simulator console** to fast-forward the world. "Sent" email/SMS lands in **Developer → Message console**.
 
@@ -117,7 +117,7 @@ LIHTC grid — rent vs limit headroom per unit, the overdue recert, the
 waitlist with a documented skip. **AI Activity → Autonomy dials**: the
 supervision model and the hard guardrails, in plain language.
 
-**9. Ask Oriel (30 sec).** Top bar → **✨ Ask Oriel**: "delinquency over
+**9. Ask StayLeased (30 sec).** Top bar → **✨ Ask StayLeased**: "delinquency over
 $500 at Summit Ridge", "which units turn this month", "occupancy at
 Foundry" — live numbers, drill-through links, and the ask itself lands in
 the audit trail.

@@ -62,7 +62,7 @@ const SHOTS: Record<string, Shot[]> = {
     { name: 'ai-audit-history', path: '/ai?view=history', persona: 'manager@summitridge.demo', fullPage: true },
     { name: 'ai-autonomy-dials', path: '/ai?view=dials', persona: 'admin@summitridge.demo', fullPage: true },
     { name: 'ai-call-analysis', path: '/ai/calls', persona: 'manager@summitridge.demo', fullPage: true },
-    { name: 'ask-oriel', path: '/ask?q=delinquency%20over%20%24500%20at%20Summit%20Ridge', persona: 'regional@summitridge.demo', fullPage: true },
+    { name: 'ask-stayleased', path: '/ask?q=delinquency%20over%20%24500%20at%20Summit%20Ridge', persona: 'regional@summitridge.demo', fullPage: true },
     { name: 'ai-essentials', path: '/ai/essentials', persona: 'marketing@summitridge.demo', fullPage: true },
   ],
   '15': [

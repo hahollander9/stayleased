@@ -21,4 +21,4 @@ Format: context → choice → why. One line each (details in linked docs where 
 15. **CSRF**: same-origin Origin-header check on browser POSTs + SameSite=Lax cookies instead of per-form tokens → adequate for same-site forms, zero template overhead; API routes use keys not cookies.
 16. **Impersonation**: implemented as a new session carrying `impersonator_user_id`, original admin session kept in a backup cookie; bannered in the shell and audited both ways.
 17. **Org isolation**: `canAccessProperty` verifies the property's org against ctx before any scope logic (caught by the isolation test suite) → isolation is checked at the data layer, never inferred from role scope.
-18. **Seed business date fixed to 2026-07-26** (26th of the demo month, per §8 "the 26th of the current month") rather than wall-clock-relative → deterministic seeds beat calendar-relative ones for reproducible demos; override with ORIEL_SEED_DATE.
+18. **Seed business date fixed to 2026-07-26** (26th of the demo month, per §8 "the 26th of the current month") rather than wall-clock-relative → deterministic seeds beat calendar-relative ones for reproducible demos; override with STAYLEASED_SEED_DATE.

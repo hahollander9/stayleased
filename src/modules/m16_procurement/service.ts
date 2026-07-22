@@ -342,7 +342,7 @@ export async function remittanceAdvice(ctx: Ctx, paymentId: string): Promise<str
     ['Status', p.status],
   ]);
   pdf.space(8);
-  pdf.text('This payment was issued by Summit Ridge Management Co. via the Oriel platform (simulated rails).', { muted: true, size: 9 });
+  pdf.text('This payment was issued by Summit Ridge Management Co. via the StayLeased platform (simulated rails).', { muted: true, size: 9 });
   const f = putFile(sysCtx(ctx.orgId), Buffer.from(await pdf.bytes()), {
     name: `remittance-${p.check_number}.pdf`, mime: 'application/pdf', entity: 'ap_payment', entityId: paymentId, visibility: 'staff',
   });

@@ -1,10 +1,10 @@
 #!/bin/bash
-# Oriel demo launcher (macOS / Linux). Double-click me (macOS: right-click -> Open the first time).
+# StayLeased demo launcher (macOS / Linux). Double-click me (macOS: right-click -> Open the first time).
 cd "$(dirname "$0")" || exit 1
 
-echo "======================================"
-echo "  Oriel - Summit Ridge demo launcher"
-echo "======================================"
+echo "=========================================="
+echo "  StayLeased - Summit Ridge demo launcher"
+echo "=========================================="
 echo
 
 pause_exit() {
@@ -22,7 +22,7 @@ if ! command -v node >/dev/null 2>&1; then
   pause_exit
 fi
 if ! node -e "const v=process.versions.node.split('.').map(Number);process.exit(v[0]>22||(v[0]===22&&v[1]>=11)?0:1)"; then
-  echo "Node $(node -v) is installed, but Oriel needs Node 22.11 or newer."
+  echo "Node $(node -v) is installed, but StayLeased needs Node 22.11 or newer."
   echo "Install the current LTS from https://nodejs.org, then run this again."
   pause_exit
 fi
@@ -59,7 +59,7 @@ if command -v nc >/dev/null 2>&1; then
 fi
 
 echo
-echo "Starting Oriel at http://localhost:$PORT_TO_USE"
+echo "Starting StayLeased at http://localhost:$PORT_TO_USE"
 echo "Sign in as admin@summitridge.demo with password demo1234"
 echo "(all demo logins are listed in HOW-TO-RUN.txt)"
 echo

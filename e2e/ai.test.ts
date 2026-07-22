@@ -6,7 +6,7 @@ import type { Browser, Page } from 'playwright';
 /** THE PHASE 16 GATE — at approve-to-send, Leasing AI drafts a grounded reply
  * to a simulated inquiry and books the tour on approval; Maintenance AI
  * triages an emergency correctly; call analysis produces summaries + tasks
- * from fixture transcripts; Ask Oriel answers three cross-module questions
+ * from fixture transcripts; Ask StayLeased answers three cross-module questions
  * with correct live numbers; AI Activity shows every action. */
 
 let base: string;
@@ -125,7 +125,7 @@ test('gate: call analysis produced summaries + real follow-up tasks from the fix
   assert.ok(body.includes(String(sample.ai_summary).slice(0, 40)), 'a real summary renders');
 });
 
-test('gate: Ask Oriel answers three cross-module questions with correct live numbers', async () => {
+test('gate: Ask StayLeased answers three cross-module questions with correct live numbers', async () => {
   // org-wide persona: property scoping is enforced (a scoped manager asking
   // about an out-of-scope property gets their own portfolio, by design)
   const reg = await newPage(browser);

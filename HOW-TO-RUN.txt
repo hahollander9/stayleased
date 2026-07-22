@@ -1,4 +1,4 @@
-ORIEL - HOW TO RUN IT ON YOUR COMPUTER
+STAYLEASED - HOW TO RUN IT ON YOUR COMPUTER
 ======================================
 
 You only need to do two things:
@@ -10,11 +10,11 @@ You only need to do two things:
     Already have it? You're done with this step.)
 
 2) DOUBLE-CLICK THE LAUNCHER in this folder
-   - Windows:  Start-Oriel.bat
+   - Windows:  Start-StayLeased.bat
        If you see "Windows protected your PC", click "More info",
        then "Run anyway". (It's a plain script - you can open it in
        Notepad to see everything it does.)
-   - Mac:      Start-Oriel.command
+   - Mac:      Start-StayLeased.command
        The FIRST time, right-click it and choose "Open", then "Open"
        again in the warning dialog. (Downloaded scripts are blocked on
        plain double-click until you've opened them once this way.)

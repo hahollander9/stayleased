@@ -4,16 +4,24 @@ import { can, type Ctx } from '../lib/auth.ts';
 import { q } from '../lib/db.ts';
 import { fmtDate } from '../lib/dates.ts';
 
-/** Oriel UI kit: app shell, portal shell, and shared components.
+/** StayLeased UI kit: app shell, portal shell, and shared components.
  * Modules contribute nav items and search providers via registries so the
  * chrome grows as modules mount. */
 
 // ---------- brand ----------
 
+/** The StayLeased mark: a keyed doorway — home + access, the essence of
+ * leasing. Stroke-based so it inherits color; scales cleanly to a favicon. */
 export function logo(size = 22, color = 'currentColor'): Raw {
   return raw(
-    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M5 21V10a7 7 0 0 1 14 0v11"/><path d="M4 21h16"/><path d="M12 4.2V21"/><path d="M5.6 13.5h12.8"/></svg>`,
+    `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V9.5a7 7 0 0 1 14 0V21"/><path d="M3.5 21h17"/><circle cx="12" cy="12" r="1.6"/><path d="M12 13.6V17"/></svg>`,
   );
+}
+
+/** Two-tone StayLeased wordmark (mark + name). onDark tints the mark + accent
+ * for placement on the dark chrome; otherwise it uses the brand accent token. */
+export function wordmark(size = 22, onDark = false): Raw {
+  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#7aa8ff' : 'var(--accent)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
 }
 
 // ---------- nav registry ----------
@@ -125,11 +133,11 @@ export function shell(r: Rq, opts: ShellOpts): Res {
 
   const body = html`<div class="frame">
     <aside class="sidebar" id="sidebar">
-      <div class="brand">${logo(22, '#8b93f8')} <span>Oriel<span class="org">${orgName}</span></span></div>
+      <div class="brand">${logo(22, '#7aa8ff')} <span class="brand-name">Stay<span class="wm-accent">Leased</span><span class="org">${orgName}</span></span></div>
       <nav class="nav">${nav}</nav>
     </aside>
     <div class="main">
-      ${when(ctx.impersonatorId, () => html`<div class="impersonation">You are viewing Oriel as <b>${ctx.userName}</b> (impersonation is audited). <a href="/unimpersonate">Return to my account</a></div>`)}
+      ${when(ctx.impersonatorId, () => html`<div class="impersonation">You are viewing StayLeased as <b>${ctx.userName}</b> (impersonation is audited). <a href="/unimpersonate">Return to my account</a></div>`)}
       <header class="topbar">
         <button class="menu-btn" data-toggle="#sidebar" aria-label="Menu">${raw('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>')}</button>
         ${when(props.length > 0, () => html`<form method="post" action="/switch-property" class="prop-switch" data-autosubmit>
@@ -139,7 +147,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
           </select>
         </form>`)}
         <button class="searchbtn" data-palette-open type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="stext">Search everything…</span><kbd>⌘K</kbd></button>
-        ${when(can(ctx, 'ai:view'), () => html`<a class="searchbtn" href="/ask" title="Ask Oriel — questions over your own data" style="text-decoration:none">✨<span class="stext">Ask Oriel</span></a>`)}
+        ${when(can(ctx, 'ai:view'), () => html`<a class="searchbtn" href="/ask" title="Ask StayLeased — questions over your own data" style="text-decoration:none">✨<span class="stext">Ask StayLeased</span></a>`)}
         <div class="spacer"></div>
         <a class="bizdate" href="/dev/sim" title="Simulated business date — open Simulator Console"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</a>
         <div class="usermenu">
@@ -185,7 +193,7 @@ export function doc(title: string, body: Child, extraHead: Child = null): string
       <head>
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
-        <title>${title} · Oriel</title>
+        <title>${title} · StayLeased</title>
         <link rel="stylesheet" href="/assets/theme.css" />
         <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
         ${extraHead}
@@ -389,7 +397,7 @@ export function portalShell(
   );
   const body = html`<div class="portal">
     <div class="portal-top">
-      <div class="pt-brand">${logo(20, '#4653e5')} ${opts.propertyName || 'Oriel'}</div>
+      <div class="pt-brand">${logo(20, 'var(--accent)')} ${opts.propertyName || 'StayLeased'}</div>
       <div class="spacer"></div>
       <form method="post" action="/logout"><button class="chip" type="submit">Sign out</button></form>
     </div>

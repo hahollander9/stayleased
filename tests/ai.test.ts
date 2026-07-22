@@ -13,12 +13,12 @@ import {
   draftRenewalOutreach, evaluateCounter, onTimeStreak,
 } from '../src/modules/m17_ai/agents.ts';
 import { analyzeTranscript, analyzeCall } from '../src/modules/m17_ai/analysis.ts';
-import { askOriel } from '../src/modules/m17_ai/ask.ts';
+import { askStayLeased } from '../src/modules/m17_ai/ask.ts';
 import '../src/modules/m17_ai/pages.ts'; // registers executors + hooks live
 
 /** Phase 16 units: autonomy behavior (draft/approve/auto), grounded leasing
  * replies, emergency triage, payments guardrails + plan bounds, renewal
- * counter bands, transcript analysis, Ask Oriel correctness. */
+ * counter bands, transcript analysis, Ask StayLeased correctness. */
 
 const BD = '2026-07-26';
 let orgId: string;
@@ -247,23 +247,23 @@ test('call analysis: fixture transcript → summary, sentiment, tags, tasks, coa
   assert.ok(q1<any>(`SELECT id FROM followup_tasks WHERE lead_id=? AND kind LIKE 'ai:%'`, leadId), 'action item became a real task');
 });
 
-test('Ask Oriel: three cross-module questions return correct live numbers', () => {
+test('Ask StayLeased: three cross-module questions return correct live numbers', () => {
   const ctx = sysCtx(orgId);
   // 1. delinquency over $1,000 — Casey owes $1,700
-  const a1 = askOriel(ctx, 'delinquency over $1,000');
+  const a1 = askStayLeased(ctx, 'delinquency over $1,000');
   assert.equal(a1.matched, 'delinquency');
   assert.match(a1.summary, /1 household owing \$1,700\.00/);
   // 2. occupancy — 2 of 3 units occupied
-  const a2 = askOriel(ctx, 'what is our occupancy?');
+  const a2 = askStayLeased(ctx, 'what is our occupancy?');
   assert.equal(a2.matched, 'occupancy');
   assert.match(a2.summary, /33\.3% physical occupancy \(1\/3 units\)/);
   // 3. open work orders — the three triaged above
-  const a3 = askOriel(ctx, 'how many open work orders do we have');
+  const a3 = askStayLeased(ctx, 'how many open work orders do we have');
   assert.equal(a3.matched, 'workorders');
   assert.match(a3.summary, /3 open work orders/);
   // every ask is itself an audited action
   assert.ok(val<number>(`SELECT COUNT(*) FROM ai_actions WHERE org_id=? AND agent='ask'`, orgId)! >= 3);
   // fallback teaches instead of guessing
-  const fb = askOriel(ctx, 'what is the meaning of life');
+  const fb = askStayLeased(ctx, 'what is the meaning of life');
   assert.equal(fb.matched, 'fallback');
 });

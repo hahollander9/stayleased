@@ -1,9 +1,9 @@
-# Fidelity map — Oriel vs the Entrata product suite (§11)
+# Fidelity map — StayLeased vs the Entrata product suite (§11)
 
 Functional-parity checklist, kept current per phase. Every module is original
-work on deterministic simulators; names, copy and code are Oriel's own.
+work on deterministic simulators; names, copy and code are StayLeased's own.
 
-| Entrata product | Oriel module | Status |
+| Entrata product | StayLeased module | Status |
 | --- | --- | --- |
 | Entrata Core / Accounting, Budgeting, Job Costing | M9 | ✅ Dual-basis GL, AP w/ approvals + payment runs, bank rec to $0, period close, budgets + variance, capital projects w/ commitments |
 | LeadManager + Leasing Center | M3 | ✅ Guest cards, ILS feed sim, cadences, tours, quotes, round-robin center, funnel/ROI/agent analytics, call logs |
@@ -19,7 +19,7 @@ work on deterministic simulators; names, copy and code are Oriel's own.
 | Entrata BI + Reporting | M14 | ✅ Full §10 catalog (50 reports, one engine), as-of-date correctness + MetricSnapshots, custom builder, scheduled delivery, role dashboards, docs/metrics.md |
 | Message Center | M15 | ✅ Unified threads, shared inbox, templates w/ org overrides, segments + mass w/ consent + quiet hours, announcements, automation audit |
 | Procure to Pay + Bill Pay | M16 | ✅ Catalog POs w/ approval chains, vendor ack, receiving→inventory, OCR invoices, 2/3-way match + exceptions, early-pay terms, remittance, 1099 |
-| ELI / ELI+ / Essentials | M17 | ✅ MockLlm agents (leasing/maintenance/payments/renewals) w/ autonomy dials + supervised queue, call analysis, content studio, Ask Oriel |
+| ELI / ELI+ / Essentials | M17 | ✅ MockLlm agents (leasing/maintenance/payments/renewals) w/ autonomy dials + supervised queue, call analysis, content studio, Ask StayLeased |
 | Vertical solutions | M18 | ✅ Student (full, on Cardinal) + Affordable (full, on Foundry set-aside); military/commercial/manufactured per-spec-depth — see gaps |
 | Open API / integrations | M1.8 | ✅ REST v1 + API keys + HMAC webhooks + /developers reference |
 | Access Connect (smart access) | M7.5 | Simulated at the amenity-reservation level only (gap: no lock hardware sim) |
