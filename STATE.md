@@ -1,5 +1,44 @@
 # STATE.md — single source of truth for build progress
 
+## StayLeased rebrand + Entrata-caliber overhaul (post-M18) ✅
+
+The product is now **StayLeased** (the demo customer stays *Summit Ridge
+Management Co.*). Shipped on top of the completed M0–M18 build:
+
+- **Phase 1 — Total rebrand.** Every user-visible surface + internal identifier
+  moved Oriel → StayLeased: chrome, login, emails/PDF headers, portal,
+  marketing, error pages, API docs, seed console, docs, launchers,
+  `package.json`. New brand identity (keyed-door SVG mark + two-tone wordmark,
+  `favicon.svg`, azure accent `#2563eb`), SEO/OpenGraph on public pages, a
+  branded 404, `© 2026 StayLeased` footer. `src/lib/env.ts` makes every config
+  read `STAYLEASED_*` with the legacy `ORIEL_*` accepted as a fallback alias;
+  default DB is `data/stayleased.db`; cookies `sl_*`; webhook header
+  `X-StayLeased-Signature`. Render service name `stayleased`.
+- **Phase 2 (+ M2.5) — Top module bar + design tokens.** Entrata OXP-style
+  two-row navy chrome with nine dropdown module tabs (Dashboard, Leasing,
+  Residents, Financials, Property, Operations, Marketing, Messages, Reports);
+  the sidebar is now a mobile drawer; gear → **/setup** hub. New **property
+  wizard** (`/setup/wizard`) and **CSV Migration Center** (`/setup/import`,
+  properties/floorplans/units with template + dry-run preview). Navy chrome
+  tokens, visible focus rings (WCAG), setup/wizard component styles.
+- **Phase 3 — AI that works.** Real Anthropic adapter (`llmGenerate`, raw
+  `node:https` to api.anthropic.com, `ANTHROPIC_API_KEY` + `STAYLEASED_AI_MODEL`,
+  per-call + daily token caps, response cache, seamless MockLlm fallback,
+  key never exposed) + **Live/Demo brain** indicator on `/ai`. **Global kill
+  switch** (`ai_enabled`) enforced in the agent framework. **Deterministic
+  fair-housing guardrail** (`src/lib/fairhousing.ts`) with approved neutral
+  rewrites + a unit-test corpus, wired into the Leasing AI's prospect-facing
+  drafts.
+- **Phase 4 — Gaps.** Dashboard **trend sparklines** (occupancy, delinquency,
+  collections; inline SVG from MetricSnapshots).
+- **Phase 5 — Harden/ship.** Guardrail corpus + adapter tests + a rebrand
+  smoke test (`e2e/rebrand.test.ts`) that asserts no rendered page contains
+  "Oriel". Docs refreshed. Docker/render/robots/PORT unchanged.
+
+Deploy: `git push` main to github.com/hahollander9/stayleased (Render rebuilds,
+world reseeds). Optional live AI: set `ANTHROPIC_API_KEY` (+ `STAYLEASED_AI_MODEL`)
+in the Render dashboard — without it the site runs in deterministic demo mode.
+
 ## BUILD COMPLETE — all 19 phases (0-18) DONE ✅
 
 ### Phase checklist (§7)

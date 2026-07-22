@@ -54,9 +54,28 @@ flag, title/serial fields on the unit record. *Gap:* no manufactured
 community in the demo portfolio; behaviors surface when a property adopts the
 type.
 
+## StayLeased overhaul (post-M18)
+
+Closed on top of the M0–M18 build:
+
+- **Chrome parity with OXP.** Entrata-style top module bar (nine dropdown
+  tabs) replaces the desktop sidebar; sidebar is now a mobile drawer; gear →
+  a **/setup** administration hub with a **property wizard** and a **CSV
+  Migration Center** (properties/floorplans/units, template + dry-run preview).
+- **Live AI (ELI parity).** Real Anthropic adapter over raw HTTPS
+  (`ANTHROPIC_API_KEY` + `STAYLEASED_AI_MODEL`) with token/spend caps, caching,
+  and seamless MockLlm fallback; a Live/Demo brain indicator and a **global
+  kill switch** on `/ai`.
+- **Governance (the Entrata selling point).** A deterministic **fair-housing
+  guardrail** with approved neutral rewrites and a unit-test corpus, wired into
+  prospect-facing AI drafts; AI outputs labeled in the queue UI.
+- **Dashboards.** Trend **sparklines** (occupancy, delinquency, collections).
+
 ## Other logged gaps
 
 - Rewards / renter credit reporting (Homebody/RXP extras): not replicated.
+- CRM kanban / unified quick-reply inbox refresh, richer floor-plan matrix,
+  and AP-coding + comms AI agents: candidate follow-ups (base flows exist).
 - Smart-home/access hardware: not simulated.
 - Real payment/screening/email rails: intentionally simulator-only per spec.
 - ELI voice (live call handling): call ANALYSIS only; no live voice agent.
