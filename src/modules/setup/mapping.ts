@@ -137,6 +137,10 @@ export interface Mapping {
   preset: string | null;
   /** field keys the AI assist filled (for the review badge) */
   aiAssisted: string[];
+  /** 'ai' when a whole-document AI reading plan produced this mapping */
+  reader?: 'ai' | 'heuristic';
+  /** human-readable notes from the reader (sections found, rows skipped) */
+  notes?: string[];
 }
 
 /** Score a header against a field. exact synonym 3 · contains 2 · fuzzy 1. */

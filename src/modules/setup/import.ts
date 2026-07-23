@@ -18,6 +18,7 @@ import {
   type BatchRow, type Validation,
 } from './import_apply.ts';
 import { leasePdfRoutes, leasePdfLaneCard } from './import_leases.ts';
+import { aiPlanSpreadsheet, applyReadingPlan, aiReadPdfTable, mappingScore } from './ai_reader.ts';
 
 /** Migration Center — the working model's front door for data.
  * One principle: the customer uploads WHATEVER their old system produces
@@ -131,25 +132,59 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const kind = (KINDS.some((k) => k.key === rq.body.kind) ? String(rq.body.kind) : 'rent_roll') as ImportKind;
     const up = (rq.uploads || []).find((u) => u.field === 'file' && u.data.length);
-    if (!up) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'Choose a spreadsheet file to upload.', 'err');
+    if (!up) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'Choose a file to upload.', 'err');
     if (up.data.length > 15 * 1024 * 1024) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'File is too large (15 MB max).', 'err');
 
-    let sheets;
-    try {
-      sheets = parseSpreadsheet(up.filename || 'upload.csv', up.data, parseCsv);
-    } catch (e) {
-      return redirect(`/setup/import?tab=${tabFor(kind)}`, `Couldn't read that file (${(e as Error).message}). Export as .xlsx or .csv and try again.`, 'err');
+    let headers: string[];
+    let dataRows: string[][];
+    let mapping: Mapping;
+
+    const isPdf = /\.pdf$/i.test(up.filename || '') || (up.data.length > 4 && up.data.subarray(0, 4).toString('latin1') === '%PDF');
+    if (isPdf) {
+      // PDF rent rolls: the AI reads the whole table — no template involved
+      if (kind !== 'rent_roll') return redirect(`/setup/import?tab=${tabFor(kind)}`, 'PDF reading is available on the rent-roll lane.', 'err');
+      if (!llmStatus().live) {
+        return redirect('/setup/import?tab=rentroll', 'Reading PDF rent rolls needs the live AI (set ANTHROPIC_API_KEY on the server) — or export the report as Excel/CSV.', 'err');
+      }
+      const table = await aiReadPdfTable(up.data, kind);
+      if (!table) return redirect('/setup/import?tab=rentroll', 'The AI couldn\'t find a unit table in that PDF. If it\'s a lease agreement, use the Lease PDFs lane; otherwise try the Excel/CSV export.', 'err');
+      headers = table.headers;
+      dataRows = table.dataRows.slice(0, MAX_ROWS);
+      mapping = table.mapping;
+    } else {
+      let sheets;
+      try {
+        sheets = parseSpreadsheet(up.filename || 'upload.csv', up.data, parseCsv);
+      } catch (e) {
+        return redirect(`/setup/import?tab=${tabFor(kind)}`, `Couldn't read that file (${(e as Error).message}). Export as .xlsx or .csv and try again.`, 'err');
+      }
+      const sheet = sheets.filter((s) => s.rows.length > 1).sort((a, b) => b.rows.length - a.rows.length)[0];
+      if (!sheet) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'That file has no data rows.', 'err');
+
+      // Whole-sheet AI reading first: the model sees the entire grid and plans
+      // the read (header, columns, skip rows, property sections). Deterministic
+      // code executes the plan; heuristics remain the fallback and the tiebreak.
+      const plan = await aiPlanSpreadsheet({ ...sheet, rows: sheet.rows.slice(0, MAX_ROWS + 40) }, kind).catch(() => null);
+
+      const headerIdx = findHeaderRow(sheet.rows, kind);
+      const hHeaders = (sheet.rows[headerIdx] || []).map((h) => String(h));
+      const hRows = sheet.rows.slice(headerIdx + 1, headerIdx + 1 + MAX_ROWS).filter((row) => row.some((c) => String(c).trim() !== ''));
+      let hMapping = autoMap(hHeaders, kind);
+
+      const aiRead = plan ? applyReadingPlan(sheet.rows.slice(0, MAX_ROWS + 40), plan, kind) : null;
+      if (aiRead && aiRead.dataRows.length && mappingScore(aiRead.mapping.cols, kind) >= mappingScore(hMapping.cols, kind)) {
+        headers = aiRead.headers;
+        dataRows = aiRead.dataRows.slice(0, MAX_ROWS);
+        mapping = aiRead.mapping;
+      } else {
+        if (!hRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found under the header.', 'err');
+        hMapping = await aiAssistMapping(hHeaders, hRows, hMapping, kind);
+        headers = hHeaders;
+        dataRows = hRows;
+        mapping = hMapping;
+      }
     }
-    const sheet = sheets.filter((s) => s.rows.length > 1).sort((a, b) => b.rows.length - a.rows.length)[0];
-    if (!sheet) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'That file has no data rows.', 'err');
-
-    const headerIdx = findHeaderRow(sheet.rows, kind);
-    const headers = (sheet.rows[headerIdx] || []).map((h) => String(h));
-    const dataRows = sheet.rows.slice(headerIdx + 1, headerIdx + 1 + MAX_ROWS).filter((row) => row.some((c) => String(c).trim() !== ''));
-    if (!dataRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found under the header.', 'err');
-
-    let mapping = autoMap(headers, kind);
-    mapping = await aiAssistMapping(headers, dataRows, mapping, kind);
+    if (!dataRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found in that file.', 'err');
 
     // property targeting
     const propMode = String(rq.body.prop_mode || 'existing');
@@ -270,12 +305,16 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
   );
   const ai = llmStatus();
 
+  const aiLive = llmStatus().live;
   const uploader = (kind: ImportKind, extra?: Raw): Raw => html`
     <form method="post" action="/setup/import/upload" enctype="multipart/form-data">
       <input type="hidden" name="kind" value="${kind}" />
       <div class="form-grid">
-        ${field('Spreadsheet file', raw('<input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />'),
-          'Excel (.xlsx) or CSV — exactly as your old system exports it. Columns are auto-detected; you confirm before anything is written.')}
+        ${field(kind === 'rent_roll' && aiLive ? 'Rent roll file (Excel, CSV, or PDF)' : 'Spreadsheet file',
+          raw(`<input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm${kind === 'rent_roll' && aiLive ? ',.pdf,application/pdf' : ''},text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />`),
+          kind === 'rent_roll' && aiLive
+            ? 'Exactly as your old system exports it — Excel, CSV, or even a PDF report. The AI reads the whole document (multi-property sections, subtotal rows and all); you confirm before anything is written.'
+            : 'Excel (.xlsx) or CSV — exactly as your old system exports it. Columns are auto-detected; you confirm before anything is written.')}
         ${kind === 'rent_roll'
           ? field('Import into', raw(`<div>
               <label style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><input type="radio" name="prop_mode" value="existing" ${props.length ? 'checked' : ''}/> Existing property:&nbsp;</label>
@@ -297,7 +336,7 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
     ['rentroll', 'Rent roll (everything)', html`
       ${card('Upload your rent roll — the whole portfolio in one file', html`
         <p class="muted" style="margin-top:0">${KINDS[0]!.blurb} Works with exports from ${hjoin(PRESETS.map((p) => html`<b>${p.name}</b>`), raw(', ').s)} or any spreadsheet.
-        ${ai.live ? html` <span class="pill" title="Unrecognized columns get an AI mapping suggestion">AI mapping assist: on</span>` : html` <span class="muted small">(AI mapping assist off — heuristics only)</span>`}</p>
+        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span>` : html` <span class="muted small">(AI reading off — synonym auto-mapping only; add ANTHROPIC_API_KEY for whole-document reading incl. PDFs)</span>`}</p>
         ${uploader('rent_roll')}
         <div class="callout info" style="margin-top:10px">No file handy? <a href="/setup/import/template?kind=rent_roll">Download the Excel template</a> — or try the sample to see the flow.</div>
       `)}`],
@@ -390,6 +429,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
       ${when(!!preset, () => html`<div class="callout info">Recognized a <b>${preset!.name}</b> export — its columns were pre-mapped. Adjust anything below.</div>`)}
+      ${when(mapping.reader === 'ai', () => html`<div class="callout info"><b>Read by AI.</b> The model read the whole document — header, columns, section labels and summary rows. ${(mapping.notes || []).join(' ')} Verify the mapping and preview below; nothing imports until you apply.</div>`)}
       ${when(mapping.aiAssisted.length, () => html`<div class="callout info">AI assist mapped: ${mapping.aiAssisted.join(', ')} — double-check those selects below.</div>`)}
 
       <form method="post" action="/setup/import/b/${batch.id}/mapping">

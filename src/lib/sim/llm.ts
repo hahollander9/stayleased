@@ -122,8 +122,12 @@ import { request as httpsRequest } from 'node:https';
 const API_KEY = process.env.ANTHROPIC_API_KEY || env('LLM_KEY') || '';
 export const AI_MODEL = process.env.STAYLEASED_AI_MODEL || 'claude-opus-4-8';
 const TOKENS_PER_CALL_CAP = Math.max(64, parseInt(process.env.STAYLEASED_AI_MAX_TOKENS || '700', 10) || 700);
+// structured document extraction (rent-roll PDFs, reading plans) needs far
+// more output room than a chat reply; still bounded, still under the daily cap
+const EXTRACT_TOKEN_CAP = Math.max(1000, parseInt(process.env.STAYLEASED_AI_EXTRACT_MAX_TOKENS || '8000', 10) || 8000);
 const DAILY_TOKEN_CAP = Math.max(0, parseInt(process.env.STAYLEASED_AI_DAILY_TOKEN_CAP || '250000', 10) || 250000);
 const CALL_TIMEOUT_MS = 12000;
+const EXTRACT_TIMEOUT_MS = 75000;
 
 let provider: LlmProvider = MockLlm;
 if (API_KEY) provider = makeAnthropicLlm(API_KEY);
@@ -161,11 +165,11 @@ type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } };
 
-function anthropicCall(system: string | undefined, prompt: string | ContentBlock[], maxTokens: number): Promise<{ text: string; outTokens: number }> {
+function anthropicCall(system: string | undefined, prompt: string | ContentBlock[], maxTokens: number, timeoutMs = CALL_TIMEOUT_MS): Promise<{ text: string; outTokens: number }> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model: AI_MODEL,
-      max_tokens: Math.min(maxTokens, TOKENS_PER_CALL_CAP),
+      max_tokens: maxTokens,
       ...(system ? { system } : {}),
       messages: [{ role: 'user', content: prompt }],
     });
@@ -180,7 +184,7 @@ function anthropicCall(system: string | undefined, prompt: string | ContentBlock
           'anthropic-version': '2023-06-01',
           'content-length': Buffer.byteLength(body),
         },
-        timeout: CALL_TIMEOUT_MS,
+        timeout: timeoutMs,
       },
       (res) => {
         let buf = '';
@@ -221,7 +225,7 @@ export async function llmExtractPdf(opts: { system?: string; prompt: string; pdf
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: opts.pdf.toString('base64') } },
       { type: 'text', text: opts.prompt },
     ];
-    const { text, outTokens } = await anthropicCall(opts.system, blocks, opts.maxTokens ?? TOKENS_PER_CALL_CAP);
+    const { text, outTokens } = await anthropicCall(opts.system, blocks, Math.min(opts.maxTokens ?? TOKENS_PER_CALL_CAP, EXTRACT_TOKEN_CAP), EXTRACT_TIMEOUT_MS);
     if (!text) return { text: opts.fallback, live: false, cached: false };
     spend.tokens += outTokens || Math.ceil(text.length / 4);
     return { text, live: true, cached: false };
@@ -230,14 +234,15 @@ export async function llmExtractPdf(opts: { system?: string; prompt: string; pdf
   }
 }
 
-export async function llmGenerate(opts: { system?: string; prompt: string; fallback: string; maxTokens?: number; cacheKey?: string }): Promise<LlmResult> {
+export async function llmGenerate(opts: { system?: string; prompt: string; fallback: string; maxTokens?: number; cacheKey?: string; extended?: boolean }): Promise<LlmResult> {
   if (!API_KEY) return { text: opts.fallback, live: false, cached: false };
   const key = opts.cacheKey ?? String(h((opts.system || '') + ' ' + opts.prompt + ' ' + AI_MODEL));
   const hit = cacheGet(key);
   if (hit !== undefined) return { text: hit, live: true, cached: true };
   if (!withinDailyCap()) return { text: opts.fallback, live: false, cached: false };
   try {
-    const { text, outTokens } = await anthropicCall(opts.system, opts.prompt, opts.maxTokens ?? TOKENS_PER_CALL_CAP);
+    const cap = opts.extended ? EXTRACT_TOKEN_CAP : TOKENS_PER_CALL_CAP;
+    const { text, outTokens } = await anthropicCall(opts.system, opts.prompt, Math.min(opts.maxTokens ?? cap, cap), opts.extended ? EXTRACT_TIMEOUT_MS : CALL_TIMEOUT_MS);
     if (!text) return { text: opts.fallback, live: false, cached: false };
     spend.tokens += outTokens || Math.ceil(text.length / 4);
     cachePut(key, text);

@@ -104,3 +104,13 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
 - [x] `/setup/connections` honest rails page + waitlist capture
 - [x] Live-org one-time passwords (no demo1234 leakage)
 - Gates: tsc clean · 146 unit · 121 e2e
+
+## AI-first document reading (2026-07-23, later)
+
+- [x] Whole-sheet AI reading plans (header, columns, skip rows, property
+      sections) executed deterministically; heuristic fallback + tiebreak
+- [x] PDF rent rolls read directly to rows by live Claude (rent-roll lane
+      accepts .pdf when the key is set)
+- [x] Extended extraction budget (STAYLEASED_AI_EXTRACT_MAX_TOKENS, 75s timeout)
+- [x] Plan validation layer — model output never trusted blindly, never writes
+- Gates: tsc clean · 152 unit · 122 e2e
