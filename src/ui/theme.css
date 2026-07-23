@@ -536,3 +536,15 @@ svg.chart g.ct:hover .ctdot { r: 4.6px; }
   font-size: 10.5px; font-weight: 800; letter-spacing: .8px;
   padding: 2px 8px; border-radius: 99px; vertical-align: middle;
 }
+
+/* connections grid */
+.conn-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.conn-card { border: 1px solid var(--line, #e5e9f0); border-radius: 12px; padding: 14px 16px; display: flex; flex-direction: column; }
+.conn-head { font-weight: 600; margin-bottom: 4px; }
+@media (max-width: 860px) { .conn-grid { grid-template-columns: 1fr; } }
+
+/* what-to-upload checklist */
+.docs-list { display: grid; gap: 10px; }
+.docs-row { display: flex; gap: 12px; align-items: flex-start; }
+.docs-n { flex: none; width: 26px; height: 26px; border-radius: 8px; background: #eff6ff; color: #2563eb; font-weight: 800; font-size: 13px; display: flex; align-items: center; justify-content: center; margin-top: 2px; }
+.docs-unlock { color: #157f3d; margin-top: 3px; }

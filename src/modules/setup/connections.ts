@@ -3,7 +3,7 @@ import { redirect, type Router } from '../../lib/http.ts';
 import { requireStaff, type Ctx } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting, setSetting } from '../../lib/settings.ts';
-import { llmStatus } from '../../lib/sim/llm.ts';
+import { llmStatus, llmGenerate } from '../../lib/sim/llm.ts';
 import { env } from '../../lib/env.ts';
 import { dbPath } from '../../lib/db.ts';
 import { isAbsolute } from 'node:path';
@@ -125,34 +125,57 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const requested = getSetting<string[]>(ctx, 'integration_interest') || [];
     const list = rails(ctx);
+    const working = list.filter((x) => x.status === 'live');
+    const rest = list.filter((x) => x.status !== 'live');
+    const railCard = (rail: Rail): Raw => html`
+      <div class="conn-card">
+        <div class="conn-head">${rail.name} ${BADGE[rail.status]}</div>
+        <div class="muted small" style="flex:1">${rail.desc}</div>
+        ${when(!!rail.note, () => html`<div class="callout bad" style="margin:8px 0 0">${rail.note}</div>`)}
+        <div class="btn-row" style="margin-top:10px">
+          ${when(rail.key === 'ai', () => html`<form method="post" action="/setup/connections/test-ai"><button class="btn" type="submit">Test connection</button></form>`)}
+          ${when(rail.key === 'imports', () => html`<a class="btn" href="/setup/import">Try an import</a>`)}
+          ${when(!!rail.href && rail.key !== 'imports', () => html`<a class="btn btn-ghost" href="${rail.href}">Open</a>`)}
+          ${when(rail.status === 'waitlist', () =>
+            requested.includes(rail.key)
+              ? html`<span class="pill">Requested ✓</span>`
+              : html`<form method="post" action="/setup/connections/request"><input type="hidden" name="rail" value="${rail.key}" /><button class="btn btn-ghost" type="submit">Request access</button></form>`)}
+        </div>
+      </div>`;
     return shell(rq, {
       title: 'Connections',
       active: '/setup/connections',
       crumbs: [['Setup', '/setup'], ['Connections']],
       subtitle: ctx.orgKind === 'live'
-        ? 'What\'s live, what\'s simulated, and what\'s coming. No surprises — simulated rails are labeled, always.'
+        ? 'What\'s working, what\'s coming, and proof either way. Simulated rails are labeled, always.'
         : 'The demo org runs every external rail on deterministic simulators, so the whole product works offline.',
       content: html`
         ${platformStatusCard(ctx)}
-        ${list.map((rail) => card(null, html`
-          <div style="display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
-            <div style="flex:1;min-width:260px">
-              <div style="font-weight:600">${rail.name} ${BADGE[rail.status]}</div>
-              <div class="muted small" style="margin-top:4px">${rail.desc}</div>
-              ${when(!!rail.note, () => html`<div class="callout bad" style="margin-top:8px">${rail.note}</div>`)}
-            </div>
-            <div class="btn-row">
-              ${when(!!rail.href, () => html`<a class="btn btn-ghost" href="${rail.href}">Open</a>`)}
-              ${when(rail.status === 'waitlist', () =>
-                requested.includes(rail.key)
-                  ? html`<span class="pill">Requested ✓</span>`
-                  : html`<form method="post" action="/setup/connections/request"><input type="hidden" name="rail" value="${rail.key}" /><button class="btn btn-ghost" type="submit">Request access</button></form>`)}
-            </div>
-          </div>
-        `))}
+        ${card('Working now', html`<div class="conn-grid">${working.map(railCard)}</div>`)}
+        ${card(ctx.orgKind === 'live' ? 'Coming soon — join the waitlist' : 'Simulated in the demo world', html`<div class="conn-grid">${rest.map(railCard)}</div>`)}
         ${when(ctx.orgKind === 'demo', () => raw('<p class="muted small">Tip: in a live customer org this page shows waitlists instead of simulators — nothing simulated ever poses as a real rail.</p>'))}
       `,
     });
+  });
+
+  // Proof, not promises: run one tiny round-trip through the configured brain
+  // and report exactly what happened (model + latency, or the demo fallback).
+  r.post('/setup/connections/test-ai', requireStaff, async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const started = Date.now();
+    const res = await llmGenerate({
+      system: 'Reply with exactly: OK',
+      prompt: `Connection test from org ${ctx.orgId.slice(0, 12)} — reply OK.`,
+      fallback: 'OK (demo brain)',
+      maxTokens: 8,
+      cacheKey: `conn-test:${ctx.orgId}:${Date.now() % 60000}`,
+    });
+    const ms = Date.now() - started;
+    audit(ctx, 'org', ctx.orgId, 'ai_connection_test', null, { live: res.live, ms });
+    return redirect('/setup/connections', res.live
+      ? `Live round-trip confirmed: ${llmStatus().model} answered in ${ms}ms. Document reading and agents use this same connection.`
+      : `The demo brain answered (no ANTHROPIC_API_KEY configured, or the call fell back). Deterministic replies still work everywhere — set the key on the server for live AI.`,
+      res.live || ctx.orgKind !== 'live' ? undefined : 'err');
   });
 
   r.post('/setup/connections/request', requireStaff, (rq) => {

@@ -19,16 +19,16 @@ const NAV: { label: string; items: [string, string, string][] }[] = [
   {
     label: 'Platform',
     items: [
-      ['Leasing CRM & Leasing Center', '#agents', 'Speed-to-lead, tours, and pipeline in one queue'],
-      ['Marketing sites & listings', '#platform', 'Property sites with live pricing and inquiry-to-lead flow'],
-      ['Applications & screening', '#platform', 'Applicant portal, criteria, and decisioning'],
+      ['Rent collection', '#agents', 'Autopay, late-fee policy, and AI follow-up on every balance'],
+      ['Leasing CRM', '#agents', 'Every lead answered in seconds; tours booked while you sleep'],
+      ['Maintenance & turns', '#agents', 'Requests triaged 24/7, vendors dispatched with approval'],
+      ['Accounting', '#platform', 'Real double-entry books, bank rec, owner-ready statements'],
       ['Leases & e-sign', '#platform', 'Templates, packets, renewals, and signatures'],
-      ['Payments & receivables', '#agents', 'Rent, autopay, late-fee policy, collections'],
-      ['Accounting', '#platform', 'Dual-basis GL, AP, bank rec, close, budgets'],
-      ['Facilities & turns', '#agents', 'Work orders, PM schedules, inspections, vendors'],
-      ['Utilities & RUBS', '#platform', 'Reads, provider invoices, resident billing'],
-      ['Revenue intelligence', '#platform', 'Unit-level pricing and renewal offers'],
-      ['Business intelligence', '#platform', '50-report catalog, custom builder, scheduling'],
+      ['Applications & screening', '#platform', 'Applicant portal, criteria, and decisioning'],
+      ['Property sites & listings', '#platform', 'A leasing website per property with live pricing'],
+      ['Renewals & pricing', '#platform', 'Under-market flags and renewal offers in bounds'],
+      ['Reports', '#platform', '50-report catalog, custom builder, scheduled email'],
+      ['Utilities & RUBS', '#platform', 'Bill utilities back fairly when you need to'],
     ],
   },
   {
@@ -55,14 +55,13 @@ const NAV: { label: string; items: [string, string, string][] }[] = [
     ],
   },
   {
-    label: 'Solutions',
+    label: 'Who it\'s for',
     items: [
-      ['Multifamily', '#solutions', 'The core: leasing, payments, maintenance, renewals'],
-      ['Student housing', '#solutions', 'By-the-bed leases, guarantors, turn day'],
-      ['Affordable', '#solutions', 'Set-asides, certifications, utility allowances'],
-      ['Military', '#solutions', 'PCS clauses and allotment workflows'],
-      ['Commercial', '#solutions', 'CAM reconciliation and mixed-use'],
-      ['Manufactured housing', '#solutions', 'Lot rent and resident-owned homes'],
+      ['Self-managing owners', '#solutions', 'Your 10–100 doors, without the 11pm admin shift'],
+      ['Small management companies', '#solutions', 'Hundreds of doors on a two-person office'],
+      ['Growing portfolios', '#solutions', 'Institutional-grade books without the headcount'],
+      ['Switching from Buildium / AppFolio', '#walkthrough', 'Your rent roll imports in one afternoon'],
+      ['Switching from spreadsheets', '#walkthrough', 'Keep the spreadsheet — upload it, we build the rest'],
     ],
   },
 ];
@@ -102,12 +101,9 @@ const GOV_CARDS: { name: string; body: string }[] = [
 ];
 
 const SOLUTIONS: { name: string; body: string }[] = [
-  { name: 'Multifamily', body: 'The full operating system: leasing, payments, maintenance, accounting, renewals.' },
-  { name: 'Student', body: 'By-the-bed leases, guarantors, roommate groups, and the fall turn.' },
-  { name: 'Affordable', body: 'LIHTC set-asides, income certifications, utility allowances, compliance gates.' },
-  { name: 'Military', body: 'PCS-orders lease breaks and allotment-friendly payment flows.' },
-  { name: 'Commercial', body: 'CAM pools, reconciliation statements, and mixed-use portfolios.' },
-  { name: 'Manufactured', body: 'Lot rent, resident-owned homes, and community operations.' },
+  { name: 'Self-managing owners', body: 'You are the leasing agent, the maintenance coordinator, and the bookkeeper — usually after your day job. The AI takes the night shift: leads answered at 2am, rent chased politely, requests triaged before you wake up.' },
+  { name: 'Small management companies', body: 'Run hundreds of doors on a two-person office. One system for every property, owner-ready financials by default, and agents that do the follow-up your team never has time for.' },
+  { name: 'Growing portfolios', body: 'Institutional-grade double-entry books, bank reconciliation, and real reporting — without hiring the back office. Add buildings without adding headcount.' },
 ];
 
 function cube(n: number): string {
@@ -145,14 +141,14 @@ export function marketingHome(rq: Rq): Res {
 <section class="mk-hero" id="top">
   <div class="mk-wrap mk-hero-in">
     <div class="mk-hero-copy">
-      <div class="mk-kicker">The working model is live</div>
+      <div class="mk-kicker">For independent multifamily operators · 10–500 units</div>
       <h1>Autonomous property management</h1>
-      <p class="mk-sub">The agentic operating system for the places people live. Purpose-built AI workflows for leasing, operations, accounting — and everything in between.</p>
+      <p class="mk-sub">The property manager you can't afford to hire. Purpose-built AI workflows for leasing, rent collection, maintenance, and real accounting — sized for operators who do this without a corporate office.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Explore the live demo</a>
         ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="#walkthrough">Book a walkthrough</a>`}
       </div>
-      <div class="mk-hero-note">Move in from Buildium, AppFolio, or Yardi in one afternoon — upload a rent roll and the system builds itself.</div>
+      <div class="mk-hero-note">Moving from Buildium, AppFolio, or a spreadsheet? Upload your rent roll and the system builds itself — one afternoon, no implementation team.</div>
     </div>
     <div class="mk-hero-visual" aria-hidden="true">
       <div class="mk-frame">
@@ -264,9 +260,31 @@ export function marketingHome(rq: Rq): Res {
 
 <section class="mk-band" id="solutions">
   <div class="mk-wrap">
-    <h2 class="mk-h2">AI-driven performance for every property type.</h2>
+    <h2 class="mk-h2">Built for operators like you.</h2>
+    <p class="mk-lead">Enterprise platforms are built for 20,000-unit REITs with implementation teams. StayLeased is built for the people who actually own and run most of America's rentals.</p>
     <div class="mk-grid3">
       ${SOLUTIONS.map((s2) => html`<div class="mk-card"><h3>${s2.name}</h3><p>${s2.body}</p></div>`)}
+    </div>
+    <p class="muted" style="margin-top:18px;font-size:13.5px;color:#66707f">Student, affordable-program, or mixed units in your portfolio? They're supported — the platform handles by-the-bed leases and set-aside compliance when you need it.</p>
+  </div>
+</section>
+
+<section class="mk-band mk-band-alt" id="pricing">
+  <div class="mk-wrap">
+    <h2 class="mk-h2">Simple, honest pricing.</h2>
+    <p class="mk-lead">No quote-only games, no implementation fees, no sales gauntlet. Early-access partners run free while we build with them — and when pricing lands, it will be a per-unit price you can read on this page, an order of magnitude below the enterprise platforms.</p>
+    <div class="mk-price-row">
+      <div class="mk-price">
+        <div class="mk-price-tag">Early access</div>
+        <div class="mk-price-big">Free</div>
+        <p>Full platform. Import your portfolio, run your operation, keep your data — export any time. Invite code required.</p>
+        <a class="mk-btn mk-btn-solid" href="#walkthrough">Request an invite</a>
+      </div>
+      <div class="mk-price">
+        <div class="mk-price-tag">What it replaces</div>
+        <div class="mk-price-big">$300–800<span>/mo</span></div>
+        <p>Typical spend for a small portfolio on legacy software plus the hours you donate every week — the late-night rent chasing, the 2am maintenance calls, the spreadsheet bookkeeping.</p>
+      </div>
     </div>
   </div>
 </section>
@@ -304,7 +322,7 @@ export function marketingHome(rq: Rq): Res {
     <div><div class="mk-foot-head">Platform</div>${NAV[0]!.items.slice(0, 8).map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
     <div><div class="mk-foot-head">Residents</div>${NAV[1]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
     <div><div class="mk-foot-head">Intelligence</div>${NAV[2]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
-    <div><div class="mk-foot-head">Solutions</div>${NAV[3]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
+    <div><div class="mk-foot-head">Who it's for</div>${NAV[3]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
     <div><div class="mk-foot-head">Company</div>
       <a href="/login">Sign in</a>
       ${when(signupOpen, () => html`<a href="/signup">Create your company</a>`)}
@@ -512,6 +530,15 @@ a { color: inherit; text-decoration: none; }
 .mk-gov { border: 1px solid rgba(148,163,184,.25); border-radius: 12px; padding: 16px; background: rgba(255,255,255,.04); }
 .mk-gov h4 { font-size: 14px; margin-bottom: 6px; color: #fff; }
 .mk-gov p { font-size: 12.5px; color: #aeb9cd; }
+
+/* pricing */
+.mk-price-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 860px; }
+.mk-price { background: #fff; border: 1px solid var(--line); border-radius: 16px; padding: 26px; }
+.mk-price-tag { font-size: 11.5px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: var(--blue); margin-bottom: 8px; }
+.mk-price-big { font-size: 38px; font-weight: 800; letter-spacing: -1px; margin-bottom: 8px; }
+.mk-price-big span { font-size: 16px; font-weight: 600; color: var(--mut); }
+.mk-price p { color: var(--ink2); font-size: 14.5px; margin-bottom: 14px; }
+@media (max-width: 980px) { .mk-price-row { grid-template-columns: 1fr; } }
 
 /* walkthrough */
 .mk-two-col { display: grid; grid-template-columns: 1.1fr .9fr; gap: 40px; align-items: start; }

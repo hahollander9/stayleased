@@ -99,6 +99,34 @@ export function onboardingBanner(ctx: Ctx): Raw | null {
 
 const CHECK = raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>');
 
+/** The definitive "what to upload" panel: which documents, what each unlocks,
+ * and what starts automating once they're in. Shown on /welcome and the
+ * Import Hub so nobody has to guess what "ready" means. */
+export function docsChecklist(compact = false): Raw {
+  const ROWS: [string, string, string][] = [
+    ['Rent roll (Excel, CSV, or PDF)', 'The one file that matters. Units, floorplans, tenants, rents, lease dates, deposits, balances owed.',
+     'Unlocks: the whole portfolio — rent bills itself on the 1st, late fees follow your policy, delinquency outreach drafts automatically, occupancy and collections dashboards go live.'],
+    ['Signed lease PDFs (optional)', 'Your executed leases — AI reads tenants, rent, dates, deposit from each.',
+     'Unlocks: anything the rent roll missed, the source document attached to each lease, and renewal automation with real end dates.'],
+    ['Vendor list (optional)', 'Names, trades, contact info — from a spreadsheet or added as you go.',
+     'Unlocks: one-click dispatch on work orders and AI-drafted vendor messages in the approval queue.'],
+    ['Operating bank balance (one number)', 'Your account balance on the switch date — typed into a form, no file needed.',
+     'Unlocks: books that start from truth, so reconciliation and owner statements tie out from day one.'],
+    ['Balances owed (if not in the rent roll)', 'Per-unit amounts residents owe as of the switch date.',
+     'Unlocks: collections continuity — nobody\'s balance resets to zero, and the Payments AI picks up the follow-up.'],
+  ];
+  return card(compact ? null : 'What to have ready', html`
+    ${when(!compact, () => html`<p class="muted" style="margin-top:0">Most operators are fully set up from the first row alone. Everything else deepens the automation.</p>`)}
+    <div class="docs-list">
+      ${ROWS.map(([name, what, unlocks], i) => html`<div class="docs-row">
+        <div class="docs-n">${String(i + 1)}</div>
+        <div><b>${name}</b><div class="muted small">${what}</div><div class="docs-unlock small">${unlocks}</div></div>
+      </div>`)}
+    </div>
+    ${when(!compact, () => html`<p class="muted small" style="margin-bottom:0">After the upload: billing starts the month after your switch date (no double-charging), the scheduler runs your calendar — rent posting, late fees, lease rollovers, preventive maintenance — and every AI action lands in your approval queue until you dial up autonomy.</p>`)}
+  `);
+}
+
 export function routes(r: Router): void {
   r.get('/welcome', requireStaff, (rq) => {
     const ctx = rq.ctx as Ctx;
@@ -123,6 +151,7 @@ export function routes(r: Router): void {
             ${when(p.required_done, () => html`<form method="post" action="/welcome/dismiss"><button class="btn btn-ghost">Finish setup — go to dashboard</button></form>`)}
           </div>
         </div>
+        ${docsChecklist()}
         ${steps.map((s, i) => html`
           <div class="card" style="margin-bottom:10px;${s.done ? 'opacity:.72' : ''}">
             <div style="display:flex;gap:14px;align-items:flex-start">

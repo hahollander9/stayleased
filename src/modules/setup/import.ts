@@ -19,6 +19,7 @@ import {
 } from './import_apply.ts';
 import { leasePdfRoutes, leasePdfLaneCard } from './import_leases.ts';
 import { aiPlanSpreadsheet, applyReadingPlan, aiReadPdfTable, mappingScore } from './ai_reader.ts';
+import { docsChecklist } from './onboarding.ts';
 
 /** Migration Center — the working model's front door for data.
  * One principle: the customer uploads WHATEVER their old system produces
@@ -339,7 +340,8 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
         ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span>` : html` <span class="muted small">(AI reading off — synonym auto-mapping only; add ANTHROPIC_API_KEY for whole-document reading incl. PDFs)</span>`}</p>
         ${uploader('rent_roll')}
         <div class="callout info" style="margin-top:10px">No file handy? <a href="/setup/import/template?kind=rent_roll">Download the Excel template</a> — or try the sample to see the flow.</div>
-      `)}`],
+      `)}
+      ${docsChecklist()}`],
     ['leases', 'Lease PDFs', leasePdfLaneCard(ctx, props)],
     ['vendors', 'Vendors', card('Import vendors', html`
       <p class="muted" style="margin-top:0">${KINDS[1]!.blurb} <a href="/setup/import/template?kind=vendors">CSV template</a>.</p>

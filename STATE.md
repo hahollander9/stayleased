@@ -131,3 +131,19 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
       (persistent disk? live AI? signup open? org mode) — "is it actually
       connected" answered in-product
 - Gates: tsc clean · 153 unit · 127 e2e
+
+## Small-operator focus pass (2026-07-24)
+
+- [x] Full-site crawl (4 roles, 80+ routes incl. entity pages): zero 5xx —
+      structurally sound; shortfalls were fit, not breakage
+- [x] Marketing retargeted to independent multifamily 10–500 units: hero
+      kicker + value copy, Platform dropdown reordered to small-op priorities,
+      Solutions → "Who it's for" (3 personas + switching paths), verticals
+      grid → operator personas w/ programs-supported note, honest early-access
+      pricing band (Free early access vs $300–800/mo replaced spend)
+- [x] Connections v2: Platform-status panel + Working-now / Coming-soon card
+      grid + "Test connection" for the AI rail (real round-trip, reports model
+      + latency, or demo-brain honesty)
+- [x] "What to have ready" panel on /welcome + Import Hub: 5 documents, what
+      each unlocks, what automates after
+- Gates: tsc clean · 153 unit · 127 e2e

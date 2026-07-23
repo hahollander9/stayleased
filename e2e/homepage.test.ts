@@ -33,7 +33,9 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   assert.match(body, /Automation that fits the way you operate/);
   assert.match(body, /Functional agents embedded in every corner/);
   assert.match(body, /Autonomy that operates inside your rules/);
-  assert.match(body, /AI-driven performance for every property type/);
+  assert.match(body, /Built for operators like you/);
+  assert.match(body, /Simple, honest pricing/);
+  assert.match(body, /Self-managing owners/);
   assert.match(body, /Equal Housing Opportunity/);
   // all six ontology layers and five automation levels
   for (const layer of ['Workflow autonomy', 'Where agents act', 'System of action', 'System of context', 'System of record', 'Foundation']) {

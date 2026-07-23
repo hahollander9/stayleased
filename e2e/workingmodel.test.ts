@@ -168,12 +168,22 @@ test('gate: live org fences — no simulator, honest connections, no sim leads',
   const page = await newPage(browser);
   await login(page, base, 'casey@newco.test', 'longpassword1');
 
-  // connections page: waitlists, not fake toggles
+  // connections page: status panel, working-now vs coming-soon groups, waitlists
   await page.goto(`${base}/setup/connections`, { waitUntil: 'networkidle' });
   const conn = await page.content();
+  assert.match(conn, /Platform status/);
+  assert.match(conn, /Working now/);
+  assert.match(conn, /Coming soon/i);
   assert.match(conn, /Payments/);
-  assert.match(conn, /waitlist|Coming/i);
   assert.match(conn, /Migration Center|File import/);
+
+  // the AI connection test runs a real round-trip and reports honestly
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Test connection")')]);
+  assert.match(await page.content(), /demo brain answered|Live round-trip confirmed/i);
+
+  // the what-to-upload guide is on the onboarding page
+  await page.goto(`${base}/welcome`, { waitUntil: 'networkidle' });
+  assert.match(await page.content(), /What to have ready/);
 
   // simulator console is forbidden for live orgs
   const resp = await page.goto(`${base}/dev/sim`);
