@@ -157,7 +157,11 @@ function cachePut(k: string, v: string): void {
   cache.set(k, v);
 }
 
-function anthropicCall(system: string | undefined, prompt: string, maxTokens: number): Promise<{ text: string; outTokens: number }> {
+type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } };
+
+function anthropicCall(system: string | undefined, prompt: string | ContentBlock[], maxTokens: number): Promise<{ text: string; outTokens: number }> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model: AI_MODEL,
@@ -206,6 +210,26 @@ export interface LlmResult { text: string; live: boolean; cached: boolean; }
  * useful answer no matter what, and the demo stays reproducible. Raw model
  * errors are swallowed; only the boolean `live` reaches the UI.
  */
+/** Live-or-fallback extraction over a whole PDF: sends the document itself to
+ * the model (handles scans and odd encodings). Falls back like llmGenerate. */
+export async function llmExtractPdf(opts: { system?: string; prompt: string; pdf: Buffer; fallback: string; maxTokens?: number }): Promise<LlmResult> {
+  if (!API_KEY) return { text: opts.fallback, live: false, cached: false };
+  if (opts.pdf.length > 9_000_000) return { text: opts.fallback, live: false, cached: false };
+  if (!withinDailyCap()) return { text: opts.fallback, live: false, cached: false };
+  try {
+    const blocks: ContentBlock[] = [
+      { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: opts.pdf.toString('base64') } },
+      { type: 'text', text: opts.prompt },
+    ];
+    const { text, outTokens } = await anthropicCall(opts.system, blocks, opts.maxTokens ?? TOKENS_PER_CALL_CAP);
+    if (!text) return { text: opts.fallback, live: false, cached: false };
+    spend.tokens += outTokens || Math.ceil(text.length / 4);
+    return { text, live: true, cached: false };
+  } catch {
+    return { text: opts.fallback, live: false, cached: false };
+  }
+}
+
 export async function llmGenerate(opts: { system?: string; prompt: string; fallback: string; maxTokens?: number; cacheKey?: string }): Promise<LlmResult> {
   if (!API_KEY) return { text: opts.fallback, live: false, cached: false };
   const key = opts.cacheKey ?? String(h((opts.system || '') + ' ' + opts.prompt + ' ' + AI_MODEL));

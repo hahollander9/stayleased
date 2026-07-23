@@ -1,9 +1,10 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { spawnSync } from 'node:child_process';
 import { Router, createApp, fileRes, notFound, redirect, type Rq } from '../lib/http.ts';
 import { attachSession, requireStaff, type Ctx } from '../lib/auth.ts';
-import { db, ROOT } from '../lib/db.ts';
-import { startPoller } from '../lib/jobs.ts';
+import { db, ROOT, q1, closeDb } from '../lib/db.ts';
+import { startPoller, syncLiveOrgClocks } from '../lib/jobs.ts';
 import { html } from '../lib/html.ts';
 import { shell, card, emptyState } from '../ui/ui.ts';
 import { env } from '../lib/env.ts';
@@ -62,9 +63,35 @@ export function startServer(port: number): ReturnType<typeof createApp> {
   return app;
 }
 
+/** First-boot seeding: when the database has no orgs at all (fresh install or
+ * a brand-new persistent disk), build the demo world before serving. Runs in a
+ * child process so seed memory is released; the server does not listen until
+ * the world exists, which deploy health checks treat as "still starting". */
+function seedIfEmpty(): void {
+  if (env('SEED_ON_BOOT') === '0') return;
+  const empty = !q1('SELECT id FROM orgs LIMIT 1');
+  closeDb();
+  if (!empty) return;
+  console.log('Empty database — seeding the demo world (about a minute)...');
+  const r = spawnSync(
+    process.execPath,
+    ['--experimental-strip-types', '--no-warnings', join(ROOT, 'src/seed/seed.ts'), '--quiet'],
+    { cwd: ROOT, stdio: 'inherit' },
+  );
+  if (r.status !== 0) throw new Error(`seed failed with exit ${r.status}`);
+  console.log('Seed complete.');
+}
+
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop() || '@@');
 if (isMain) {
   const port = parseInt(process.env.PORT || '3000', 10);
+  if (env('MODE') !== 'test') seedIfEmpty();
   startServer(port);
-  if (env('MODE') !== 'test') startPoller(60000);
+  if (env('MODE') !== 'test') {
+    startPoller(60000);
+    // catch live orgs up to today shortly after boot (poller repeats this)
+    setTimeout(() => {
+      try { syncLiveOrgClocks(); } catch (e) { console.error('[clock]', (e as Error).message); }
+    }, 2000);
+  }
 }

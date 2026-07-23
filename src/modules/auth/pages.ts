@@ -14,8 +14,10 @@ import { audit } from '../../lib/audit.ts';
 import { authShell, logo, wordmark, runSearch, shell, card, dl } from '../../ui/ui.ts';
 import { ROLE_LABELS, type Role } from '../../lib/rbac.ts';
 import { env } from '../../lib/env.ts';
+import { signupRoutes } from './signup.ts';
 
 export function routes(r: Router): void {
+  signupRoutes(r);
   r.get('/login', (rq) => {
     if (rq.user) return redirect(landingFor(rq.user as UserRow));
     const flash = takeFlash(rq);
@@ -38,6 +40,7 @@ export function routes(r: Router): void {
           <div class="field"><label>Password</label><input name="password" type="password" required /></div>
           <button class="btn" style="width:100%;justify-content:center">Sign in</button>
         </form>
+        ${when(!!env('SIGNUP_CODE'), () => html`<p class="small muted" style="margin-top:12px;text-align:center">New to StayLeased? <a href="/signup">Create your company</a></p>`)}
         ${when(personas.length, () => html`
           <div class="demo-personas">
             <div class="dp-head">Explore the demo — choose a role to sign in</div>
@@ -145,6 +148,13 @@ export function landingFor(user: UserRow): string {
     case 'applicant': return '/portal/apply';
     case 'guarantor': return '/portal';
     case 'platform': return '/admin/orgs';
-    default: return '/';
+    default: {
+      // a live org with nothing in it yet lands on guided onboarding
+      if (user.org_id) {
+        const org = q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', user.org_id);
+        if (org?.kind === 'live' && !q1('SELECT id FROM properties WHERE org_id=? LIMIT 1', user.org_id)) return '/welcome';
+      }
+      return '/';
+    }
   }
 }

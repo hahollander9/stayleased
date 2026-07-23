@@ -2,7 +2,7 @@ import { q, q1, val, insert, run, j, js, tx } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, addMonths, monthKey, fmtDate, diffDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
-import { assertPerm, type Ctx } from '../../lib/auth.ts';
+import { assertPerm, type Ctx , tempPassword } from '../../lib/auth.ts';
 import { getSetting } from '../../lib/settings.ts';
 import { audit } from '../../lib/audit.ts';
 import { emit } from '../../lib/events.ts';
@@ -110,7 +110,7 @@ export function assignBed(
       userId = id('usr');
       insert('users', {
         id: userId, org_id: ctx.orgId, email: opts.email, name: `${opts.firstName} ${opts.lastName}`,
-        kind: 'resident', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+        kind: 'resident', password_hash: hashPassword(ctx.orgKind === 'live' ? tempPassword() : 'demo1234'), active: 1, created_at: nowIso(),
       });
     }
     const rid = id('res');
@@ -126,7 +126,7 @@ export function assignBed(
         gUserId = id('usr');
         insert('users', {
           id: gUserId, org_id: ctx.orgId, email: opts.guarantor.email, name: opts.guarantor.name,
-          kind: 'resident', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+          kind: 'resident', password_hash: hashPassword(ctx.orgKind === 'live' ? tempPassword() : 'demo1234'), active: 1, created_at: nowIso(),
         });
       }
       const gid = id('res');

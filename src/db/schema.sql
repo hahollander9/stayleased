@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS orgs (
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
   business_date TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'demo', -- demo (simulated world) | live (real customer org)
   created_at TEXT NOT NULL
 );
 
@@ -325,6 +326,7 @@ CREATE TABLE IF NOT EXISTS leases (
   packet_file_id TEXT,
   esign_request_id TEXT,
   bed_label TEXT, -- student by-the-bed leases (M18)
+  billing_start_date TEXT, -- migration conversion: recurring billing begins here
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_leases_unit ON leases(org_id, unit_id, status);
@@ -1948,3 +1950,26 @@ CREATE TABLE IF NOT EXISTS pcs_breaks (
 CREATE INDEX IF NOT EXISTS idx_inspol_lease ON insurance_policies(lease_id, status, end_date);
 CREATE INDEX IF NOT EXISTS idx_inspol_org ON insurance_policies(org_id, status, end_date);
 CREATE INDEX IF NOT EXISTS idx_charges_due ON charges(lease_id, status, due_date);
+
+-- ---------- working model: Migration Center staging ----------
+
+CREATE TABLE IF NOT EXISTS import_batches (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  kind TEXT NOT NULL, -- rent_roll|vendors|residents|balances|lease_pdf
+  filename TEXT,
+  property_id TEXT, -- target property (rent rolls may instead group by a property column)
+  new_property_name TEXT, -- create-and-import-into when set
+  preset TEXT, -- detected source system (buildium|appfolio|yardi|...)
+  headers TEXT NOT NULL DEFAULT '[]',
+  mapping TEXT NOT NULL DEFAULT '{}', -- {cols:{i:field}, preset, aiAssisted:[]}
+  rows TEXT NOT NULL DEFAULT '[]', -- raw grid under the header row
+  staged TEXT NOT NULL DEFAULT '[]', -- lease_pdf lane: extracted drafts
+  as_of TEXT, -- conversion date for balances/leases
+  status TEXT NOT NULL DEFAULT 'staged', -- staged|applied|discarded
+  summary TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  applied_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_imp_org ON import_batches(org_id, status, created_at);

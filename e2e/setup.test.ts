@@ -53,10 +53,10 @@ test('gate: setup hub → property wizard creates a property with units', async 
   await page.close();
 });
 
-test('gate: Migration Center previews then imports units from CSV', async () => {
+test('gate: Migration Center previews then imports units from CSV (legacy templates)', async () => {
   const page = await newPage(browser);
   await login(page, base, 'admin@summitridge.demo');
-  await page.goto(`${base}/setup/import?entity=units`, { waitUntil: 'networkidle' });
+  await page.goto(`${base}/setup/import/legacy?entity=units`, { waitUntil: 'networkidle' });
   await page.selectOption('select[name=property]', { label: 'Summit Ridge Apartments' });
   const csv = 'unit_number,floorplan,sqft,market_rent,status\n9001,CSV Import Plan,760,1499,vacant_ready\n9002,CSV Import Plan,760,1499,occupied\n';
   await page.fill('textarea[name=csv]', csv);

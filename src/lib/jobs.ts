@@ -27,7 +27,18 @@ export function jobDefs(): JobDef[] {
   return [...registry.values()];
 }
 
+/** Jobs that FABRICATE world activity (inbound leads, bank transactions,
+ * meter reads + provider invoices). They exist so the demo org feels alive.
+ * Live customer orgs must never run them — a real company's books cannot
+ * grow simulated data. Real integrations will replace them per rail. */
+export const SIM_ONLY_JOBS = new Set(['ils_leads', 'bank_feed', 'utility_cycle']);
+
+export function orgKind(orgId: string): 'demo' | 'live' {
+  return (q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', orgId)?.kind as 'demo' | 'live') || 'demo';
+}
+
 export function ensureJobRows(orgId: string): void {
+  const live = orgKind(orgId) === 'live';
   for (const def of registry.values()) {
     const existing = q1('SELECT id FROM jobs WHERE org_id=? AND key=?', orgId, def.key);
     if (!existing) {
@@ -37,7 +48,7 @@ export function ensureJobRows(orgId: string): void {
         key: def.key,
         name: def.name,
         describe: def.describe,
-        enabled: 1,
+        enabled: live && SIM_ONLY_JOBS.has(def.key) ? 0 : 1,
         last_run_date: null,
         last_status: null,
         last_ms: null,
@@ -85,9 +96,11 @@ export function runJob(ctx: Ctx, key: string, date: string): { status: string; s
 
 export function runJobsForDay(orgId: string, date: string): void {
   ensureJobRows(orgId);
+  const live = orgKind(orgId) === 'live';
   const enabled = q<{ key: string }>('SELECT key FROM jobs WHERE org_id=? AND enabled=1', orgId);
   const ctx = sysCtx(orgId, date);
   for (const row of enabled) {
+    if (live && SIM_ONLY_JOBS.has(row.key)) continue; // belt-and-braces: never fabricate data in a live org
     if (registry.has(row.key)) runJob(ctx, row.key, date);
   }
 }
@@ -113,10 +126,40 @@ export function advanceBusinessDate(orgId: string, toDate: string): { days: numb
   return { days };
 }
 
-/** wall-clock poller: re-run today's jobs periodically (idempotent) + webhooks */
+/** "Today" for live orgs. Anchored to UTC-8 (the most conservative US zone)
+ * so the business day never rolls before local midnight anywhere in the US:
+ * rent posts in the small hours of the 1st everywhere rather than the
+ * evening of the 31st on the coasts. Per-org timezones can refine this later. */
+export function liveToday(): string {
+  return new Date(Date.now() - 8 * 3600_000).toISOString().slice(0, 10);
+}
+
+/** Live orgs run on the real calendar: whenever the wall clock has moved past
+ * an org's business date, advance it day by day through the normal scheduler
+ * (rent posting, late fees, lease rollover, ...). Demo orgs keep their
+ * simulator time machine and are untouched here. */
+export function syncLiveOrgClocks(): number {
+  const today = liveToday();
+  let advanced = 0;
+  for (const org of q<{ id: string; business_date: string }>(`SELECT id, business_date FROM orgs WHERE kind='live'`)) {
+    if (org.business_date < today) {
+      try {
+        advanceBusinessDate(org.id, today);
+        advanced++;
+      } catch (e) {
+        console.error(`[clock] org ${org.id}:`, (e as Error).message);
+      }
+    }
+  }
+  return advanced;
+}
+
+/** wall-clock poller: keep live-org clocks current, re-run today's jobs
+ * periodically (idempotent), and deliver webhooks */
 export function startPoller(intervalMs = 60000): { stop: () => void } {
   const t = setInterval(() => {
     try {
+      syncLiveOrgClocks();
       const orgs = q<{ id: string; business_date: string }>('SELECT id, business_date FROM orgs');
       for (const org of orgs) {
         runJobsForDay(org.id, org.business_date);

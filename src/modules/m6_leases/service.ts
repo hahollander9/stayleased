@@ -4,7 +4,7 @@ import { id, token } from '../../lib/ids.ts';
 import { nowIso, addDays, addMonths, fmtDate, monthKey, diffDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
-import { sysCtx, hashPassword } from '../../lib/auth.ts';
+import { sysCtx, hashPassword , tempPassword } from '../../lib/auth.ts';
 import { emit, on } from '../../lib/events.ts';
 import { getSetting } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
@@ -412,7 +412,7 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
             userId = id('usr');
             insert('users', {
               id: userId, org_id: ctx.orgId, email: a.email, name: `${a.first_name} ${a.last_name}`.trim() || a.email,
-              kind: 'resident', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+              kind: 'resident', password_hash: hashPassword(ctx.orgKind === 'live' ? tempPassword() : 'demo1234'), active: 1, created_at: nowIso(),
             });
           }
         }

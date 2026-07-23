@@ -1,13 +1,25 @@
-# One-click Render blueprint: https://render.com → New → Blueprint → point at this repo.
-# Deploys the Docker image (seeded demo world baked in) on the free plan with
-# a free <name>.onrender.com URL. Free instances sleep when idle and reset to
-# the pristine seed on wake — exactly right for a demo.
+# Render blueprint for the WORKING model: always-on instance + persistent disk
+# so real customer data survives restarts and deploys.
+#
+# If the service was created by hand (not from this blueprint), apply the same
+# settings in the dashboard: Settings -> Instance Type -> Starter; Disks -> Add
+# Disk (mount /data, 1 GB); Environment -> add the env vars below.
 services:
   - type: web
     name: stayleased
     runtime: docker
-    plan: free
+    plan: starter # always-on; the free plan sleeps and has no disks
     healthCheckPath: /login
+    disk:
+      name: stayleased-data
+      mountPath: /data
+      sizeGB: 1
     envVars:
       - key: STAYLEASED_MODE
         value: demo
+      - key: STAYLEASED_DB
+        value: /data/stayleased.db # customer data lives on the disk, not the image
+      - key: STAYLEASED_SIGNUP_CODE
+        sync: false # invite code for /signup -- set in the dashboard, never in git
+      - key: ANTHROPIC_API_KEY
+        sync: false # console.anthropic.com key; flips AI from demo brain to live

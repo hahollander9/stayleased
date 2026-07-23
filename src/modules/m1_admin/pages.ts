@@ -3,7 +3,7 @@ import {
   redirect, notFound, forbidden, fileRes, type Router, type Rq, badRequest,
 } from '../../lib/http.ts';
 import {
-  requirePerm, requireUser, devOnly, hashPassword, type Ctx, sysCtx, requireStaff,
+  requirePerm, requireUser, devOnly, hashPassword, tempPassword, type Ctx, sysCtx, requireStaff,
 } from '../../lib/auth.ts';
 import { q, q1, run, insert, j, js, val, update } from '../../lib/db.ts';
 import { id, token } from '../../lib/ids.ts';
@@ -29,7 +29,7 @@ registerNav('Admin', { href: '/admin/settings', label: 'Settings', perm: 'admin:
 registerNav('Admin', { href: '/admin/audit', label: 'Audit log', perm: 'admin:audit' });
 registerNav('Admin', { href: '/admin/jobs', label: 'Scheduled jobs', perm: 'admin:jobs' });
 registerNav('Admin', { href: '/admin/api', label: 'API & webhooks', perm: 'admin:api' });
-registerNav('Developer', { href: '/dev/sim', label: 'Simulator console', perm: 'dev:console' });
+registerNav('Developer', { href: '/dev/sim', label: 'Simulator console', perm: 'dev:console', demoOnly: true });
 registerNav('Developer', { href: '/dev/messages', label: 'Message console', perm: 'dev:console' });
 
 registerSearch((ctx, query) => {
@@ -102,9 +102,11 @@ export function routes(r: Router): void {
           ${u ? field('Status', select('active', [['1', 'Active'], ['0', 'Deactivated']], String(u.active))) : null}
         </div>
         <div class="btn-row">
-          <button class="btn">${u ? 'Save changes' : 'Create & set demo password'}</button>
+          <button class="btn">${u ? 'Save changes' : 'Create account'}</button>
           <a class="btn btn-ghost" href="/admin/staff">Cancel</a>
-          ${u ? html`<span class="muted small">Password resets to demo1234 only on request below.</span>` : html`<span class="muted small">New accounts get password <code>demo1234</code> (demo build).</span>`}
+          ${u
+            ? html`<span class="muted small">${(rq.ctx as Ctx).orgKind === 'live' ? 'Password resets generate a one-time password shown to you once.' : 'Password resets to demo1234 only on request below.'}</span>`
+            : html`<span class="muted small">${(rq.ctx as Ctx).orgKind === 'live' ? 'A one-time password is generated and shown to you once — share it securely.' : html`New accounts get password <code>demo1234</code> (demo build).`}</span>`}
         </div>
       </form>`,
     );
@@ -119,13 +121,17 @@ export function routes(r: Router): void {
     const email = String(rq.body.email || '').trim().toLowerCase();
     if (q1('SELECT id FROM users WHERE email=?', email)) return redirect('/admin/staff/new', 'That email is already in use.', 'err');
     const uid = id('usr');
+    const live = ctx.orgKind === 'live';
+    const pw = live ? tempPassword() : 'demo1234';
     insert('users', {
       id: uid, org_id: ctx.orgId, email, name: String(rq.body.name || '').trim(), phone: rq.body.phone || null,
-      kind: 'staff', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+      kind: 'staff', password_hash: hashPassword(pw), active: 1, created_at: nowIso(),
     });
     saveGrant(ctx, uid, rq);
     audit(ctx, 'user', uid, 'create', null, { email, name: rq.body.name, role: rq.body.role });
-    return redirect(`/admin/staff/${uid}`, 'Staff member created (password demo1234).');
+    return redirect(`/admin/staff/${uid}`, live
+      ? `Staff member created. One-time password (share securely, shown only now): ${pw}`
+      : 'Staff member created (password demo1234).');
   });
 
   r.get('/admin/staff/:id', requirePerm('admin:staff'), (rq) => {
@@ -166,9 +172,13 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const u = q1<any>('SELECT * FROM users WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!u) return notFound();
-    run('UPDATE users SET password_hash=? WHERE id=?', hashPassword('demo1234'), u.id);
+    const live = ctx.orgKind === 'live';
+    const pw = live ? tempPassword() : 'demo1234';
+    run('UPDATE users SET password_hash=? WHERE id=?', hashPassword(pw), u.id);
     audit(ctx, 'user', u.id, 'password_reset');
-    return redirect(`/admin/staff/${u.id}`, 'Password reset to demo1234.');
+    return redirect(`/admin/staff/${u.id}`, live
+      ? `Password reset. One-time password (shown only now): ${pw}`
+      : 'Password reset to demo1234.');
   });
 
   // permission matrix

@@ -8,8 +8,9 @@ export function toCsv(headers: string[], rows: (string | number | null | undefin
   return [headers.map(cell).join(','), ...rows.map((r) => r.map(cell).join(','))].join('\r\n') + '\r\n';
 }
 
-/** Minimal RFC-4180-ish CSV parser: quoted fields, escaped "" quotes, CRLF. */
-export function parseCsv(text: string): string[][] {
+/** Minimal RFC-4180-ish parser: quoted fields, escaped "" quotes, CRLF.
+ * `delim` supports comma (default), semicolon, and tab exports. */
+export function parseCsv(text: string, delim = ','): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];
   let field = '';
@@ -22,7 +23,7 @@ export function parseCsv(text: string): string[][] {
         if (s[i + 1] === '"') { field += '"'; i++; } else inQ = false;
       } else field += c;
     } else if (c === '"') inQ = true;
-    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === delim) { row.push(field); field = ''; }
     else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
     else if (c === '\r') { /* handled by \n */ }
     else field += c;

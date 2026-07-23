@@ -1,6 +1,6 @@
 import { DatabaseSync, type StatementSync } from 'node:sqlite';
 import { readFileSync, mkdirSync, existsSync } from 'node:fs';
-import { dirname, join as pjoin } from 'node:path';
+import { dirname, join as pjoin, isAbsolute } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { env } from './env.ts';
 
@@ -18,7 +18,11 @@ let _db: DatabaseSync | null = null;
 const stmtCache = new Map<string, StatementSync>();
 
 export function dbPath(): string {
-  return pjoin(ROOT, env('DB') || 'data/stayleased.db');
+  const p = env('DB') || 'data/stayleased.db';
+  // Absolute paths (e.g. /data/stayleased.db on a Render persistent disk) are
+  // used verbatim so customer data can live outside the app image; relative
+  // paths stay ROOT-anchored for local dev and tests.
+  return isAbsolute(p) ? p : pjoin(ROOT, p);
 }
 
 export function db(): DatabaseSync {
@@ -45,6 +49,8 @@ export function db(): DatabaseSync {
     "ALTER TABLE units ADD COLUMN utility_allowance_cents INTEGER NOT NULL DEFAULT 0", // reduces tenant rent portion
     "ALTER TABLE units ADD COLUMN home_serial TEXT", // Phase 17: manufactured housing title/serial
     "ALTER TABLE units ADD COLUMN resident_owned INTEGER NOT NULL DEFAULT 0", // manufactured: resident-owned home on our lot
+    "ALTER TABLE orgs ADD COLUMN kind TEXT NOT NULL DEFAULT 'demo'", // working model: demo (simulated world) vs live (real customer)
+    "ALTER TABLE leases ADD COLUMN billing_start_date TEXT", // migration conversion: recurring billing begins here (opening balance covers everything before)
   ];
   for (const m of MIGRATIONS) {
     try {

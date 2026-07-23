@@ -1,3 +1,4 @@
+import { onboardingBanner } from '../setup/onboarding.ts';
 import { html, raw, when, join } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, requireStaff, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
@@ -613,6 +614,7 @@ function portfolioDashboard(rq: Rq) {
     active: '/',
     subtitle: `Roll-up across ${sums.length} propert${sums.length === 1 ? 'y' : 'ies'} · business date ${fmtDate(ctx.businessDate)}`,
     content: html`
+      ${onboardingBanner(ctx)}
       ${kpis([
         { label: 'Units', value: org.total },
         { label: 'Occupancy', value: `${org.occupancyPct}%`, tone: org.occupancyPct >= 93 ? 'ok' : 'warn', sub: `${org.occupied} occupied` },

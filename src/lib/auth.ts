@@ -14,6 +14,13 @@ export function hashPassword(pw: string): string {
   return `scrypt$${salt}$${hash}`;
 }
 
+/** Random one-time password for accounts created inside LIVE orgs — shown
+ * once to the admin (staff) or held unusable until reset (residents). Demo
+ * orgs keep the universal demo1234 so the public demo stays one-click. */
+export function tempPassword(): string {
+  return 'sl-' + token(6); // 12 hex chars, e.g. sl-9f2c41ab03de
+}
+
 export function verifyPassword(pw: string, stored: string): boolean {
   const [alg, salt, hash] = stored.split('$');
   if (alg !== 'scrypt' || !salt || !hash) return false;
@@ -74,6 +81,8 @@ export interface Ctx {
   /** UI property switcher selection; null = all accessible */
   currentPropertyId: string | null;
   businessDate: string;
+  /** demo = simulated world with a time machine; live = real customer org on the real calendar */
+  orgKind: 'demo' | 'live';
   impersonatorId: string | null;
   vendorId: string | null;
 }
@@ -93,7 +102,7 @@ export function buildCtx(user: UserRow, currentPropertyId: string | null, impers
     ? []
     : [...new Set(grants.flatMap((g) => j<string[]>(g.property_ids, [])))];
   const org = user.org_id
-    ? q1<{ business_date: string }>('SELECT business_date FROM orgs WHERE id=?', user.org_id)
+    ? q1<{ business_date: string; kind: string }>('SELECT business_date, kind FROM orgs WHERE id=?', user.org_id)
     : undefined;
   return {
     orgId: user.org_id || '',
@@ -107,6 +116,7 @@ export function buildCtx(user: UserRow, currentPropertyId: string | null, impers
     allProperties,
     currentPropertyId,
     businessDate: org?.business_date || new Date().toISOString().slice(0, 10),
+    orgKind: (org?.kind as 'demo' | 'live') || 'demo',
     impersonatorId,
     vendorId: (user as any).vendor_id ?? null,
   };
@@ -151,7 +161,7 @@ export function scopeFilter(ctx: Ctx, col = 'property_id'): { sql: string; param
 
 /** system context for jobs/seed (full org access, no user) */
 export function sysCtx(orgId: string, businessDate?: string): Ctx {
-  const org = q1<{ business_date: string }>('SELECT business_date FROM orgs WHERE id=?', orgId);
+  const org = q1<{ business_date: string; kind: string }>('SELECT business_date, kind FROM orgs WHERE id=?', orgId);
   return {
     orgId,
     userId: 'system',
@@ -164,6 +174,7 @@ export function sysCtx(orgId: string, businessDate?: string): Ctx {
     allProperties: true,
     currentPropertyId: null,
     businessDate: businessDate || org?.business_date || new Date().toISOString().slice(0, 10),
+    orgKind: (org?.kind as 'demo' | 'live') || 'demo',
     impersonatorId: null,
     vendorId: null,
   };
@@ -236,6 +247,14 @@ export const requireVendor: Middleware = (r) => {
 export const devOnly: Middleware = (r) => {
   if (env('MODE') === 'production') return forbidden('Not available in production mode.');
   if (!r.user) return loginRedirect(r);
+  // The simulator (time machine, dials) belongs to demo worlds only. A live
+  // customer org runs on the real calendar — advancing its clock into the
+  // future would post future rent and fees onto real books.
+  const orgId = (r.user as UserRow).org_id;
+  if (orgId) {
+    const kind = q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', orgId)?.kind;
+    if (kind === 'live') return forbidden('The simulator console is available in demo organizations only.');
+  }
   return;
 };
 

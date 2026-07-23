@@ -9,6 +9,7 @@
 declare const process: {
   env: Record<string, string | undefined>;
   argv: string[];
+  execPath: string;
   cwd(): string;
   exit(code?: number): never;
   on(ev: string, fn: (...a: any[]) => void): void;
@@ -29,6 +30,10 @@ declare class Buffer extends Uint8Array {
   static isBuffer(v: unknown): v is Buffer;
   toString(enc?: string, start?: number, end?: number): string;
   subarray(start?: number, end?: number): Buffer;
+  readUInt16LE(offset: number): number;
+  readUInt32LE(offset: number): number;
+  writeUInt16LE(value: number, offset: number): number;
+  writeUInt32LE(value: number, offset: number): number;
   slice(start?: number, end?: number): Buffer;
   indexOf(v: string | Uint8Array | number, byteOffset?: number, enc?: string): number;
   equals(b: Uint8Array): boolean;
@@ -123,6 +128,7 @@ declare module 'node:fs' {
 
 declare module 'node:path' {
   export function join(...parts: string[]): string;
+  export function isAbsolute(p: string): boolean;
   export function resolve(...parts: string[]): string;
   export function dirname(p: string): string;
   export function basename(p: string, ext?: string): string;
@@ -193,10 +199,17 @@ declare module 'node:child_process' {
     args: string[],
     opts?: { env?: Record<string, string | undefined>; cwd?: string; stdio?: unknown; detached?: boolean },
   ): ChildProcess;
+  export function spawnSync(
+    cmd: string,
+    args: string[],
+    opts?: { env?: Record<string, string | undefined>; cwd?: string; stdio?: unknown; timeout?: number },
+  ): { status: number | null; stdout: Buffer | null; stderr: Buffer | null; error?: Error };
   export function execSync(cmd: string, opts?: Record<string, unknown>): Buffer;
 }
 
 declare module 'node:zlib' {
   export function gzipSync(data: string | Uint8Array): Buffer;
   export function gunzipSync(data: Uint8Array): Buffer;
+  export function inflateRawSync(data: Uint8Array): Buffer;
+  export function deflateRawSync(data: string | Uint8Array): Buffer;
 }

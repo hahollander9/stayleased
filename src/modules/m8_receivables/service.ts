@@ -169,6 +169,10 @@ export function postMonthlyChargesForLease(ctx: Ctx, lease: any, mk: string): nu
   if (!['active', 'month_to_month', 'notice'].includes(lease.status)) return 0;
   const monthStart = mk + '-01';
   const monthEnd = lastOfMonth(monthStart);
+  // Migrated leases: the conversion opening balance covers everything owed
+  // before billing_start_date, so recurring posting (rent AND the MTM premium)
+  // must not double-bill months the prior system already charged.
+  if (lease.billing_start_date && monthEnd < lease.billing_start_date) return 0;
   const effectiveStart = lease.move_in_date || lease.start_date;
   if (effectiveStart > monthEnd) return 0;
   const stopDate = lease.move_out_date && lease.status !== 'month_to_month' ? lease.move_out_date : null;

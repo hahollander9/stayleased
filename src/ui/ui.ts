@@ -50,6 +50,8 @@ export interface NavItem {
   perm?: string;
   /** also mark active for these prefixes */
   match?: string[];
+  /** demo-world tooling (simulator etc.) — hidden inside live customer orgs */
+  demoOnly?: boolean;
 }
 const SECTION_ORDER = [
   '',
@@ -89,6 +91,7 @@ function tabItems(ctx: Ctx): Map<string, NavItem[]> {
   for (const [sec, items] of navSections) {
     for (const it of items) {
       if (it.perm && !can(ctx, it.perm)) continue;
+      if (it.demoOnly && ctx.orgKind === 'live') continue;
       const tab = HREF_TO_TAB[it.href] || SECTION_TO_TAB[sec] || 'Reports';
       const list = out.get(tab) || [];
       list.push(it);
@@ -233,7 +236,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
 
   const nav = join(
     SECTION_ORDER.filter((s) => navSections.has(s)).map((sec) => {
-      const items = (navSections.get(sec) || []).filter((i) => !i.perm || can(ctx, i.perm));
+      const items = (navSections.get(sec) || []).filter((i) => (!i.perm || can(ctx, i.perm)) && !(i.demoOnly && ctx.orgKind === 'live'));
       if (!items.length) return null;
       return html`<div class="nav-group">
         ${sec ? html`<div class="nav-head">${sec}</div>` : null}

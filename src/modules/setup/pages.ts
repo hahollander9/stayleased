@@ -29,17 +29,19 @@ function slugify(s: string): string {
 
 // ---------- setup hub ----------
 
-interface HubCard { href: string; title: string; desc: string; perm?: string; icon: string; }
+interface HubCard { href: string; title: string; desc: string; perm?: string; icon: string; demoOnly?: boolean; }
 const HUB: HubCard[] = [
+  { href: '/welcome', title: 'Getting started', desc: 'The guided go-live checklist — track what\'s left to set up.', perm: 'properties:manage', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' },
+  { href: '/setup/import', title: 'Migration Center', desc: 'Upload rent rolls, spreadsheets and lease PDFs — auto-mapped, reviewed, applied.', perm: 'properties:manage', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M4 21h16' },
+  { href: '/setup/connections', title: 'Connections', desc: 'AI brain, payments, bank feeds, listings — what\'s live and what\'s coming.', perm: 'properties:manage', icon: 'M9 12h6M8 7H6a5 5 0 0 0 0 10h2M16 7h2a5 5 0 0 1 0 10h-2' },
   { href: '/setup/wizard', title: 'Add a property', desc: 'Guided wizard — property details, a floorplan, and its units.', perm: 'properties:manage', icon: 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6' },
-  { href: '/setup/import', title: 'Migration Center', desc: 'Bulk-import properties, floorplans and units from CSV.', perm: 'properties:manage', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M4 21h16' },
   { href: '/admin/settings', title: 'Organization settings', desc: 'Policies, fees, and defaults for your whole portfolio.', perm: 'admin:settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5A7 7 0 0 0 19 12z' },
   { href: '/admin/staff', title: 'Staff & roles', desc: 'Invite users and assign roles and property scope.', perm: 'admin:staff', icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
   { href: '/admin/roles', title: 'Permission matrix', desc: 'Review exactly what each role can do.', perm: 'admin:staff', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' },
   { href: '/admin/api', title: 'API & webhooks', desc: 'Keys and webhook endpoints for integrations.', perm: 'admin:api', icon: 'M4 17l6-6-6-6M12 19h8' },
   { href: '/admin/jobs', title: 'Scheduled jobs', desc: 'The automation engine and its run history.', perm: 'admin:jobs', icon: 'M12 6v6l4 2M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z' },
   { href: '/admin/audit', title: 'Audit log', desc: 'Every change, who made it, and when.', perm: 'admin:audit', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M9 15h6M9 11h2' },
-  { href: '/dev/sim', title: 'Simulator console', desc: 'Advance the business date and drive the demo world.', perm: 'dev:console', icon: 'M13 2L3 14h9l-1 8 10-12h-9z' },
+  { href: '/dev/sim', title: 'Simulator console', desc: 'Advance the business date and drive the demo world.', perm: 'dev:console', demoOnly: true, icon: 'M13 2L3 14h9l-1 8 10-12h-9z' },
 ];
 
 function svgIcon(d: string): Raw {
@@ -49,7 +51,7 @@ function svgIcon(d: string): Raw {
 export function routes(r: Router): void {
   r.get('/setup', requireStaff, (rq) => {
     const ctx = rq.ctx as Ctx;
-    const cards = HUB.filter((c) => !c.perm || can(ctx, c.perm));
+    const cards = HUB.filter((c) => (!c.perm || can(ctx, c.perm)) && !(c.demoOnly && ctx.orgKind === 'live'));
     const propCount = q1<{ n: number }>('SELECT COUNT(*) n FROM properties WHERE org_id=?', ctx.orgId)?.n ?? 0;
     const unitCount = q1<{ n: number }>('SELECT COUNT(*) n FROM units u JOIN properties p ON p.id=u.property_id WHERE p.org_id=?', ctx.orgId)?.n ?? 0;
     const staffCount = q1<{ n: number }>("SELECT COUNT(*) n FROM users WHERE org_id=? AND kind='staff' AND active=1", ctx.orgId)?.n ?? 0;
@@ -125,10 +127,12 @@ export function routes(r: Router): void {
     return redirect(`/properties/${pid}`, `${name} created with ${unitCount} unit${unitCount === 1 ? '' : 's'}. Add buildings, amenities and pricing next.`);
   });
 
-  // ---------- Migration Center ----------
-  r.get('/setup/import', requirePerm('properties:manage'), (rq) => importPage(rq));
-  r.post('/setup/import', requirePerm('properties:manage'), (rq) => runImport(rq));
-  r.get('/setup/import/template', requirePerm('properties:manage'), (rq) => {
+  // ---------- Migration Center: legacy strict-template importers ----------
+  // The universal Import Hub lives at /setup/import (see import.ts); these
+  // fixed-format CSV importers remain for users who prefer exact templates.
+  r.get('/setup/import/legacy', requirePerm('properties:manage'), (rq) => importPage(rq));
+  r.post('/setup/import/legacy', requirePerm('properties:manage'), (rq) => runImport(rq));
+  r.get('/setup/import/legacy/template', requirePerm('properties:manage'), (rq) => {
     const spec = IMPORTS[rq.query.get('entity') || 'units'] || IMPORTS.units!;
     const csv = spec.sample.map((row) => row.join(',')).join('\r\n') + '\r\n';
     return fileRes(csv, 'text/csv; charset=utf-8', { filename: `stayleased-${spec.key}-template.csv` });
@@ -306,17 +310,17 @@ function importPage(rq: Rq, opts: { entity?: string; property?: string; csv?: st
       : `SELECT id, name FROM properties WHERE org_id=? AND id IN (${ctx.propertyIds.map(() => '?').join(',') || "''"}) ORDER BY name`,
     ...(ctx.allProperties ? [ctx.orgId] : [ctx.orgId, ...ctx.propertyIds]),
   );
-  const templateLink = `/setup/import/template?entity=${spec.key}`;
+  const templateLink = `/setup/import/legacy/template?entity=${spec.key}`;
   return shell(rq, {
-    title: 'Migration Center',
-    active: '/setup/import',
-    crumbs: [['Setup', '/setup'], ['Migration Center']],
-    subtitle: 'Bulk-import your portfolio from CSV. Download the template, fill it in, then preview before you commit.',
+    title: 'Migration Center — templates',
+    active: '/setup/import/legacy',
+    crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Templates']],
+    subtitle: 'Fixed-format CSV importers. For auto-mapped uploads of anything (rent rolls, vendor lists, Excel), use the Migration Center hub.',
     content: html`
       ${when(opts.errs?.length, () => html`<div class="flash err">${opts.errs!.join(' ')}</div>`)}
-      <div class="tabs">${Object.values(IMPORTS).map((s) => html`<a href="/setup/import?entity=${s.key}" class="${s.key === entity ? 'active' : ''}">${s.label}</a>`)}</div>
+      <div class="tabs">${Object.values(IMPORTS).map((s) => html`<a href="/setup/import/legacy?entity=${s.key}" class="${s.key === entity ? 'active' : ''}">${s.label}</a>`)}</div>
       ${card('Import ' + spec.label.toLowerCase(), html`
-        <form method="post" action="/setup/import" enctype="multipart/form-data">
+        <form method="post" action="/setup/import/legacy" enctype="multipart/form-data">
           <input type="hidden" name="entity" value="${spec.key}" />
           <div class="form-grid">
             ${when(spec.needsProperty, () => field('Into property', props.length
@@ -391,8 +395,8 @@ function runImport(rq: Rq) {
   const cols = [{ label: 'Row' }, { label: 'Status' }, { label: 'Detail' }, ...spec.columns.map((c) => ({ label: c.name }))];
   return shell(rq, {
     title: 'Preview import',
-    active: '/setup/import',
-    crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Preview']],
+    active: '/setup/import/legacy',
+    crumbs: [['Setup', '/setup'], ['Templates', '/setup/import/legacy'], ['Preview']],
     subtitle: `${okN} of ${results.length} rows are ready to import.`,
     content: html`
       ${okN === 0 ? html`<div class="callout bad">No rows can be imported — fix the errors below and try again.</div>` : html`<div class="callout info">${okN} row${okN === 1 ? '' : 's'} will be created. This preview did not change anything.</div>`}
@@ -404,11 +408,11 @@ function runImport(rq: Rq) {
           ...spec.columns.map((c) => r.row[c.name] || ''),
         ],
       })), { empty: 'No rows.' }), { flush: true })}
-      <form method="post" action="/setup/import" class="wiz-actions">
+      <form method="post" action="/setup/import/legacy" class="wiz-actions">
         <input type="hidden" name="entity" value="${spec.key}" />
         ${when(spec.needsProperty, () => raw(`<input type="hidden" name="property" value="${propertyId}" />`))}
         <input type="hidden" name="csv" value="${csv.replace(/"/g, '&quot;').replace(/</g, '&lt;')}" />
-        <a class="btn btn-ghost" href="/setup/import?entity=${spec.key}">Back</a>
+        <a class="btn btn-ghost" href="/setup/import/legacy?entity=${spec.key}">Back</a>
         <button class="btn" type="submit" name="mode" value="commit" ${okN === 0 ? 'disabled' : ''}>Import ${okN} ${spec.label.toLowerCase()}</button>
       </form>`,
   });

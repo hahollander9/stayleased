@@ -24,6 +24,7 @@ export const COA: [string, string, AcctType, string?][] = [
   ['2200', 'Accrued Liabilities', 'liability'],
   ['3010', 'Retained Earnings', 'equity'],
   ['3020', 'Owner Contributions / (Distributions)', 'equity'],
+  ['3030', 'Opening Balance Equity (conversion)', 'equity'],
   ['4010', 'Rent Income', 'income'],
   ['4015', 'Month-to-Month Premium Income', 'income'],
   ['4020', 'Late Fee Income', 'income'],
@@ -77,6 +78,7 @@ export const CHARGE_CREDIT: Record<string, string> = {
   concession: '4900',
   writeoff: '5610', // negative charge → DR 5610 Bad Debt, CR 1100 AR
   deposit: '2100',
+  opening_balance: '3030', // migration conversion: AR carried in from the prior system
   damage: '5020', // damage recovery credits turn expense
   utility_flat: '4030',
   reward: '4900',
