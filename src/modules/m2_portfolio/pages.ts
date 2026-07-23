@@ -171,7 +171,7 @@ export function routes(r: Router): void {
         </div>`;
     } else if (tab === 'rentables') {
       const kinds = ['parking', 'garage', 'storage', 'pet'];
-      body = html`${card('Rentable items (M2.3)', html`
+      body = html`${card('Rentable items', html`
         <p class="small muted" style="margin:0 0 10px">Parking, garages, storage and pet registrations — inventory whose monthly charges flow to resident ledgers via lease charge lines.</p>
         ${tbl(
           [{ label: 'Item' }, { label: 'Kind' }, { label: 'Monthly', num: true }, { label: 'Status' }, { label: 'Assigned to' }],
@@ -439,7 +439,7 @@ export function routes(r: Router): void {
             ...amenities.map((a): [string, string] => [a.name, `+${usd(a.premium_cents)}`]),
             ['Effective market rent', html`<b>${usd(u.market_rent_cents)}</b>`],
           ])}
-          <p class="small muted" style="margin-top:8px">Amenity premiums adjust effective pricing (M2.1). Daily recommended pricing arrives with Revenue Intelligence (M13).</p>`)}
+          <p class="small muted" style="margin-top:8px">Amenity premiums adjust effective pricing. Daily recommended pricing comes from Revenue Intelligence.</p>`)}
         </div>
         ${card('Lease history', tbl(
           [{ label: 'Household' }, { label: 'Status' }, { label: 'Term' }, { label: 'Rent', num: true }],

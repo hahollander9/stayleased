@@ -447,7 +447,7 @@ export function routes(r: Router): void {
             </form>
             <p class="small muted">Budgeted vs actual operating expenses → per-suite true-up by square footage. Posting requires a commercial property type (none in the demo portfolio — preview mode; logged as a gap).</p>`)}
         </div>
-        ${card('Manufactured housing', html`<p class="small">Lot-rent/home-rent split, resident-owned-home flags and title/serial fields ship on the unit record (schema + unit page) and activate with a manufactured property type. No manufactured community in the demo portfolio — logged as a gap in docs/parity.md.</p>`)}`,
+        ${card('Manufactured housing', html`<p class="small">Lot-rent/home-rent split, resident-owned-home flags, and title/serial fields are supported on every unit record and activate when a property uses the manufactured type. This portfolio does not include a manufactured community yet.</p>`)}`,
     });
   });
 

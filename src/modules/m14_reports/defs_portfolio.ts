@@ -115,7 +115,7 @@ registerReport({
   key: 'revenue_analytics',
   name: 'Revenue Analytics',
   category: 'Portfolio & executive',
-  describe: 'Loss-to-lease, trade-outs and effective rent from the M13 engine.',
+  describe: 'Loss-to-lease, trade-outs and effective rent from the revenue-intelligence engine.',
   params: [PROP],
   perm: 'pricing:view',
   run(ctx, p): ReportResult {
@@ -260,7 +260,7 @@ registerReport({
         { key: 'outcome', label: 'Outcome' },
       ],
       rows,
-      note: 'Every automated action is deterministic, auditable, and human-supervisable. ELI-style AI agents (M17) land in Phase 16 and will report here alongside the jobs.',
+      note: 'Every automated action is deterministic, auditable, and human-supervisable. AI agent activity reports here alongside the scheduled jobs.',
     };
   },
 });

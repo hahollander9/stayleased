@@ -211,7 +211,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Renewals pipeline',
       active: '/renewals',
-      subtitle: 'Expirations in 30/60/90-day buckets. Offers use the pricing matrix (M13 refines it) within org caps.',
+      subtitle: 'Expirations in 30/60/90-day buckets. Offers use the revenue-intelligence pricing matrix within org caps.',
       actions: html`<form method="post" action="/renewals/batch" data-confirm="Send offers to every 60–90 day expiration without one?"><button class="btn">Batch: offer the 60–90d bucket</button></form>`,
       content: html`
         ${bucket('Expiring in 0–30 days', b30, true)}

@@ -40,7 +40,7 @@ export function routes(r: Router): void {
         </form>
         ${when(personas.length, () => html`
           <div class="demo-personas">
-            <div class="dp-head">Demo personas — one click (password demo1234)</div>
+            <div class="dp-head">Explore the demo — choose a role to sign in</div>
             <div class="chips">
               ${personas.map((p) => html`<button type="button" class="chip" data-email="${p.email}" data-password="demo1234">${p.name} · ${ROLE_LABELS[p.role as Role] ?? p.role}</button>`)}
             </div>

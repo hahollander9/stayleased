@@ -210,7 +210,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Settings',
       active: '/admin/settings',
-      subtitle: 'Org defaults with per-property overrides (M1.3). Values are JSON.',
+      subtitle: 'Organization defaults with per-property overrides. Values are stored as JSON.',
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Level', select('property', [['', 'Organization defaults'], ...props.map((p): [string, string] => [p.id, `Override: ${p.name}`])], propId))}
@@ -606,7 +606,7 @@ export function routes(r: Router): void {
       title: 'New organization',
       active: '/admin/orgs',
       crumbs: [['Organizations', '/admin/orgs']],
-      content: card('Org onboarding (M1.1)', html`<form method="post" action="/admin/orgs/new">
+      content: card('Organization onboarding', html`<form method="post" action="/admin/orgs/new">
         <div class="form-grid">
           ${field('Company name', input('name', { required: true, placeholder: 'Acme Residential LLC' }))}
           ${field('Slug', input('slug', { required: true, placeholder: 'acme' }))}

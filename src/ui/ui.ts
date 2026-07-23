@@ -39,7 +39,7 @@ export function logo(size = 22, color = 'currentColor'): Raw {
 /** Two-tone StayLeased wordmark (mark + name). onDark tints the mark + accent
  * for placement on the dark chrome; otherwise it uses the brand accent token. */
 export function wordmark(size = 22, onDark = false): Raw {
-  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#ff9db0' : 'var(--brand)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
+  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#7aa8ff' : 'var(--brand)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
 }
 
 // ---------- nav registry ----------
@@ -105,17 +105,30 @@ function itemActive(active: string, i: NavItem): boolean {
 const CARET = raw('<svg class="caret" width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>');
 const GEAR = raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>');
 
+const TI = (d: string): Raw => raw(`<svg class="ticon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${d}</svg>`);
+const TAB_ICONS: Record<string, Raw> = {
+  Dashboard: TI('<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>'),
+  Leasing: TI('<circle cx="8" cy="9" r="4"/><path d="M12 12l8 8m-3-3 2-2m-5-1 2-2"/>'),
+  Residents: TI('<circle cx="9" cy="8" r="3.5"/><path d="M3.5 20c.6-3.4 2.8-5 5.5-5s4.9 1.6 5.5 5"/><circle cx="17" cy="9" r="2.5"/><path d="M15.5 14.6c2.4.2 4.3 1.6 5 4.4"/>'),
+  Financials: TI('<circle cx="12" cy="12" r="9"/><path d="M15 8.5c-.6-1-1.7-1.5-3-1.5-1.8 0-3 1-3 2.3 0 3.4 6.2 1.6 6.2 4.9 0 1.4-1.4 2.3-3.2 2.3-1.5 0-2.7-.6-3.3-1.7M12 5.5v13"/>'),
+  Property: TI('<path d="M4 21V5.5L12 3l8 2.5V21"/><path d="M2.5 21h19M9 8h1.5M13.5 8H15M9 12h1.5M13.5 12H15M9 16h1.5M13.5 16H15"/>'),
+  Operations: TI('<path d="M14.7 6.3a4.5 4.5 0 0 0-6 6L3 18l3 3 5.7-5.7a4.5 4.5 0 0 0 6-6L14 13l-3-3 3.7-3.7z"/>'),
+  Marketing: TI('<path d="M3 11v3l12 4V6L3 10z"/><path d="M15 8.5a3.5 3.5 0 0 1 0 7M7 14.5V20h3v-4.5"/>'),
+  Messages: TI('<path d="M21 14a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
+  Reports: TI('<path d="M3 21h18M6 21V12m5 9V7m5 14v-6m5 6V4"/>'),
+};
+
 function moduleBar(ctx: Ctx, active: string): Raw {
   const tabs = tabItems(ctx);
   return html`<nav class="modulebar" aria-label="Modules">${join(TAB_ORDER.map((label, idx) => {
     if (label === 'Dashboard') {
-      return html`<a class="mtab-btn ${active === '/' ? 'active' : ''}" href="/">Dashboard</a>`;
+      return html`<a class="mtab-btn ${active === '/' ? 'active' : ''}" href="/">${TAB_ICONS.Dashboard}Dashboard</a>`;
     }
     const items = tabs.get(label) || [];
     if (!items.length) return null;
     const act = items.some((i) => itemActive(active, i));
     return html`<div class="mtab ${act ? 'active' : ''}">
-      <button class="mtab-btn" data-toggle="#mt-${idx}" aria-haspopup="true">${label}${CARET}</button>
+      <button class="mtab-btn" data-toggle="#mt-${idx}" aria-haspopup="true">${TAB_ICONS[label]}${label}${CARET}</button>
       <div class="menu mmenu" id="mt-${idx}">
         ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}
       </div>

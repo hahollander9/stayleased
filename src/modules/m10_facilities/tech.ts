@@ -219,7 +219,7 @@ export function routes(r: Router): void {
         <form method="post" action="/vendor/wo/${w.id}/complete" enctype="multipart/form-data">
           ${field('Completion note', textarea('note', { rows: 2, required: true }))}
           ${field('Completion photo', raw('<input type="file" name="photo" accept="image/*" />'))}
-          <p class="small muted">Invoice upload lands here with the vendor billing module (M16).</p>
+          <p class="small muted">Vendor invoices are handled in Procure-to-Pay once the work is billed.</p>
           <button class="btn" style="width:100%;justify-content:center">Mark complete</button>
         </form>`))}`,
       '/vendor');

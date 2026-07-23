@@ -81,7 +81,7 @@ export function assignWo(ctx: Ctx, woId: string, opts: { userId?: string; vendor
     const vendor = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', opts.vendorId, ctx.orgId);
     if (!vendor) throw new Error('vendor not found');
     if (vendor.coi_expiry && vendor.coi_expiry < ctx.businessDate) {
-      throw new Error(`${vendor.name}'s insurance certificate expired ${fmtDate(vendor.coi_expiry)} — dispatch blocked until COI is renewed (M10.8)`);
+      throw new Error(`${vendor.name}'s insurance certificate expired ${fmtDate(vendor.coi_expiry)} — dispatch blocked until COI is renewed`);
     }
   }
   update('work_orders', woId, {

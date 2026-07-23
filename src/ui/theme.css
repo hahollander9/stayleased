@@ -22,16 +22,16 @@
   --bad: #b3261e;     --bad-soft: #fdecea;
   --info: #1d5bd8;    --info-soft: #e9f0fd;
   --violet: #6d28d9;  --violet-soft: #f1eafd;
-  /* Entrata-modeled chrome: white header, brand-red module bar, white sub-nav */
-  --brand: #bf1231;        /* primary brand red (nav bar, primary buttons) */
-  --brand-dark: #9c0e28;
-  --brand-ink: #9c0e28;    /* red for text on white */
-  --brand-soft: #fbe9ed;
+  /* Entrata-modeled chrome: white header, signature-blue module bar, white sub-nav */
+  --brand: #2563eb;        /* StayLeased signature blue (nav bar, primary buttons) */
+  --brand-dark: #1d4ed8;
+  --brand-ink: #1e40af;    /* blue for text on white */
+  --brand-soft: #e8effc;
   --sidebar: #ffffff;
   --sidebar-ink: #3c4657;
   --sidebar-active: var(--brand-soft);
   --chrome: #ffffff;      /* brand bar — white like Entrata */
-  --chrome-2: var(--brand); /* module tab bar — brand red */
+  --chrome-2: var(--brand); /* module tab bar — signature blue */
   --radius: 10px;
   --radius-sm: 7px;
   --shadow: 0 1px 2px rgba(16, 24, 40, .05);
@@ -49,7 +49,7 @@ body {
 a { color: var(--accent-ink); text-decoration: none; }
 a:hover { text-decoration: underline; }
 h1, h2, h3 { margin: 0; font-weight: 650; letter-spacing: -.01em; }
-h1 { font-size: 19px; }
+h1 { font-size: 23px; font-weight: 700; }
 h2 { font-size: 15px; }
 h3 { font-size: 13.5px; }
 p { margin: .4em 0; }
@@ -85,7 +85,9 @@ small, .small { font-size: 12px; }
    inside it, and any overflow value other than visible force-clips them
    (overflow-x:auto computes overflow-y:auto per spec). Tabs are guaranteed to
    fit instead via the narrow-desktop padding step below. */
-.modulebar { display: flex; align-items: stretch; gap: 1px; height: 40px; padding: 0 8px; background: var(--chrome-2); }
+.modulebar { display: flex; align-items: stretch; gap: 0; height: 40px; padding: 0 8px; background: var(--chrome-2); }
+.modulebar > * + * { border-left: 1px solid rgba(255, 255, 255, .18); }
+.mtab-btn .ticon { opacity: .9; }
 @media (max-width: 1180px) {
   .mtab-btn { padding: 0 9px; font-size: 12.5px; }
 }
@@ -125,7 +127,7 @@ small, .small { font-size: 12px; }
   display: inline-flex; align-items: center; gap: 6px; padding: 5px 11px; border-radius: 999px;
   background: var(--brand-soft); color: var(--brand-ink); font-weight: 600; font-size: 12px; white-space: nowrap; text-decoration: none;
 }
-.bizdate:hover { text-decoration: none; background: #f6dde3; }
+.bizdate:hover { text-decoration: none; background: #dbe7fb; }
 .searchbtn {
   display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line);
   background: var(--surface-2); color: var(--muted); border-radius: var(--radius-sm); padding: 5px 10px;
@@ -144,7 +146,7 @@ small, .small { font-size: 12px; }
   border: 1px solid var(--line); color: var(--ink-2); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.icon-btn:hover, .icon-btn.active { background: var(--brand-soft); color: var(--brand-ink); border-color: #f0cdd6; }
+.icon-btn:hover, .icon-btn.active { background: var(--brand-soft); color: var(--brand-ink); border-color: #c9d9f7; }
 .usermenu { position: relative; }
 .avatar {
   width: 32px; height: 32px; border-radius: 50%; background: var(--brand); color: #fff; border: 0;
@@ -227,7 +229,7 @@ small, .small { font-size: 12px; }
 }
 a.kpi:hover { text-decoration: none; border-color: var(--accent); }
 .kpi .k-label { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
-.kpi .k-value { font-size: 21px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.kpi .k-value { font-size: 24px; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 .kpi .k-sub { font-size: 11.5px; color: var(--muted); margin-top: 1px; }
 .kpi.tone-ok .k-value { color: var(--ok); }
 .kpi.tone-warn .k-value { color: var(--warn); }
@@ -445,7 +447,7 @@ a.kpi:hover { text-decoration: none; border-color: var(--accent); }
 .wordmark .wm-text { font-size: 1.02em; color: var(--ink); }
 .wordmark .wm-accent { color: var(--accent); }
 .wordmark.on-dark .wm-text { color: #fff; }
-.wordmark.on-dark .wm-accent { color: #ff9db0; }
+.wordmark.on-dark .wm-accent { color: #7aa8ff; }
 
 /* ---------- branded error / 404 ---------- */
 .err-box .err-brand { display: inline-flex; align-items: center; gap: 9px; font-weight: 800; font-size: 20px; color: var(--ink); margin-bottom: 14px; text-decoration: none; }

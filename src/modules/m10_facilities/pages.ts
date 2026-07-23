@@ -719,7 +719,7 @@ export function routes(r: Router): void {
       active: '/inventory',
       subtitle: `${items.length} stock items · ${usd(value)} on hand · usage posts to work orders and the GL`,
       content: html`
-        ${when(reorder.length, () => html`<div class="callout warn"><b>${reorder.length} item${reorder.length === 1 ? '' : 's'} below minimum</b> — ${reorder.slice(0, 4).map((i) => i.name).join(', ')}${reorder.length > 4 ? '…' : ''}. Purchase orders arrive with Procure-to-Pay (M16).</div>`)}
+        ${when(reorder.length, () => html`<div class="callout warn"><b>${reorder.length} item${reorder.length === 1 ? '' : 's'} below minimum</b> — ${reorder.slice(0, 4).map((i) => i.name).join(', ')}${reorder.length > 4 ? '…' : ''}. Reorder through Procure-to-Pay.</div>`)}
         ${card(null, html`${tbl(
           [{ label: 'Item' }, { label: 'Property' }, { label: 'Bin' }, { label: 'On hand', num: true }, { label: 'Min/Max', num: true }, { label: 'Unit cost', num: true }, { label: 'Status' }],
           items.map((i) => ({
@@ -768,7 +768,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Vendors',
       active: '/vendors',
-      subtitle: 'Insurance certificates gate dispatch — expired COI blocks assignment (M10.8). Full procure-to-pay arrives with M16.',
+      subtitle: 'Insurance certificates gate dispatch — an expired COI blocks assignment. Purchasing runs through Procure-to-Pay.',
       content: card(null, tbl(
         [{ label: 'Vendor' }, { label: 'Category' }, { label: 'Contact' }, { label: 'COI expires' }, { label: 'W-9' }, { label: 'Open WOs', num: true }],
         vendors.map((x) => {
