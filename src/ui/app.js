@@ -2,12 +2,18 @@
 (function () {
   'use strict';
 
-  // toggles (menus, sidebar)
+  // toggles (menus, sidebar) — menus are EXCLUSIVE: opening one closes the rest
   document.addEventListener('click', function (e) {
     var t = e.target.closest('[data-toggle]');
     if (t) {
       var el = document.querySelector(t.getAttribute('data-toggle'));
-      if (el) el.classList.toggle('open');
+      if (el) {
+        var opening = !el.classList.contains('open');
+        document.querySelectorAll('.menu.open').forEach(function (m) {
+          if (m !== el) m.classList.remove('open');
+        });
+        el.classList.toggle('open', opening);
+      }
       e.stopPropagation();
       return;
     }

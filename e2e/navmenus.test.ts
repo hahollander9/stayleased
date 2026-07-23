@@ -90,3 +90,47 @@ test('dropdown click-through navigates (Financials → Accounting reaches /gl)',
   assert.match(new URL(page.url()).pathname, /^\/gl/, `expected /gl, got ${page.url()}`);
   await page.close();
 });
+
+test('menus are exclusive: opening a second header closes the first', async () => {
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await login(page, base, 'admin@summitridge.demo');
+
+  const tabs = page.locator('.modulebar .mtab');
+  const first = tabs.nth(0);
+  const second = tabs.nth(1);
+  const firstMenu = (await first.locator('.mtab-btn').getAttribute('data-toggle'))!;
+  const secondMenu = (await second.locator('.mtab-btn').getAttribute('data-toggle'))!;
+
+  await first.locator('.mtab-btn').click();
+  assert.ok(await humanCanClickFirstItem(page, firstMenu), 'first menu should open');
+
+  await second.locator('.mtab-btn').click();
+  assert.ok(await humanCanClickFirstItem(page, secondMenu), 'second menu should open');
+  const firstStillOpen = await page.evaluate((sel) => {
+    const m = document.querySelector(sel);
+    return !!(m && m.classList.contains('open'));
+  }, firstMenu);
+  assert.equal(firstStillOpen, false, 'first menu must close when a second header is clicked');
+
+  // gear popover also closes the module dropdown (all menus are exclusive)
+  await second.locator('.mtab-btn').click(); // reopen a module menu
+  await page.click('button[data-toggle="#setup-pop"]');
+  const moduleStillOpen = await page.evaluate((sel) => {
+    const m = document.querySelector(sel);
+    return !!(m && m.classList.contains('open'));
+  }, secondMenu);
+  assert.equal(moduleStillOpen, false, 'module menu must close when the gear opens');
+  assert.ok(await humanCanClickFirstItem(page, '#setup-pop'), 'gear menu should be open');
+
+  // clicking the same header twice still simply toggles it closed
+  await page.mouse.click(720, 520);
+  await first.locator('.mtab-btn').click();
+  await first.locator('.mtab-btn').click();
+  const toggledClosed = await page.evaluate((sel) => {
+    const m = document.querySelector(sel);
+    return !!(m && m.classList.contains('open'));
+  }, firstMenu);
+  assert.equal(toggledClosed, false, 'second click on the same header closes it');
+  await page.close();
+});
