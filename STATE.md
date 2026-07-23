@@ -114,3 +114,20 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
 - [x] Extended extraction budget (STAYLEASED_AI_EXTRACT_MAX_TOKENS, 75s timeout)
 - [x] Plan validation layer — model output never trusted blindly, never writes
 - Gates: tsc clean · 152 unit · 122 e2e
+
+## Front door + trust surface (2026-07-23, night)
+
+- [x] Marketing homepage at / for logged-out visitors (Entrata-modeled:
+      nav mega-dropdowns, hero + product mock, two-platforms, 6-layer
+      ontology accordion, L1–L5 automation ladder, agent grid, resident
+      phones, governance band, property types, walkthrough lead capture
+      → platform_leads + /admin/orgs panel)
+- [x] Billed-vs-collected aligned (billed by posting date incl. one-off fees;
+      collected nets out deposit receipts) + explanatory caption; >100% months
+      = prior-balance catch-up, documented in-UI
+- [x] Chart hover tooltips on every graph point (bars, area points, funnel
+      bands, split segments) + hover highlighting
+- [x] DEMO pill in the app chrome; Platform status card on /setup/connections
+      (persistent disk? live AI? signup open? org mode) — "is it actually
+      connected" answered in-product
+- Gates: tsc clean · 153 unit · 127 e2e

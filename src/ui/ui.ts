@@ -262,6 +262,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         <button class="menu-btn" data-toggle="#sidebar" aria-label="Menu">${raw('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>')}</button>
         <a class="brand brand-top" href="/">${logo(22, 'var(--brand)')} <span class="brand-name">Stay<span class="wm-accent">Leased</span></span></a>
         ${when(orgName && orgName !== 'Platform', () => html`<span class="org-chip" title="Your organization">${orgName}</span>`)}
+        ${when(ctx.orgKind === 'demo' && ctx.kind === 'staff', () => html`<span class="demo-pill" title="This is the shared demo world — simulated rails, demo data. Real customer companies run in live mode with real books.">DEMO</span>`)}
         <div class="spacer"></div>
         ${propSwitch}
         <button class="searchbtn" data-palette-open type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="stext">Search…</span><kbd>⌘K</kbd></button>

@@ -27,6 +27,44 @@
     }
   });
 
+  // chart hover tooltips: any SVG element with data-tip gets a cursor-following
+  // value bubble (charts also keep native <title> for accessibility)
+  var tipEl = null;
+  function tip() {
+    if (!tipEl) {
+      tipEl = document.createElement('div');
+      tipEl.id = 'charttip';
+      document.body.appendChild(tipEl);
+    }
+    return tipEl;
+  }
+  function moveTip(e) {
+    var t = tip();
+    var pad = 14;
+    var x = e.clientX + pad, y = e.clientY - 34;
+    var r = t.getBoundingClientRect();
+    if (x + r.width + 8 > window.innerWidth) x = e.clientX - r.width - pad;
+    if (y < 4) y = e.clientY + 18;
+    t.style.left = x + 'px';
+    t.style.top = y + 'px';
+  }
+  document.addEventListener('mouseover', function (e) {
+    var el = e.target.closest && e.target.closest('[data-tip]');
+    if (!el) return;
+    var t = tip();
+    t.textContent = el.getAttribute('data-tip');
+    t.classList.add('show');
+    moveTip(e);
+  });
+  document.addEventListener('mousemove', function (e) {
+    if (tipEl && tipEl.classList.contains('show') && e.target.closest && e.target.closest('[data-tip]')) moveTip(e);
+  });
+  document.addEventListener('mouseout', function (e) {
+    if (tipEl && e.target.closest && e.target.closest('[data-tip]') && !(e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest('[data-tip]'))) {
+      tipEl.classList.remove('show');
+    }
+  });
+
   // row links
   document.addEventListener('click', function (e) {
     var tr = e.target.closest('tr[data-href]');

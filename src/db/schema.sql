@@ -1973,3 +1973,16 @@ CREATE TABLE IF NOT EXISTS import_batches (
   applied_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_imp_org ON import_batches(org_id, status, created_at);
+
+-- ---------- platform marketing: walkthrough requests from the homepage ----------
+
+CREATE TABLE IF NOT EXISTS platform_leads (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL,
+  company TEXT,
+  units TEXT,
+  note TEXT,
+  source TEXT NOT NULL DEFAULT 'homepage',
+  created_at TEXT NOT NULL
+);

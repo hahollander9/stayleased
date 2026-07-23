@@ -1,7 +1,9 @@
 import { onboardingBanner } from '../setup/onboarding.ts';
+import { marketingHome } from '../m4_marketing/homepage.ts';
+import { landingFor } from '../auth/pages.ts';
 import { html, raw, when, join } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/http.ts';
-import { requirePerm, requireStaff, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, requireStaff, propFilter, canAccessProperty, type Ctx , type UserRow } from '../../lib/auth.ts';
 import { q, q1, run, insert, update, val, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, addMonths, addDays } from '../../lib/dates.ts';
@@ -44,8 +46,14 @@ const PROPERTY_TYPES: [string, string][] = [
 
 export function routes(r: Router): void {
   // ---------- dashboards ----------
-  r.get('/', requireStaff, requirePerm('dashboard:view'), (rq) => {
+  // The root is two front doors: logged-out visitors get the marketing
+  // homepage (Entrata-style); signed-in users get their dashboard/portal.
+  r.get('/', (rq) => {
+    if (!rq.user) return marketingHome(rq);
+    const user = rq.user as UserRow;
+    if (user.kind !== 'staff' && user.kind !== 'platform') return redirect(landingFor(user));
     const ctx = rq.ctx as Ctx;
+    if (!ctx.perms.has('dashboard:view')) return redirect('/me');
     if (ctx.currentPropertyId) return propertyDashboard(rq, ctx.currentPropertyId);
     return portfolioDashboard(rq);
   });
@@ -546,8 +554,18 @@ function orgTrends(ctx: Ctx): { labels: string[]; occ: number[]; deliq: number[]
   const occ = keys.map((k) => { const b = byMonth.get(k)!; return b.rent ? Math.round((b.occ / b.rent) * 1000) / 10 : 0; });
   const deliq = keys.map((k) => Math.round(byMonth.get(k)!.deliq / 100));
   const coll = keys.map((mk) => {
-    const billed = val<number>(`SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND month_key=? AND status='active' AND kind NOT IN ('deposit')`, ctx.orgId, mk) || 0;
-    const collected = val<number>(`SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE org_id=? AND received_date LIKE ? AND status IN ('pending','settled') AND method != 'credit'`, ctx.orgId, `${mk}%`) || 0;
+    // billed by posting DATE (one-off fees have month_key NULL); collected nets
+    // out security-deposit receipts (balance-sheet cash, never "billed" here).
+    // The rate can still top 100% in months when residents catch up prior
+    // balances — that's real collections behavior, not an error.
+    const billed = val<number>(`SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND date LIKE ? AND status='active' AND kind NOT IN ('deposit')`, ctx.orgId, `${mk}%`) || 0;
+    const collectedGross = val<number>(`SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE org_id=? AND received_date LIKE ? AND status IN ('pending','settled') AND method != 'credit'`, ctx.orgId, `${mk}%`) || 0;
+    const depositReceipts = val<number>(
+      `SELECT COALESCE(SUM(pa.amount_cents),0) FROM payment_applications pa
+       JOIN payments p2 ON p2.id=pa.payment_id AND p2.status IN ('pending','settled') AND p2.method != 'credit'
+       JOIN charges c ON c.id=pa.charge_id AND c.kind='deposit'
+       WHERE pa.org_id=? AND p2.received_date LIKE ?`, ctx.orgId, `${mk}%`) || 0;
+    const collected = collectedGross - depositReceipts;
     return billed ? Math.round((collected / billed) * 1000) / 10 : 0;
   });
   return { labels: keys.map((k) => k.slice(5)), occ, deliq, coll };
@@ -588,7 +606,7 @@ function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
   return html`
     ${when(t, () => html`${card(`Rolling occupancy · last 12 months`, html`<div class="chart-head-val">${last(t!.occ)}%</div>${barChart(monthLabels, t!.occ, { kind: 'pct', highlightLast: true })}`)}
     <div class="grid cols-2 chart-pair">
-      ${card('Collections rate', html`<div class="chart-head-val pos">${last(t!.coll)}%</div>${areaChart(monthLabels, t!.coll, { kind: 'pct' })}`)}
+      ${card('Collections rate', html`<div class="chart-head-val pos">${last(t!.coll)}%</div>${areaChart(monthLabels, t!.coll, { kind: 'pct' })}<div class="muted small" style="margin-top:6px">Cash applied this month ÷ amounts billed this month. Can top 100% when residents catch up prior balances.</div>`)}
       ${card('Delinquency', html`<div class="chart-head-val neg">${usd(last(t!.deliq) * 100)}</div>${areaChart(monthLabels, t!.deliq, { kind: 'usd', color: '#b3261e' })}`)}
     </div>`)}
     <div class="grid cols-2 chart-pair">

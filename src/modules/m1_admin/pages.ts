@@ -603,11 +603,18 @@ export function routes(r: Router): void {
       title: 'Organizations',
       active: '/admin/orgs',
       actions: html`<a class="btn" href="/admin/orgs/new">New organization</a>`,
-      content: card(null, tbl(
+      content: html`${card(null, tbl(
         [{ label: 'Organization' }, { label: 'Slug' }, { label: 'Business date' }, { label: 'Properties', num: true }, { label: 'Users', num: true }],
         orgs.map((o) => ({ cells: [html`<b>${o.name}</b>`, html`<code>${o.slug}</code>`, fmtDate(o.business_date), o.props, o.users] })),
         { empty: 'No organizations yet.' },
-      ), { flush: true }),
+      ), { flush: true })}
+      ${card('Walkthrough requests (homepage)', tbl(
+        [{ label: 'Name' }, { label: 'Email' }, { label: 'Company' }, { label: 'Units' }, { label: 'Note' }, { label: 'When' }],
+        q<any>('SELECT * FROM platform_leads ORDER BY created_at DESC LIMIT 50').map((l) => ({
+          cells: [l.name, html`<a href="mailto:${l.email}">${l.email}</a>`, l.company || '—', l.units || '—', l.note || '—', fmtDate(l.created_at.slice(0, 10))],
+        })),
+        { empty: 'No walkthrough requests yet — they arrive from the homepage form.' },
+      ), { flush: true })}`,
     });
   });
 

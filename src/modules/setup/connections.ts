@@ -4,7 +4,10 @@ import { requireStaff, type Ctx } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting, setSetting } from '../../lib/settings.ts';
 import { llmStatus } from '../../lib/sim/llm.ts';
-import { shell, card, statusBadge } from '../../ui/ui.ts';
+import { env } from '../../lib/env.ts';
+import { dbPath } from '../../lib/db.ts';
+import { isAbsolute } from 'node:path';
+import { shell, card, statusBadge, dl } from '../../ui/ui.ts';
 
 /** Connections — one honest page about every external rail.
  * What's live is labeled live; what's simulated says so in plain words; what
@@ -91,6 +94,32 @@ const BADGE: Record<Rail['status'], Raw> = {
   waitlist: statusBadge('draft', 'Coming — join waitlist'),
 };
 
+/** Answers "is this actually connected?" at a glance: where the data lives
+ * (and whether it survives restarts), whether the AI brain is real, whether
+ * signup is open, and what mode this org runs in. */
+function platformStatusCard(ctx: Ctx): Raw {
+  const ai = llmStatus();
+  const persistent = isAbsolute(env('DB') || '');
+  const signupOpen = !!env('SIGNUP_CODE');
+  return card('Platform status', html`
+    ${dl([
+      ['Data storage', persistent
+        ? html`${statusBadge('ok', 'Persistent')} <span class="muted small">${dbPath()} — customer data survives restarts and deploys.</span>`
+        : html`${statusBadge('pending', 'Image-local')} <span class="muted small">The database lives inside the app image and resets on redeploy — fine for a demo, not for customers. Point STAYLEASED_DB at a mounted disk (e.g. /data/stayleased.db).</span>`],
+      ['AI brain', ai.live
+        ? html`${statusBadge('ok', 'Live')} <span class="muted small">${ai.model} · ${ai.spentToday.toLocaleString('en-US')} of ${ai.dailyCap.toLocaleString('en-US')} daily output tokens used. Document reading, mapping assist and agents are real.</span>`
+        : html`${statusBadge('pending', 'Demo brain')} <span class="muted small">Deterministic MockLlm. Set ANTHROPIC_API_KEY to flip everything AI to live Claude.</span>`],
+      ['Self-serve signup', signupOpen
+        ? html`${statusBadge('ok', 'Open (invite code)')} <span class="muted small">/signup accepts new companies with your invite code.</span>`
+        : html`${statusBadge('pending', 'Closed')} <span class="muted small">Set STAYLEASED_SIGNUP_CODE to open invite-code signup.</span>`],
+      ['This organization', ctx.orgKind === 'live'
+        ? html`${statusBadge('ok', 'Live company')} <span class="muted small">Real calendar, real books — no simulated data is ever generated here.</span>`
+        : html`${statusBadge('pending', 'Demo world')} <span class="muted small">Shared demo company with simulated feeds and a time machine. Create a real company at /signup to test with your own documents.</span>`],
+      ['Business date', html`<span class="small">${ctx.businessDate}</span>`],
+    ])}
+  `);
+}
+
 export function routes(r: Router): void {
   r.get('/setup/connections', requireStaff, (rq) => {
     const ctx = rq.ctx as Ctx;
@@ -104,6 +133,7 @@ export function routes(r: Router): void {
         ? 'What\'s live, what\'s simulated, and what\'s coming. No surprises — simulated rails are labeled, always.'
         : 'The demo org runs every external rail on deterministic simulators, so the whole product works offline.',
       content: html`
+        ${platformStatusCard(ctx)}
         ${list.map((rail) => card(null, html`
           <div style="display:flex;gap:14px;align-items:flex-start;justify-content:space-between;flex-wrap:wrap">
             <div style="flex:1;min-width:260px">

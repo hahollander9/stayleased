@@ -736,9 +736,12 @@ export interface ReceivablesStats {
 export function receivablesStats(ctx: Ctx, mk: string, propertyId?: string | null): ReceivablesStats {
   const propParams: unknown[] = propertyId ? [propertyId] : [];
   const propSql = propertyId ? ' AND property_id=?' : '';
+  // billed = everything posted in the month by DATE (recurring rent carries
+  // month_key = its month, but one-off fees post with month_key NULL — counting
+  // by date keeps them in the denominator so the rate can't overstate)
   const billed = val<number>(
-    `SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND month_key=? AND status='active' AND kind NOT IN ('deposit')${propSql}`,
-    ctx.orgId, mk, ...propParams,
+    `SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND date LIKE ? AND status='active' AND kind NOT IN ('deposit')${propSql}`,
+    ctx.orgId, mk + '%', ...propParams,
   ) || 0;
   const collectedGross = val<number>(
     `SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE org_id=? AND received_date LIKE ? AND status IN ('pending','settled') AND method != 'credit'${propSql}`,

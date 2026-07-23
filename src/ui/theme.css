@@ -514,3 +514,25 @@ a.kpi:hover { text-decoration: none; border-color: var(--accent); }
   .brandbar { padding: 0 10px; gap: 8px; }
   .prop-switch select { max-width: 130px; }
 }
+
+/* ---------- chart hover tooltips ---------- */
+#charttip {
+  position: fixed; z-index: 300; pointer-events: none;
+  background: #1b2331; color: #fff; font-size: 12px; font-weight: 600;
+  padding: 5px 10px; border-radius: 7px; box-shadow: 0 6px 18px rgba(16,24,40,.25);
+  opacity: 0; transform: translateY(3px); transition: opacity .1s ease, transform .1s ease;
+  white-space: nowrap; letter-spacing: .1px;
+}
+#charttip.show { opacity: 1; transform: translateY(0); }
+svg.chart .ct { cursor: pointer; }
+svg.chart rect.ct:hover, svg.chart path.ct:hover { filter: brightness(1.12); }
+svg.chart g.ct .ctdot { transition: r .12s ease; }
+svg.chart g.ct:hover .ctdot { r: 4.6px; }
+
+/* demo-world indicator in the chrome */
+.demo-pill {
+  display: inline-flex; align-items: center; margin-left: 8px;
+  background: #fef3c7; color: #92400e; border: 1px solid #fcd34d;
+  font-size: 10.5px; font-weight: 800; letter-spacing: .8px;
+  padding: 2px 8px; border-radius: 99px; vertical-align: middle;
+}
