@@ -1,8 +1,26 @@
+import { readFileSync } from 'node:fs';
+import { join as pjoin } from 'node:path';
+import { createHash } from 'node:crypto';
 import { html, raw, esc, join, when, type Raw, type Child } from '../lib/html.ts';
 import { htmlRes, takeFlash, type Rq, type Res } from '../lib/http.ts';
 import { can, type Ctx } from '../lib/auth.ts';
-import { q } from '../lib/db.ts';
+import { q, ROOT } from '../lib/db.ts';
 import { fmtDate } from '../lib/dates.ts';
+
+/** Content-hash version for static assets. Assets are served with
+ * cache-control max-age=3600; without a version in the URL, a deploy can pair
+ * fresh HTML with an hour-stale cached theme.css/app.js (which looks like a
+ * broken site — dead menus, unstyled chrome). Hashing at module load keeps
+ * URLs stable within a deploy and busts caches exactly when contents change. */
+const ASSET_V: string = (() => {
+  try {
+    const h = createHash('sha1');
+    for (const f of ['src/ui/theme.css', 'src/ui/app.js']) h.update(readFileSync(pjoin(ROOT, f)));
+    return h.digest('hex').slice(0, 8);
+  } catch {
+    return 'dev';
+  }
+})();
 
 /** StayLeased UI kit: app shell, portal shell, and shared components.
  * Modules contribute nav items and search providers via registries so the
@@ -268,13 +286,13 @@ export function doc(title: string, body: Child, extraHead: Child = null): string
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${title} · StayLeased</title>
-        <link rel="stylesheet" href="/assets/theme.css" />
+        <link rel="stylesheet" href="/assets/theme.css?v=${ASSET_V}" />
         <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
         ${extraHead}
       </head>
       <body>
         ${body}
-        <script src="/assets/app.js" defer></script>
+        <script src="/assets/app.js?v=${ASSET_V}" defer></script>
       </body>
     </html>`.s
   );

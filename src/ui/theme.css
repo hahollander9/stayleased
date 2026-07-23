@@ -76,8 +76,14 @@ small, .small { font-size: 12px; }
 }
 
 /* module tab bar */
-.modulebar { display: flex; align-items: stretch; gap: 1px; height: 40px; padding: 0 8px; background: var(--chrome-2); overflow-x: auto; scrollbar-width: none; }
-.modulebar::-webkit-scrollbar { display: none; }
+/* NOTE: no overflow on this bar — the dropdown menus are absolutely positioned
+   inside it, and any overflow value other than visible force-clips them
+   (overflow-x:auto computes overflow-y:auto per spec). Tabs are guaranteed to
+   fit instead via the narrow-desktop padding step below. */
+.modulebar { display: flex; align-items: stretch; gap: 1px; height: 40px; padding: 0 8px; background: var(--chrome-2); }
+@media (max-width: 1180px) {
+  .mtab-btn { padding: 0 9px; font-size: 12.5px; }
+}
 .mtab { position: relative; display: flex; }
 .mtab-btn {
   display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 13px; background: none;
