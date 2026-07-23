@@ -39,7 +39,7 @@ export function logo(size = 22, color = 'currentColor'): Raw {
 /** Two-tone StayLeased wordmark (mark + name). onDark tints the mark + accent
  * for placement on the dark chrome; otherwise it uses the brand accent token. */
 export function wordmark(size = 22, onDark = false): Raw {
-  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#7aa8ff' : 'var(--accent)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
+  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#ff9db0' : 'var(--brand)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
 }
 
 // ---------- nav registry ----------
@@ -121,6 +121,24 @@ function moduleBar(ctx: Ctx, active: string): Raw {
       </div>
     </div>`;
   }))}</nav>`;
+}
+
+/** Entrata-style white second-row sub-nav: when the current page belongs to a
+ * module tab, its sibling pages render as a horizontal row under the red bar
+ * (the dropdowns remain for cross-module jumps). Dashboard and unmapped pages
+ * (e.g. /setup) render no sub-nav. */
+function subNav(ctx: Ctx, active: string): Raw {
+  const tabs = tabItems(ctx);
+  for (const label of TAB_ORDER) {
+    if (label === 'Dashboard') continue;
+    const items = tabs.get(label) || [];
+    if (items.length && items.some((i) => itemActive(active, i))) {
+      return html`<nav class="subnav" aria-label="${label} pages">
+        ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}
+      </nav>`;
+    }
+  }
+  return html``;
 }
 
 function setupMenu(ctx: Ctx, active: string): Raw {
@@ -226,7 +244,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     <header class="topchrome">
       <div class="brandbar">
         <button class="menu-btn" data-toggle="#sidebar" aria-label="Menu">${raw('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>')}</button>
-        <a class="brand brand-top" href="/">${logo(22, '#7aa8ff')} <span class="brand-name">Stay<span class="wm-accent">Leased</span></span></a>
+        <a class="brand brand-top" href="/">${logo(22, 'var(--brand)')} <span class="brand-name">Stay<span class="wm-accent">Leased</span></span></a>
         ${when(orgName && orgName !== 'Platform', () => html`<span class="org-chip" title="Your organization">${orgName}</span>`)}
         <div class="spacer"></div>
         ${propSwitch}
@@ -246,6 +264,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         </div>
       </div>
       ${moduleBar(ctx, opts.active)}
+      ${subNav(ctx, opts.active)}
     </header>
     ${when(ctx.impersonatorId, () => html`<div class="impersonation">You are viewing StayLeased as <b>${ctx.userName}</b> (impersonation is audited). <a href="/unimpersonate">Return to my account</a></div>`)}
     <div class="main">
@@ -263,7 +282,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
       </main>
     </div>
     <aside class="sidebar drawer" id="sidebar">
-      <div class="brand">${logo(22, '#7aa8ff')} <span class="brand-name">Stay<span class="wm-accent">Leased</span><span class="org">${orgName}</span></span></div>
+      <div class="brand">${logo(22, 'var(--brand)')} <span class="brand-name">Stay<span class="wm-accent">Leased</span><span class="org">${orgName}</span></span></div>
       <nav class="nav">${nav}</nav>
     </aside>
   </div>
