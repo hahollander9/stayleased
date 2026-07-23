@@ -89,3 +89,18 @@ Demo logins (all password `demo1234`, see docs/demo-logins.md): `admin@summitrid
 None — the build is complete. The README's 15-minute tour is the handoff
 walkthrough; docs/parity.md lists the intentional gaps if anyone extends
 this. `npm run check && npm run e2e` from a fresh clone is the health bar.
+
+## Working model (2026-07-23)
+
+- [x] Persistent data path (`STAYLEASED_DB` absolute → Render disk) + seed-on-first-boot
+- [x] `orgs.kind` demo|live; live clock auto-sync through the real scheduler
+- [x] Sim-generator jobs (ils_leads, bank_feed, utility_cycle) fenced off live orgs
+- [x] Invite-code `/signup` → live org + admin (chart of accounts, templates, jobs)
+- [x] `/welcome` guided go-live checklist (auto-detected progress)
+- [x] Migration Center v2: universal spreadsheet import (zero-dep xlsx r/w,
+      synonym auto-map, competitor presets, AI assist, review UI, tx apply)
+- [x] Conversion accounting: 3030 equity, deposits-held JE, billing_start_date
+- [x] Lease-PDF lane (local text extraction + live Claude document reading)
+- [x] `/setup/connections` honest rails page + waitlist capture
+- [x] Live-org one-time passwords (no demo1234 leakage)
+- Gates: tsc clean · 146 unit · 121 e2e

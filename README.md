@@ -2,6 +2,30 @@
 
 A multi-tenant property management platform with functional parity to Entrata's suite — property operations, resident experience, accounting, payments, utilities, insurance, revenue intelligence, BI, communications, procurement, an AI-agent layer, and vertical modes — built as **original work** with every external rail (payments, screening bureaus, SMS/email, bank feeds, meters, insurers, LLMs) implemented as a **deterministic simulator** behind a provider interface, so the whole platform runs end-to-end in a sandbox with no real money and no real consumer data.
 
+## Working model — real customers, not just the demo
+
+The platform now runs demo and LIVE orgs side by side. `/signup`
+(invite-code-gated via `STAYLEASED_SIGNUP_CODE`) creates a real, empty
+company on the real calendar; `/welcome` walks it to go-live; and the
+**Migration Center** (`/setup/import`) moves a portfolio in from anywhere:
+
+- **Rent roll / any spreadsheet** (.xlsx/.csv/.tsv — Buildium, AppFolio,
+  Yardi, Rent Manager, TenantCloud exports auto-detected; any other columns
+  auto-mapped by synonyms + optional AI assist; you confirm before apply).
+  One file creates properties, floorplans, units, residents, leases,
+  deposits held, and balances owed.
+- **Signed lease PDFs** — extracted locally (typed PDFs) or by live Claude
+  (scans) into editable drafts with confidence flags.
+- **Vendors, extra residents, opening balances, opening bank balance.**
+
+Conversion accounting is done properly: migrated balances post as
+`opening_balance` charges against `3030 Opening Balance Equity`, deposits
+held post `1020/2100` on both bases, and each migrated lease carries a
+`billing_start_date` so recurring rent never double-bills a month the prior
+system already charged. Live orgs never run the demo world's simulators
+(fake leads/bank feeds/meter reads), can't open the time machine, and issue
+one-time passwords instead of `demo1234`.
+
 ## Run it
 
 Requires Node ≥ 22.11. The runtime uses only Node built-ins; dev tooling (typescript, playwright) and pdf-lib come from npm.

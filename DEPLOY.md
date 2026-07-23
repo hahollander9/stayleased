@@ -1,4 +1,43 @@
-# Putting the StayLeased demo on the web
+# Putting StayLeased on the web
+
+## Working model (real customers, persistent data) — the current production shape
+
+The demo paths below still work, but the live site now supports REAL customer
+orgs: invite-code signup at `/signup`, guided onboarding at `/welcome`, and
+the Migration Center at `/setup/import`. For customer data to survive
+restarts and deploys, the database must live on a persistent disk:
+
+1. Render dashboard → **stayleased** service → **Settings → Instance Type**
+   → **Starter** (~$7/mo; the free plan sleeps and cannot mount disks).
+2. **Disks → Add Disk**: name `stayleased-data`, mount path `/data`, 1 GB
+   (~$0.25/mo).
+3. **Environment** → add:
+   - `STAYLEASED_DB` = `/data/stayleased.db` (data now lives on the disk)
+   - `STAYLEASED_SIGNUP_CODE` = an invite code you choose (enables `/signup`;
+     leave unset to keep signups closed)
+   - `ANTHROPIC_API_KEY` = a key from console.anthropic.com (flips AI from
+     the demo brain to live Claude: lease-PDF reading, import mapping assist,
+     agent replies). Optional but recommended.
+4. **Manual Deploy → Deploy latest commit.** The FIRST boot on a fresh disk
+   seeds the demo org onto it (~2 min before the site answers); after that,
+   boots are instant and nothing resets. The Summit Ridge demo org coexists
+   with real customer orgs — demo logins keep working.
+
+Live orgs are fenced from the demo machinery: they run on the real calendar
+(rent posts on the 1st, late fees per policy), simulator feeds (fake leads,
+fake bank transactions, fake meter reads) never run for them, the simulator
+console is blocked, and new accounts get one-time random passwords instead of
+`demo1234`. Payments/screening/bank rails remain SIMULATED platform-wide and
+are labeled as such on `/setup/connections` — do not treat simulated receipts
+as real funds.
+
+To rehearse the customer journey: `/signup` (your invite code) → `/welcome`
+→ Migration Center → upload a rent roll (or grab its Excel template) →
+review mapping → Apply.
+
+---
+
+# Putting the StayLeased demo on the web (original demo paths)
 
 Three paths, easiest first. The app is a single Node 22 process with a SQLite
 file — no external database or services to set up. Everything in it is
