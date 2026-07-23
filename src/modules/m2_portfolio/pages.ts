@@ -3,7 +3,7 @@ import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/
 import { requirePerm, requireStaff, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { q, q1, run, insert, update, val, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
-import { nowIso, fmtDate } from '../../lib/dates.ts';
+import { nowIso, fmtDate, addMonths, addDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { audit } from '../../lib/audit.ts';
 import { v } from '../../lib/validate.ts';
@@ -11,7 +11,8 @@ import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, historyPanel, checkbox, moneyInput,
 } from '../../ui/ui.ts';
-import { donut, bars, sparkline } from '../../lib/charts.ts';
+import { donut, bars, sparkline, barChart, areaChart, funnelChart, splitBar } from '../../lib/charts.ts';
+import { funnelStats } from '../m3_crm/service.ts';
 import {
   unitStats, floorplanAvailability, propertySummaries, unitAmenities, effectiveMarketRent,
   UNIT_STATUSES, UNIT_STATUS_LABELS,
@@ -551,21 +552,54 @@ function orgTrends(ctx: Ctx): { labels: string[]; occ: number[]; deliq: number[]
   return { labels: keys.map((k) => k.slice(5)), occ, deliq, coll };
 }
 
-function trendsCard(ctx: Ctx): ReturnType<typeof card> | null {
+/** Entrata-BI-style analytics: real charts in chart cards (Rolling Occupancy
+ * bars, gradient area trends, lead funnel, monthly lead bars, comm split). */
+function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
   const t = orgTrends(ctx);
-  if (!t) return null;
   const last = <T>(a: T[]): T => a[a.length - 1]!;
-  const tile = (label: string, value: string, points: number[], tone: string): ReturnType<typeof html> => html`<div class="trend-tile">
-    <div class="tt-label">${label}</div>
-    <div class="tt-value">${value}</div>
-    ${sparkline(points, { tone, w: 200, h: 36 })}
-    <div class="tt-range small muted">${t.labels[0]} → ${last(t.labels)}</div>
-  </div>`;
-  return card('Portfolio trends · last 12 months', html`<div class="trend-grid">
-    ${tile('Occupancy', `${last(t.occ)}%`, t.occ, 'ok')}
-    ${tile('Delinquency', usd(last(t.deliq) * 100), t.deliq, 'bad')}
-    ${tile('Collections', `${last(t.coll)}%`, t.coll, 'accent')}
-  </div>`);
+  const monthLabels = (t?.labels || []).map((l) => {
+    const m = parseInt(l, 10);
+    return ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m] || l;
+  });
+
+  // lead funnel + monthly lead counts (last 12 months)
+  const f = funnelStats(ctx, addMonths(ctx.businessDate, -3), ctx.currentPropertyId);
+  const since = `${addMonths(ctx.businessDate, -11).slice(0, 7)}-01`;
+  const leadRows = q<{ mk: string; c: number }>(
+    `SELECT substr(created_date,1,7) AS mk, COUNT(*) AS c FROM leads WHERE org_id=? AND created_date>=? GROUP BY mk ORDER BY mk`,
+    ctx.orgId, since,
+  );
+  const leadByMk = new Map(leadRows.map((r) => [r.mk, r.c]));
+  const leadLabels: string[] = [], leadVals: number[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const mk = addMonths(ctx.businessDate, -i).slice(0, 7);
+    leadLabels.push(['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][parseInt(mk.slice(5), 10)] || mk);
+    leadVals.push(leadByMk.get(mk) || 0);
+  }
+
+  // communication mix over the last 30 days
+  const comm = q<{ channel: string; c: number }>(
+    `SELECT channel, COUNT(*) AS c FROM outbox_messages WHERE org_id=? AND created_at>=? GROUP BY channel ORDER BY c DESC`,
+    ctx.orgId, `${addDays(ctx.businessDate, -30)}T00:00:00`,
+  );
+  const commParts = comm.map((r) => ({ label: r.channel === 'sms' ? 'Text' : r.channel[0]!.toUpperCase() + r.channel.slice(1), value: r.c }));
+
+  return html`
+    ${when(t, () => html`${card(`Rolling occupancy · last 12 months`, html`<div class="chart-head-val">${last(t!.occ)}%</div>${barChart(monthLabels, t!.occ, { kind: 'pct', highlightLast: true })}`)}
+    <div class="grid cols-2 chart-pair">
+      ${card('Collections rate', html`<div class="chart-head-val pos">${last(t!.coll)}%</div>${areaChart(monthLabels, t!.coll, { kind: 'pct' })}`)}
+      ${card('Delinquency', html`<div class="chart-head-val neg">${usd(last(t!.deliq) * 100)}</div>${areaChart(monthLabels, t!.deliq, { kind: 'usd', color: '#b3261e' })}`)}
+    </div>`)}
+    <div class="grid cols-2 chart-pair">
+      ${card('Leads by month', barChart(leadLabels, leadVals, { kind: 'num' }))}
+      ${card(`Lead conversion · last 90 days${f.inquiries ? ` · ${Math.round((f.leased / (f.inquiries || 1)) * 1000) / 10}% lead to lease` : ''}`, funnelChart([
+        { label: 'Inquiries', value: f.inquiries },
+        { label: 'Toured', value: f.toured },
+        { label: 'Applied', value: f.applied },
+        { label: 'Leased', value: f.leased },
+      ]))}
+    </div>
+    ${when(commParts.length, () => card('Communication · last 30 days', splitBar(commParts)))}`;
 }
 
 function portfolioDashboard(rq: Rq) {
@@ -573,7 +607,7 @@ function portfolioDashboard(rq: Rq) {
   const sums = propertySummaries(ctx);
   const org = unitStats(ctx, null);
   const extra = dashboardExtras(ctx, null);
-  const trends = trendsCard(ctx);
+  const analytics = analyticsCards(ctx);
   return shell(rq, {
     title: 'Portfolio',
     active: '/',
@@ -587,7 +621,7 @@ function portfolioDashboard(rq: Rq) {
         { label: 'Avg market rent', value: usd(org.avgMarketRentCents) },
         ...extra.kpis,
       ])}
-      ${trends || ''}
+      ${analytics}
       ${card('Property comparison', tbl(
         [{ label: 'Property' }, { label: 'Type' }, { label: 'Units', num: true }, { label: 'Occupancy', num: true }, { label: 'Notice', num: true }, { label: 'Vacant ready', num: true }, { label: 'Exposure', num: true }, { label: 'Avg rent', num: true }],
         sums.map((p) => ({

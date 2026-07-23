@@ -124,3 +124,155 @@ export function funnel(stages: { label: string; value: number }[]): Raw {
     </div>`;
   })}</div>`;
 }
+
+// ===== Entrata-BI-grade charts (bar/area/funnel/split) =====
+
+/** Entrata-BI-grade inline-SVG charts. Zero dependencies, server-rendered.
+ * Palette: the signature-blue family (like Entrata BI's periwinkle range) so
+ * every chart reads as one system. All charts scale to card width via
+ * viewBox + width:100% (see .chart CSS). */
+
+const BLUE = '#2563eb';
+const BLUE_MID = '#7c9bf5';
+const BLUE_SOFT = '#c7d5fb';
+const GRID = '#eef0f3';
+const AXIS = '#98a1ae';
+
+function niceCeil(v: number): number {
+  if (v <= 0) return 1;
+  const p = Math.pow(10, Math.floor(Math.log10(v)));
+  for (const m of [1, 2, 2.5, 5, 10]) if (v <= m * p) return m * p;
+  return 10 * p;
+}
+
+export function tickLabel(v: number, kind: 'num' | 'pct' | 'usd' = 'num'): string {
+  const abs = Math.abs(v);
+  const base = abs >= 1e6 ? `${+(v / 1e6).toFixed(1)}M` : abs >= 1e3 ? `${+(v / 1e3).toFixed(1)}K` : `${+v.toFixed(1)}`;
+  return kind === 'pct' ? `${base}%` : kind === 'usd' ? `$${base}` : base;
+}
+
+/** Vertical bar chart with y-gridlines and axis labels (Rolling Weekly
+ * Occupancy pattern). Highlights the final bar in the strong brand color. */
+export function barChart(labels: string[], values: number[], opts?: { kind?: 'num' | 'pct' | 'usd'; h?: number; highlightLast?: boolean; zeroBase?: boolean }): Raw {
+  const kind = opts?.kind || 'num';
+  const H = opts?.h ?? 190;
+  const W = 640;
+  const padL = 42, padR = 8, padT = 12, padB = 26;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const n = Math.max(values.length, 1);
+  const vmax = niceCeil(Math.max(...values, 0) * 1.05);
+  const vmin = opts?.zeroBase === false ? Math.min(...values, 0) : 0;
+  const y = (v: number): number => padT + ih - ((v - vmin) / (vmax - vmin || 1)) * ih;
+  const bw = Math.min(34, (iw / n) * 0.62);
+  const step = iw / n;
+  let g = '';
+  for (let t = 0; t <= 4; t++) {
+    const v = vmin + ((vmax - vmin) * t) / 4;
+    const yy = y(v);
+    g += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="${GRID}" stroke-width="1"/>`;
+    g += `<text x="${padL - 6}" y="${yy + 3.5}" text-anchor="end" font-size="10" fill="${AXIS}">${esc(tickLabel(v, kind))}</text>`;
+  }
+  let bars = '';
+  values.forEach((v, i) => {
+    const cx = padL + step * i + step / 2;
+    const yy = y(v);
+    const hh = Math.max(padT + ih - yy, 1.5);
+    const last = i === values.length - 1;
+    const fill = opts?.highlightLast ? (last ? BLUE : BLUE_MID) : BLUE_MID;
+    bars += `<rect x="${(cx - bw / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${hh.toFixed(1)}" rx="3" fill="${fill}"><title>${esc(labels[i] || '')}: ${esc(tickLabel(v, kind))}</title></rect>`;
+    const every = n > 8 ? 2 : 1;
+    if (i % every === 0) bars += `<text x="${cx}" y="${H - 8}" text-anchor="middle" font-size="10" fill="${AXIS}">${esc(labels[i] || '')}</text>`;
+  });
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet">${g}${bars}</svg>`);
+}
+
+let GRAD_SEQ = 0;
+
+/** Smooth area chart with a soft gradient fill (Interactions / Conversion
+ * Rate card pattern). */
+export function areaChart(labels: string[], values: number[], opts?: { kind?: 'num' | 'pct' | 'usd'; h?: number; color?: string }): Raw {
+  const kind = opts?.kind || 'num';
+  const H = opts?.h ?? 190;
+  const W = 640;
+  const padL = 42, padR = 10, padT = 12, padB = 26;
+  const iw = W - padL - padR, ih = H - padT - padB;
+  const color = opts?.color || BLUE;
+  const lo = Math.min(...values), hi = Math.max(...values);
+  const span = hi - lo || 1;
+  const vmin = Math.max(0, lo - span * 0.25);
+  const vmax = hi + span * 0.15;
+  const x = (i: number): number => padL + (iw * i) / Math.max(values.length - 1, 1);
+  const y = (v: number): number => padT + ih - ((v - vmin) / (vmax - vmin || 1)) * ih;
+  let g = '';
+  for (let t = 0; t <= 3; t++) {
+    const v = vmin + ((vmax - vmin) * t) / 3;
+    const yy = y(v);
+    g += `<line x1="${padL}" y1="${yy}" x2="${W - padR}" y2="${yy}" stroke="${GRID}" stroke-width="1"/>`;
+    g += `<text x="${padL - 6}" y="${yy + 3.5}" text-anchor="end" font-size="10" fill="${AXIS}">${esc(tickLabel(v, kind))}</text>`;
+  }
+  const pts = values.map((v, i) => [x(i), y(v)] as const);
+  let d = `M ${pts[0]![0].toFixed(1)} ${pts[0]![1].toFixed(1)}`;
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1]!, [x1, y1] = pts[i]!;
+    const mx = (x0 + x1) / 2;
+    d += ` C ${mx.toFixed(1)} ${y0.toFixed(1)}, ${mx.toFixed(1)} ${y1.toFixed(1)}, ${x1.toFixed(1)} ${y1.toFixed(1)}`;
+  }
+  const gid = `ag${++GRAD_SEQ}`;
+  const area = `${d} L ${pts[pts.length - 1]![0].toFixed(1)} ${padT + ih} L ${pts[0]![0].toFixed(1)} ${padT + ih} Z`;
+  let xs = '';
+  const every = values.length > 8 ? 2 : 1;
+  labels.forEach((l, i) => { if (i % every === 0) xs += `<text x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="middle" font-size="10" fill="${AXIS}">${esc(l)}</text>`; });
+  const dot = pts[pts.length - 1]!;
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet">
+    <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".28"/><stop offset="100%" stop-color="${color}" stop-opacity=".02"/></linearGradient></defs>
+    ${g}<path d="${area}" fill="url(#${gid})"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>
+    <circle cx="${dot[0].toFixed(1)}" cy="${dot[1].toFixed(1)}" r="3.4" fill="${color}"/>${xs}</svg>`);
+}
+
+/** Centered conversion funnel (Lead-to-Lease pattern): symmetric bands whose
+ * widths taper with the counts; label + value inside each band. */
+export function funnelChart(stages: { label: string; value: number }[], opts?: { h?: number }): Raw {
+  const W = 640;
+  const bandH = 44, gap = 5;
+  const H = opts?.h ?? stages.length * (bandH + gap) + 10;
+  const max = Math.max(...stages.map((s) => s.value), 1);
+  const minW = 0.22, maxW = 0.94;
+  const widthFor = (v: number): number => W * (minW + (maxW - minW) * (v / max));
+  const shades = [BLUE, '#4a7bef', BLUE_MID, '#a3b9f8', BLUE_SOFT];
+  let out = '';
+  stages.forEach((s, i) => {
+    const wTop = widthFor(s.value);
+    const next = stages[i + 1];
+    const wBot = next ? widthFor(next.value) : wTop * 0.92;
+    const yTop = 5 + i * (bandH + gap);
+    const xTL = (W - wTop) / 2, xTR = xTL + wTop;
+    const xBL = (W - wBot) / 2, xBR = xBL + wBot;
+    const fill = shades[Math.min(i, shades.length - 1)];
+    const ink = i >= 3 ? '#1b2331' : '#ffffff';
+    out += `<path d="M ${xTL.toFixed(1)} ${yTop} L ${xTR.toFixed(1)} ${yTop} L ${xBR.toFixed(1)} ${yTop + bandH} L ${xBL.toFixed(1)} ${yTop + bandH} Z" fill="${fill}"/>`;
+    out += `<text x="${W / 2}" y="${yTop + bandH / 2 - 3}" text-anchor="middle" font-size="12" font-weight="600" fill="${ink}">${esc(s.label)}</text>`;
+    out += `<text x="${W / 2}" y="${yTop + bandH / 2 + 13}" text-anchor="middle" font-size="12.5" font-weight="700" fill="${ink}">${s.value.toLocaleString('en-US')}</text>`;
+  });
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet">${out}</svg>`);
+}
+
+/** One horizontal segmented bar + legend (Communication phone/text pattern). */
+export function splitBar(parts: { label: string; value: number }[], opts?: { kind?: 'num' | 'pct' | 'usd' }): Raw {
+  const W = 640, H = 64, barH = 26;
+  const total = parts.reduce((s, p) => s + p.value, 0) || 1;
+  const colors = [BLUE_SOFT, BLUE, BLUE_MID, '#a3b9f8'];
+  let x = 0, segs = '', legend = '';
+  parts.forEach((p, i) => {
+    const w = (p.value / total) * W;
+    segs += `<rect x="${x.toFixed(1)}" y="6" width="${Math.max(w, 1).toFixed(1)}" height="${barH}" fill="${colors[i % colors.length]}"><title>${esc(p.label)}: ${p.value.toLocaleString('en-US')}</title></rect>`;
+    x += w;
+  });
+  let lx = 0;
+  parts.forEach((p, i) => {
+    legend += `<circle cx="${lx + 5}" cy="${H - 12}" r="4.5" fill="${colors[i % colors.length]}"/>`;
+    const t = `${p.label} · ${tickLabel(p.value, opts?.kind || 'num')}`;
+    legend += `<text x="${lx + 14}" y="${H - 8}" font-size="11.5" fill="#3c4657">${esc(t)}</text>`;
+    lx += 14 + t.length * 6.4 + 18;
+  });
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet"><rect x="0" y="6" width="${W}" height="${barH}" rx="4" fill="${GRID}"/>${segs}${legend}</svg>`);
+}

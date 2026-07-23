@@ -466,6 +466,13 @@ a.kpi:hover { text-decoration: none; border-color: var(--accent); }
 .modulebar :focus-visible { outline-color: #fff; }
 .field input:focus, .field select:focus, .field textarea:focus { border-color: var(--accent); outline: none; box-shadow: 0 0 0 3px var(--accent-soft); }
 
+/* ---------- chart cards (Entrata BI pattern) ---------- */
+.chart { display: block; width: 100%; height: auto; }
+.chart-pair { margin-bottom: 14px; }
+.chart-head-val { font-size: 22px; font-weight: 700; font-variant-numeric: tabular-nums; margin: 2px 0 8px; }
+.kpi { text-align: center; }
+.kpi .k-label { letter-spacing: .07em; }
+
 /* ---------- dashboard trend sparklines ---------- */
 .trend-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; }
 .trend-tile { min-width: 0; }
