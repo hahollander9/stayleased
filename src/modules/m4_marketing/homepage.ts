@@ -119,6 +119,7 @@ export function marketingHome(rq: Rq): Res {
   const thanks = rq.query.get('walkthrough') === 'thanks';
   const aiLive = llmStatus().live;
   const ASK_CHIPS = ["What's my occupancy?", "How's rent collection this month?", 'Any urgent maintenance?', "Who's at risk of non-renewal?"];
+  const SALES_CHIPS = ['What does it cost?', 'How do I switch from Buildium or AppFolio?', 'What does the AI actually do?'];
   const primaryCta = signupOpen
     ? html`<a class="mk-btn mk-btn-solid" href="/signup">Create your company</a>`
     : html`<a class="mk-btn mk-btn-solid" href="#walkthrough">Book a walkthrough</a>`;
@@ -378,14 +379,14 @@ export function marketingHome(rq: Rq): Res {
 <div id="mkchat" class="mk-chat">
   <div class="mk-chat-panel" id="mkchat-panel" role="dialog" aria-label="Ask StayLeased" aria-hidden="true">
     <div class="mk-chat-head">
-      <div class="mk-chat-id"><span class="mk-chat-av">SL</span><div><b>Ask StayLeased</b><span>${aiLive ? 'powered by Claude · demo data' : 'demo assistant'}</span></div></div>
+      <div class="mk-chat-id"><span class="mk-chat-av">SL</span><div><b>Ask StayLeased</b><span>${aiLive ? 'powered by Claude' : 'product questions, answered'}</span></div></div>
       <button class="mk-chat-close" id="mkchat-close" type="button" aria-label="Close">✕</button>
     </div>
     <div class="mk-chat-msgs" id="mkchat-msgs" aria-live="polite">
-      <div class="mk-msg agent">Hi! I’m the StayLeased assistant. Ask about the Summit Ridge demo — occupancy, rent collection, maintenance, renewals — or how StayLeased works.</div>
+      <div class="mk-msg agent">Hi! I’m the StayLeased assistant. Ask me anything about the product — pricing, switching from your current software, what the AI agents do, or how to get started.</div>
     </div>
     <div class="mk-chat-chips" id="mkchat-chips">
-      ${ASK_CHIPS.slice(0, 3).map((c) => html`<button type="button" class="mk-ask-chip">${c}</button>`)}
+      ${SALES_CHIPS.map((c) => html`<button type="button" class="mk-ask-chip">${c}</button>`)}
     </div>
     <form class="mk-chat-form" id="mkchat-form" autocomplete="off">
       <input id="mkchat-input" name="q" placeholder="Ask anything…" maxlength="500" aria-label="Ask StayLeased" />
@@ -515,8 +516,7 @@ export function marketingHome(rq: Rq): Res {
     });
   }
 
-  // ---------- Ask StayLeased (shared by the in-page panel + floating widget) ----------
-  function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+  // ---------- Ask StayLeased (in-page demo panel + floating sales widget) ----------
   function scrollDown(box) { box.scrollTop = box.scrollHeight; }
 
   function typeInto(el, text, box, done) {
@@ -533,60 +533,106 @@ export function marketingHome(rq: Rq): Res {
     tick();
   }
 
-  var busy = false;
-  function ask(question, box) {
-    if (busy || !question) return;
-    busy = true;
+  // per-box conversation memory → real multi-turn chat when Claude is live
+  function hist(box) { if (!box._hist) box._hist = []; return box._hist; }
+
+  function ask(question, box, mode, opts, done) {
+    opts = opts || {};
+    if (box._busy || !question) { if (done) done(false); return; }
+    box._busy = true;
+    if (opts.clear) { box.innerHTML = ''; box._hist = []; }
     var you = document.createElement('div'); you.className = 'mk-msg you'; you.textContent = question;
     box.appendChild(you);
     var agent = document.createElement('div'); agent.className = 'mk-msg agent';
-    var dots = document.createElement('span'); dots.className = 'mk-typing'; dots.innerHTML = '<i></i><i></i><i></i>';
-    agent.appendChild(dots); box.appendChild(agent); scrollDown(box);
+    agent.innerHTML = '<span class="mk-typing"><i></i><i></i><i></i></span>';
+    box.appendChild(agent); scrollDown(box);
+    var h = hist(box).slice(-8);
     fetch('/company/ask', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
-      body: 'q=' + encodeURIComponent(question),
+      body: 'q=' + encodeURIComponent(question) + '&mode=' + encodeURIComponent(mode || 'demo') + '&history=' + encodeURIComponent(JSON.stringify(h)),
     }).then(function (r) { return r.json(); }).then(function (data) {
+      var answer = (data && data.answer) || 'Sorry — I could not reach the assistant just now.';
+      hist(box).push({ role: 'you', text: question });
+      hist(box).push({ role: 'agent', text: answer });
       agent.textContent = '';
-      typeInto(agent, (data && data.answer) || 'Sorry — I couldn’t reach the assistant just now.', box, function () { busy = false; });
+      typeInto(agent, answer, box, function () { box._busy = false; if (done) done(true); });
     }).catch(function () {
-      agent.textContent = 'Sorry — I couldn’t reach the assistant just now. Try the live demo.';
-      busy = false;
+      agent.textContent = 'Sorry — I could not reach the assistant just now. Try the live demo.';
+      box._busy = false; if (done) done(false);
     });
   }
 
-  function wireAsk(formId, inputId, msgsId, chipsId) {
+  function wireAsk(formId, inputId, msgsId, chipsId, mode, onUser, onChip) {
     var form = document.getElementById(formId), input = document.getElementById(inputId), box = document.getElementById(msgsId);
     if (!form || !input || !box) return;
     form.addEventListener('submit', function (e) {
       e.preventDefault();
       var q = input.value.trim(); if (!q) return;
-      input.value = ''; ask(q, box);
+      input.value = '';
+      if (onUser) onUser();
+      ask(q, box, mode);
     });
     var chips = chipsId && document.getElementById(chipsId);
     if (chips) chips.addEventListener('click', function (e) {
       var b = e.target.closest('.mk-ask-chip'); if (!b) return;
-      ask(b.textContent.trim(), box);
-      if (chips.parentElement && chips.id === 'mk-ask-chips') chips.classList.add('used');
+      if (onChip) { onChip(b); return; }
+      if (onUser) onUser();
+      ask(b.textContent.trim(), box, mode);
     });
   }
-  wireAsk('mk-ask-form', 'mk-ask-input', 'mk-ask-msgs', 'mk-ask-chips');
-  wireAsk('mkchat-form', 'mkchat-input', 'mkchat-msgs', 'mkchat-chips');
 
-  // in-page panel: greet + auto-demo the first question when it scrolls in
+  // ---- in-page demo panel: auto-plays through the questions, chips jump ----
   var askMsgs = document.getElementById('mk-ask-msgs');
+  var askChipsBox = document.getElementById('mk-ask-chips');
+  var askChips = askChipsBox ? Array.prototype.slice.call(askChipsBox.querySelectorAll('.mk-ask-chip')) : [];
+  var autoTimer = null, autoOn = false, autoIdx = 0;
+
+  function markChip(i) {
+    askChips.forEach(function (c, k) { c.classList.toggle('active', k === i); });
+  }
+  function stopAuto() {
+    autoOn = false;
+    if (autoTimer) { clearTimeout(autoTimer); autoTimer = null; }
+    markChip(-1);
+  }
+  function playCycle(i, first) {
+    if (!autoOn || !askMsgs) return;
+    autoIdx = i % askChips.length;
+    markChip(autoIdx);
+    ask(askChips[autoIdx].textContent.trim(), askMsgs, 'demo', { clear: !first ? true : askMsgs.childElementCount > 0 }, function () {
+      if (!autoOn) return;
+      autoTimer = setTimeout(function () { playCycle(autoIdx + 1, false); }, reduce ? 4200 : 2600);
+    });
+  }
+  function startAuto(fromIdx) {
+    if (!askChips.length || !askMsgs) return;
+    stopAuto(); autoOn = true;
+    playCycle(fromIdx || 0, true);
+  }
+
+  wireAsk('mk-ask-form', 'mk-ask-input', 'mk-ask-msgs', 'mk-ask-chips', 'demo',
+    function () { stopAuto(); }, // typing your own question takes over the panel
+    function (chipBtn) { // clicking a chip jumps the cycle there and keeps playing
+      var i = askChips.indexOf(chipBtn);
+      stopAuto(); autoOn = true; playCycle(i < 0 ? 0 : i, false);
+    });
+
   var askDemoed = false;
   if (askMsgs && 'IntersectionObserver' in window) {
     var aio = new IntersectionObserver(function (es) {
       es.forEach(function (en) {
         if (en.isIntersecting && !askDemoed) {
           askDemoed = true; aio.disconnect();
-          setTimeout(function () { ask("What's my occupancy?", askMsgs); }, 500);
+          setTimeout(function () { startAuto(0); }, 450);
         }
       });
     }, { threshold: 0.4 });
     aio.observe(document.getElementById('mk-askbox'));
   }
+
+  // ---- floating widget: sales & product questions (real chat, with memory) ----
+  wireAsk('mkchat-form', 'mkchat-input', 'mkchat-msgs', 'mkchat-chips', 'sales');
 
   // floating chat widget
   var chat = document.getElementById('mkchat');
@@ -868,7 +914,7 @@ a { color: inherit; text-decoration: none; }
 .mk-typing i:nth-child(2) { animation-delay: .18s; }
 .mk-typing i:nth-child(3) { animation-delay: .36s; }
 .mk-ask-chips, .mk-chat-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 16px 12px; }
-.mk-ask-chips.used { opacity: .55; }
+.mk-ask-chip.active { border-color: var(--blue); background: var(--blue); color: #fff; box-shadow: 0 6px 16px rgba(37,99,235,.32); }
 .mk-ask-chip { font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink2); background: #fff; border: 1px solid #d6dce8; border-radius: 99px; padding: 6px 12px; cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease, transform .15s var(--ease); }
 .mk-ask-chip:hover { border-color: var(--blue); color: var(--blue); background: rgba(37,99,235,.05); transform: translateY(-1px); }
 .mk-ask-form, .mk-chat-form { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); background: #fff; }

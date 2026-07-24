@@ -162,3 +162,18 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
       renewals) + product Q&A; Claude phrases when ANTHROPIC_API_KEY is set,
       deterministic correct fallback otherwise; rate-limited per IP
 - Gates: tsc clean · 152 unit · 131 e2e
+
+## Ask v2: sales widget, autoplay, real chat (2026-07-24)
+
+- [x] Floating widget → SALES assistant (pricing, switching, AI capabilities;
+      steers to walkthrough/demo; never fakes portfolio numbers)
+- [x] In-page Ask panel AUTO-PLAYS through its questions with typed answers +
+      active-chip highlight; chips click-to-jump; typing your own question
+      takes over the panel
+- [x] /company/ask: mode=demo|sales + short client transcript (multi-turn
+      memory) → real follow-up conversations when Claude is live
+- [x] App chrome: ⌘K hint removed from search; Ask StayLeased is a gradient
+      brand pill in the header; live-org business-date chip no longer links
+      to the forbidden simulator console
+- Note: chained e2e→unit runs can flake (known db race) — run suites
+  separately. Gates: tsc clean · 152 unit · full e2e green

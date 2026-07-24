@@ -144,6 +144,34 @@ export function deterministicAnswer(qtext: string, f: DemoFacts | null): string 
   }
 }
 
+// ---------- sales mode (floating widget): product & sales, no demo numbers ----------
+
+export function salesAnswer(qtext: string): string {
+  const intent = classify(qtext);
+  switch (intent) {
+    case 'pricing':
+      return `Early access is free — the full platform, your real portfolio, export any time. When pricing lands it will be a simple per-unit price published right on the site, far below the enterprise platforms. No implementation fees, no quote-only games. Want an invite code? Book a walkthrough below.`;
+    case 'migration':
+      return `Switching takes an afternoon, not a quarter. Export your rent roll from Buildium, AppFolio, Yardi — or keep your spreadsheet — upload it (Excel, CSV, even PDF), confirm the columns our AI detected, and your properties, units, residents, leases, deposits and balances are in. Lease PDFs and vendor lists are optional extras.`;
+    case 'occupancy': case 'collection': case 'delinquency': case 'maintenance': case 'renewal':
+      return `In the product, that answer comes live from your own portfolio — occupancy, collections, delinquency, maintenance and renewals, in plain English. You can watch it work in the interactive demo above, or sign in to the live demo company to try it on real screens.`;
+    case 'product': case 'unknown':
+    default:
+      return `StayLeased is an AI property manager for independent multifamily operators (roughly 10–500 units): leasing that answers every lead in seconds, rent collection with polite-but-persistent AI follow-up, 24/7 maintenance triage, and real double-entry books. Every AI action lands in your approval queue until you dial up autonomy. What would you like to know — pricing, switching over, or what the AI actually does?`;
+  }
+}
+
+const SALES_SYSTEM = `You are "Ask StayLeased", the sales assistant on the StayLeased marketing site. StayLeased is an AI property-management platform for independent multifamily operators (roughly 10–500 units).
+What you know: leasing CRM answers every lead in seconds from live availability; rent collection with autopay and AI delinquency follow-up; 24/7 maintenance triage with emergency escalation; real double-entry accounting with bank rec and owner-ready statements; renewals AI; a resident portal. AI agents propose actions into a human approval queue with per-agent autonomy dials, fair-housing guardrails, and a full audit trail. Migration = upload a rent roll (Excel/CSV/PDF from Buildium, AppFolio, Yardi, or a spreadsheet) and the system builds the portfolio in an afternoon. Early access is FREE with an invite code; future pricing will be a published per-unit price. Payments/bank/screening rails are labeled simulated during early access. There is a live demo company visitors can sign in to, and a "Book a walkthrough" form on this page.
+Rules: 1–3 sentences, under 70 words, warm, plain, confident but honest. Never invent numbers, customers, or features beyond the list above. If asked for portfolio-style numbers, explain those come from THEIR data in the product and point to the demo. When helpful, end by inviting them to book a walkthrough or try the demo. No markdown.`;
+
+export interface AskTurn { role: 'you' | 'agent'; text: string }
+
+function transcript(history: AskTurn[]): string {
+  if (!history.length) return '';
+  return 'Conversation so far:\n' + history.map((t) => `${t.role === 'you' ? 'Visitor' : 'You'}: ${t.text}`).join('\n') + '\n\n';
+}
+
 // ---------- live (Claude) answer, grounded in the computed facts ----------
 
 const SYSTEM = `You are "Ask StayLeased", the assistant on the StayLeased marketing site. StayLeased is an AI property-management platform for independent multifamily operators (roughly 10–500 units): leasing CRM, rent collection with AI follow-up, maintenance triage, and real double-entry accounting, with AI agents that propose actions into a human approval queue. Migration is a rent-roll upload (Excel/CSV/PDF). Early access is free.
@@ -159,12 +187,12 @@ function factsBlock(f: DemoFacts | null): string {
 - renewals: ${f.endingSoon} leases end within 60 days, ${f.mtm} month-to-month`;
 }
 
-export async function askStayLeased(qtext: string): Promise<{ answer: string; live: boolean }> {
-  const f = demoFacts();
-  const fallback = deterministicAnswer(qtext, f);
+export async function askStayLeased(qtext: string, mode: 'demo' | 'sales' = 'demo', history: AskTurn[] = []): Promise<{ answer: string; live: boolean }> {
+  const f = mode === 'demo' ? demoFacts() : null;
+  const fallback = mode === 'sales' ? salesAnswer(qtext) : deterministicAnswer(qtext, f);
   const res = await llmGenerate({
-    system: SYSTEM,
-    prompt: `${factsBlock(f)}\n\nVisitor asks: "${qtext}"\n\nAnswer:`,
+    system: mode === 'sales' ? SALES_SYSTEM : SYSTEM,
+    prompt: `${mode === 'demo' ? factsBlock(f) + '\n\n' : ''}${transcript(history)}Visitor asks: "${qtext}"\n\nAnswer:`,
     fallback,
     maxTokens: 220,
   });
@@ -180,12 +208,24 @@ export function askRoutes(r: Router): void {
       return jsonRes({ answer: 'You’re asking quickly! Give me a few seconds and try again.', live: false, throttled: true });
     }
     const qtext = String(rq.body.q || '').trim().slice(0, 500);
-    if (qtext.length < 2) return jsonRes({ answer: 'Ask me anything about the demo company or how StayLeased works.', live: false });
+    const mode: 'demo' | 'sales' = rq.body.mode === 'sales' ? 'sales' : 'demo';
+    if (qtext.length < 2) return jsonRes({ answer: 'Ask me anything about StayLeased — or the demo company.', live: false });
+    // short client-provided transcript makes follow-up questions work (real chat)
+    let history: AskTurn[] = [];
     try {
-      const out = await askStayLeased(qtext);
+      const rawH = JSON.parse(String(rq.body.history || '[]'));
+      if (Array.isArray(rawH)) {
+        history = rawH.slice(-8).map((t: any) => ({
+          role: t && t.role === 'you' ? 'you' as const : 'agent' as const,
+          text: String((t && t.text) || '').slice(0, 300),
+        })).filter((t) => t.text.length > 0);
+      }
+    } catch { /* ignore malformed history */ }
+    try {
+      const out = await askStayLeased(qtext, mode, history);
       return jsonRes({ answer: out.answer, live: out.live, model: out.live ? llmStatus().model : null });
     } catch {
-      return jsonRes({ answer: deterministicAnswer(qtext, demoFacts()), live: false });
+      return jsonRes({ answer: mode === 'sales' ? salesAnswer(qtext) : deterministicAnswer(qtext, demoFacts()), live: false });
     }
   });
 
