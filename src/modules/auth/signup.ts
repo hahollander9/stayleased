@@ -42,6 +42,7 @@ function signupPage(rq: Rq, errs: string[] = [], b: Record<string, any> = {}): R
   return authShell(
     'Create your company',
     html`
+      <a class="auth-back" href="/">← Back to home</a>
       <div class="auth-brand">${wordmark(28)}</div>
       <div class="auth-sub">Set up your company on StayLeased.</div>
       ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}

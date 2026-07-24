@@ -111,6 +111,13 @@ test('gate: signed-in users still land on their app, not marketing', async () =>
 test('gate: demo persona chips are hidden until "Explore the demo" is clicked', async () => {
   const page = await newPage(browser);
   await page.goto(`${base}/login`, { waitUntil: 'networkidle' });
+  // a back-to-home link returns to the marketing page
+  const back = page.locator('a.auth-back');
+  assert.equal(await back.getAttribute('href'), '/', 'back link points home');
+  await back.click();
+  await page.waitForLoadState('networkidle');
+  assert.match(await page.content(), /Autonomous property management/, 'back link lands on the homepage');
+  await page.goBack({ waitUntil: 'networkidle' });
   // the summary is present, but the chips are collapsed (not visible) by default
   const summary = page.locator('.demo-personas summary.dp-head');
   await summary.waitFor({ state: 'visible' });

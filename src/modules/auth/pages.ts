@@ -31,6 +31,7 @@ export function routes(r: Router): void {
     return authShell(
       'Sign in',
       html`
+        <a class="auth-back" href="/">← Back to home</a>
         <div class="auth-brand">${wordmark(28)}</div>
         <div class="auth-sub">Property management, run by AI.</div>
         ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
