@@ -177,3 +177,21 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
       to the forbidden simulator console
 - Note: chained e2e→unit runs can flake (known db race) — run suites
   separately. Gates: tsc clean · 152 unit · full e2e green
+
+## Staff /ask → real AI chat (2026-07-24)
+
+- [x] askSmart() hybrid brain: pattern handlers stay authoritative for data
+      questions (tables, exact numbers, audited); greetings / "what can you
+      do" / unmatched phrasing get a grounded conversational answer (Claude
+      when ANTHROPIC_API_KEY set, warm deterministic fallback otherwise) —
+      the cold "could not answer that directly" card is gone from chat flow
+- [x] /ask rebuilt as a chat product: gradient orb hero (replaces the shell
+      h1 via :has()), live/demo brain badge, message thread with typewriter
+      answers, tables/links fade in under the bubble, suggestion chips,
+      pill composer; .busy state disables send + chips while thinking
+- [x] POST /ask.json (ai:view) carries q + rolling 8-turn history;
+      GET /ask?q= deep links still render server-side for the e2e gates
+- [x] scripts/ask-smoke.ts — boots, logs in, screenshots hello/chip/thanks
+- Gates: tsc clean · 152 unit · 132 e2e (new chat gate incl. busy guard +
+  smalltalk audit) — suites run separately per the known db race
+- Ship: commit 710ae0b (+ this STATE entry); deploys to Render on push
