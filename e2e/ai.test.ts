@@ -170,6 +170,48 @@ test('gate: Ask StayLeased answers three cross-module questions with correct liv
   assert.ok(asks.n >= 5, 'asks audited (seeded 2 + these 3)');
 });
 
+test('gate: Ask chat — "hello" gets a conversational answer, chips answer with tables, busy state guards double-sends', async () => {
+  const page = await newPage(browser);
+  await login(page, base, 'admin@summitridge.demo');
+  await page.goto(`${base}/ask`, { waitUntil: 'networkidle' });
+
+  // the chat interface, not the old form page
+  assert.ok(await page.locator('.aichat-panel').count(), 'chat panel present');
+  assert.ok(await page.locator('.aichat-brain').count(), 'brain badge present');
+  assert.match((await page.textContent('.aichat-msg.agent')) || '', /ask me about your portfolio/i, 'greeting bubble');
+
+  const idle = (): Promise<unknown> =>
+    page.waitForFunction(() => !document.querySelector('.aichat-panel.busy'), undefined, { timeout: 30000 });
+  const lastAgent = (): Promise<string> => page.evaluate(() => {
+    const a = document.querySelectorAll('.aichat-msg.agent .aichat-bubble');
+    return (a[a.length - 1]!.textContent || '').trim();
+  });
+
+  // conversational path: hello → friendly intro, never the fallback card
+  await page.fill('#aichat-input', 'hello');
+  await page.click('.aichat-send');
+  await page.waitForSelector('.aichat-panel.busy', { timeout: 5000 });
+  // while typing, chips are inert and the send button is disabled
+  assert.ok(await page.locator('.aichat-send[disabled]').count(), 'send disabled while busy');
+  await idle();
+  const hello = await lastAgent();
+  assert.match(hello, /Ask StayLeased/i, 'assistant introduces itself');
+  assert.doesNotMatch(hello, /could not answer that directly/i, 'no cold fallback for small talk');
+
+  // structured path: chip click → typed summary + table fade-in with real rows
+  await page.click('.aichat-chip:has-text("delinquency over $500 at Summit Ridge")');
+  await idle();
+  await page.waitForSelector('.aichat-extra .tbl', { timeout: 5000 });
+  assert.match(await lastAgent(), /households owing/i, 'structured summary typed out');
+  assert.ok((await page.locator('.aichat-extra .tbl tbody tr').count()) > 0, 'table rows rendered');
+
+  // the conversational turns were audited too
+  const { q1 } = await import('../src/lib/db.ts');
+  const convo = q1<any>(`SELECT COUNT(*) n FROM ai_actions WHERE agent='ask' AND output LIKE '%smalltalk%'`);
+  assert.ok(convo.n >= 1, 'small-talk answer audited');
+  await page.close();
+});
+
 test('gate: AI Activity shows every action; dials render with guardrails; autonomous history from Cardinal', async () => {
   const { val } = await import('../src/lib/db.ts');
   await mgr.goto(`${base}/ai?view=history`);

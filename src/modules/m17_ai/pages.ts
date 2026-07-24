@@ -1,5 +1,5 @@
 import { html, raw, when, join } from '../../lib/html.ts';
-import { redirect, notFound, type Router } from '../../lib/http.ts';
+import { redirect, notFound, type Router , jsonRes } from '../../lib/http.ts';
 import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j, js } from '../../lib/db.ts';
 import { fmtDate } from '../../lib/dates.ts';
@@ -13,7 +13,7 @@ import { llm, llmStatus } from '../../lib/sim/llm.ts';
 import { AGENTS, decideAction, autonomyFor, aiEnabled, type AgentKey, type Autonomy } from './framework.ts';
 import { handleLeadInbound, draftCollectionsOutreach, draftRenewalOutreach, evaluateCounter, triageRequest, setAiHooksLive } from './agents.ts';
 import { analyzeNewCalls, callRollup } from './analysis.ts';
-import { askStayLeased } from './ask.ts';
+import { askStayLeased , askSmart , type AskAnswer } from './ask.ts';
 import { generateListing, generateTemplateDraft, generateReviewResponse } from './content.ts';
 
 /** M17 screens: AI Activity (approval queue + full audit + autonomy dials),
@@ -297,38 +297,82 @@ export function routes(r: Router): void {
   });
 
   // ---------- Ask StayLeased ----------
+  // shared renderer: a structured answer as chat-bubble content
+  const ASK_SAMPLES = [
+    'delinquency over $500 at Summit Ridge', 'which units turn this month', 'occupancy at Foundry',
+    'collection rate last month', 'open work orders at Cardinal', 'top vendor spend',
+  ];
+  const answerBody = (answer: AskAnswer): ReturnType<typeof html> => html`
+    ${when(answer.table, () => html`<div class="aichat-table">${tbl(
+      answer.table!.cols.map((c) => ({ label: c })),
+      answer.table!.rows.map((row, i) => ({
+        href: answer.table!.hrefs?.[i] || undefined,
+        cells: row.map((cell) => html`${cell}`),
+      })),
+    )}</div>`)}
+    ${when(answer.links.length, () => html`<div class="aichat-links">${answer.links.map((l) => html`<a class="btn btn-sm btn-ghost" href="${l.href}">${l.label}</a>`)}</div>`)}`;
+
   r.get('/ask', requirePerm('ai:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const question = (rq.query.get('q') || '').slice(0, 200);
     const answer = question ? askStayLeased(ctx, question) : null;
+    const st = llmStatus();
     return shell(rq, {
       title: 'Ask StayLeased',
       active: '/ask',
-      subtitle: 'Questions over your own data — answered through the same service APIs the screens use, never raw SQL.',
       content: html`
-        <form method="get" class="card"><div class="card-body" style="display:flex;gap:8px">
-          <input name="q" value="${question}" placeholder='Try: delinquency over $500 at Summit Ridge · which units turn this month · occupancy at Foundry' style="flex:1" autofocus />
-          <button class="btn">Ask</button>
-        </div></form>
-        ${when(answer, () => html`
-          ${card(html`${answer!.title} <span class="badge violet">${answer!.matched}</span>`, html`
-            <p style="font-size:15px">${answer!.summary}</p>
-            ${when(answer!.table, () => tbl(
-              answer!.table!.cols.map((c) => ({ label: c })),
-              answer!.table!.rows.map((row, i) => ({
-                href: answer!.table!.hrefs?.[i] || undefined,
-                cells: row.map((cell) => html`${cell}`),
-              })),
-            ))}
-            <div style="display:flex;gap:8px;margin-top:10px">${answer!.links.map((l) => html`<a class="btn btn-sm btn-ghost" href="${l.href}">${l.label}</a>`)}</div>`)}`)}
-        ${when(!answer, () => card('Things people ask', html`<ul>
-          <li><a href="/ask?q=${encodeURIComponent('delinquency over $500 at Summit Ridge')}">delinquency over $500 at Summit Ridge</a></li>
-          <li><a href="/ask?q=${encodeURIComponent('which units turn this month')}">which units turn this month</a></li>
-          <li><a href="/ask?q=${encodeURIComponent('occupancy at Foundry')}">occupancy at Foundry</a></li>
-          <li><a href="/ask?q=${encodeURIComponent('collection rate last month')}">collection rate last month</a></li>
-          <li><a href="/ask?q=${encodeURIComponent('open work orders at Cardinal')}">open work orders at Cardinal</a></li>
-          <li><a href="/ask?q=${encodeURIComponent('top vendor spend')}">top vendor spend</a></li>
-        </ul>`))}`,
+        <div class="aichat">
+          <div class="aichat-hero">
+            <div class="aichat-orb" aria-hidden="true">${raw('<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.9 2.6 2.6.9-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9z"/></svg>')}</div>
+            <div class="aichat-hero-text">
+              <h2>Ask StayLeased</h2>
+              <p>Plain-English questions over your own portfolio — answered through the same service APIs the screens use, never raw SQL. Every answer is audited.</p>
+            </div>
+            <span class="aichat-brain ${st.live ? 'live' : ''}"><i></i>${st.live ? `Live · ${st.model}` : 'Demo brain'}</span>
+          </div>
+
+          <div class="aichat-panel">
+            <div class="aichat-thread" id="aichat-thread" aria-live="polite">
+              <div class="aichat-msg agent"><div class="aichat-bubble">Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: delinquency, occupancy, turns, collections, work orders, vendor spend. Or just talk to me.</div></div>
+              ${when(answer, () => html`
+                <div class="aichat-msg you"><div class="aichat-bubble">${question}</div></div>
+                <div class="aichat-msg agent"><div class="aichat-bubble">
+                  <div class="aichat-title">${answer!.title} <span class="badge violet">${answer!.matched}</span></div>
+                  <div class="aichat-summary">${answer!.summary}</div>
+                  ${answerBody(answer!)}
+                </div></div>`)}
+            </div>
+            <div class="aichat-chips" id="aichat-chips">
+              ${ASK_SAMPLES.map((c) => html`<button type="button" class="aichat-chip">${c}</button>`)}
+            </div>
+            <form class="aichat-form" id="aichat-form" autocomplete="off">
+              <input id="aichat-input" name="q" placeholder="Ask anything about your portfolio…" maxlength="300" aria-label="Ask StayLeased" autofocus />
+              <button class="aichat-send" type="submit" aria-label="Send">${raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>')}</button>
+            </form>
+          </div>
+        </div>
+        ${raw(`<script>${ASK_CHAT_JS}</script>`)}
+      `,
+    });
+  });
+
+  // fetch endpoint behind the same permission — structured or conversational
+  r.post('/ask.json', requirePerm('ai:view'), async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const question = String(rq.body.q || '').trim().slice(0, 300);
+    if (question.length < 1) return jsonRes({ summary: 'Ask me anything about your portfolio.', links: [], matched: 'noop', live: false });
+    let history: { role: 'you' | 'agent'; text: string }[] = [];
+    try {
+      const rawH = JSON.parse(String(rq.body.history || '[]'));
+      if (Array.isArray(rawH)) history = rawH.slice(-8).map((t: any) => ({ role: t?.role === 'you' ? 'you' as const : 'agent' as const, text: String(t?.text || '').slice(0, 300) })).filter((t) => t.text);
+    } catch { /* ignore */ }
+    const a = await askSmart(ctx, question, history);
+    return jsonRes({
+      title: a.conversational ? null : a.title,
+      summary: a.summary,
+      matched: a.matched,
+      live: a.live,
+      extraHtml: a.table || a.links.length ? answerBody(a).s : null,
     });
   });
 
@@ -390,3 +434,91 @@ export function routes(r: Router): void {
     return redirect(`/ai/essentials?generated=${encodeURIComponent(`<p>${text}</p>`)}`);
   });
 }
+
+// client for the Ask chat page: fetch + typewriter + history (no framework)
+const ASK_CHAT_JS = `
+(function () {
+  'use strict';
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  var thread = document.getElementById('aichat-thread');
+  var form = document.getElementById('aichat-form');
+  var input = document.getElementById('aichat-input');
+  var chips = document.getElementById('aichat-chips');
+  if (!thread || !form || !input) return;
+  var hist = [];
+  // seed history from server-rendered bubbles (deep-linked ?q=)
+  Array.prototype.forEach.call(thread.querySelectorAll('.aichat-msg'), function (m) {
+    var role = m.classList.contains('you') ? 'you' : 'agent';
+    var t = (m.textContent || '').trim().slice(0, 300);
+    if (t) hist.push({ role: role, text: t });
+  });
+  var busy = false;
+  var panel = thread.closest('.aichat-panel');
+  function setBusy(on) {
+    busy = on;
+    if (panel) panel.classList.toggle('busy', on);
+    var send = form.querySelector('.aichat-send');
+    if (send) send.disabled = on;
+  }
+  function scrollDown() { thread.scrollTop = thread.scrollHeight; }
+  function bubble(role) {
+    var m = document.createElement('div'); m.className = 'aichat-msg ' + role;
+    var b = document.createElement('div'); b.className = 'aichat-bubble';
+    m.appendChild(b); thread.appendChild(m); scrollDown();
+    return b;
+  }
+  function typeText(el, text, done) {
+    if (reduce) { el.textContent = text; scrollDown(); if (done) done(); return; }
+    var i = 0, per = text.length > 240 ? 3 : text.length > 120 ? 2 : 1;
+    (function tick() {
+      i = Math.min(text.length, i + per);
+      el.textContent = text.slice(0, i);
+      scrollDown();
+      if (i < text.length) setTimeout(tick, 16); else if (done) done();
+    })();
+  }
+  function ask(q) {
+    if (busy || !q) return;
+    setBusy(true);
+    bubble('you').textContent = q;
+    var b = bubble('agent');
+    b.innerHTML = '<span class="aichat-typing"><i></i><i></i><i></i></span>';
+    fetch('/ask.json', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
+      body: 'q=' + encodeURIComponent(q) + '&history=' + encodeURIComponent(JSON.stringify(hist.slice(-8))),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      b.innerHTML = '';
+      if (d.title) {
+        var t = document.createElement('div'); t.className = 'aichat-title'; t.textContent = d.title;
+        b.appendChild(t);
+      }
+      var sum = document.createElement('div'); sum.className = 'aichat-summary'; b.appendChild(sum);
+      hist.push({ role: 'you', text: q });
+      hist.push({ role: 'agent', text: (d.summary || '').slice(0, 300) });
+      typeText(sum, d.summary || 'Hmm — nothing came back. Try again?', function () {
+        if (d.extraHtml) {
+          var ex = document.createElement('div'); ex.className = 'aichat-extra'; ex.innerHTML = d.extraHtml;
+          b.appendChild(ex);
+          requestAnimationFrame(function () { ex.classList.add('vis'); scrollDown(); });
+        }
+        setBusy(false);
+        input.focus();
+      });
+    }).catch(function () {
+      b.textContent = 'I could not reach the assistant just now — try again in a moment.';
+      setBusy(false);
+    });
+  }
+  form.addEventListener('submit', function (e) {
+    e.preventDefault();
+    var q = input.value.trim(); if (!q) return;
+    input.value = '';
+    ask(q);
+  });
+  if (chips) chips.addEventListener('click', function (e) {
+    var c = e.target.closest('.aichat-chip'); if (!c) return;
+    ask(c.textContent.trim());
+  });
+})();
+`;

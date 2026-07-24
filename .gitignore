@@ -7,3 +7,4 @@ data/test*
 .DS_Store
 tmp/
 *.zip
+shots/

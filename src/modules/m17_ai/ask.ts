@@ -1,4 +1,5 @@
 import { q, q1, val } from '../../lib/db.ts';
+import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
 import { addMonths, monthKey, fmtMonth, fmtDate } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
@@ -205,4 +206,90 @@ export function askStayLeased(ctx: Ctx, question: string): AskAnswer {
     confidence: answer.matched === 'fallback' ? 0.5 : 0.95,
   });
   return answer;
+}
+
+// ---------- conversational layer (Claude on top of the handlers) ----------
+//
+// The pattern handlers above stay authoritative for data questions — real
+// numbers, real tables, service-API reads, audited. This layer makes the
+// surface feel like an actual assistant: greetings, "what can you do",
+// follow-ups, and anything the handlers don't match get a grounded
+// conversational answer instead of a cold fallback.
+
+export interface AskChatTurn { role: 'you' | 'agent'; text: string }
+
+function orgFactsBlock(ctx: Ctx): string {
+  const n = (sql: string, ...p: unknown[]): number => val<number>(sql, ...p) || 0;
+  const units = n('SELECT COUNT(*) FROM units WHERE org_id=?', ctx.orgId);
+  const occ = n(`SELECT COUNT(*) FROM units WHERE org_id=? AND status='occupied'`, ctx.orgId);
+  const props = n('SELECT COUNT(*) FROM properties WHERE org_id=?', ctx.orgId);
+  const openWos = n(`SELECT COUNT(*) FROM work_orders WHERE org_id=? AND status NOT IN ('completed','canceled')`, ctx.orgId);
+  const stats = receivablesStats(ctx, monthKey(ctx.businessDate), ctx.currentPropertyId);
+  const pctOcc = units ? Math.round((occ / units) * 1000) / 10 : 0;
+  return `FACTS (org "${ctx.orgId.slice(0, 10)}…", business date ${ctx.businessDate}):
+- portfolio: ${props} properties, ${units} units, occupancy ${pctOcc}% (${occ} occupied)
+- this month: billed ${usd(stats.billed)}, collected ${usd(stats.collected)} (${stats.collectionRate}% collection rate)
+- maintenance: ${openWos} open work orders`;
+}
+
+const CAPABILITIES = `Things I can pull live from your data (type them like this): "delinquency over $500 at <property>", "which units turn this month", "occupancy at <property>", "collection rate last month", "open work orders", "top vendor spend".`;
+
+const STAFF_SYSTEM = `You are "Ask StayLeased", the in-app assistant for a property-management platform, talking to a STAFF member of one company. You have a FACTS block with live portfolio figures and a list of structured questions the system answers with full tables.
+Rules: 1–3 sentences, under 70 words, warm and plain, no markdown. Use ONLY numbers from FACTS — never invent figures, names, or records. If they greet you or ask what you can do, introduce yourself briefly and point at example questions. If they ask something needing data you don't have in FACTS, suggest the closest structured phrasing from the capabilities list or the Reports section. Never claim to have taken an action.`;
+
+function smallTalk(question: string): string | null {
+  const s = question.toLowerCase().trim();
+  if (/^(hi|hello|hey|yo|sup|good (morning|afternoon|evening)|howdy)[\s!.,]*$/.test(s)) {
+    return `Hi! I'm Ask StayLeased — I answer questions straight from your portfolio data. ${CAPABILITIES}`;
+  }
+  if (/what can you (do|answer)|help me|how do (you|i) (work|use)|^help[\s!.?]*$/.test(s)) {
+    return `I read your live portfolio through the same service APIs the screens use — never raw SQL — and answer in plain English. ${CAPABILITIES}`;
+  }
+  if (/thank|thanks|ty[\s!.]*$/.test(s)) return `Anytime. Ask away whenever something comes up.`;
+  return null;
+}
+
+export interface SmartAnswer extends AskAnswer {
+  live: boolean;
+  conversational: boolean;
+}
+
+/** Hybrid ask: pattern handlers first (tables, links, exact numbers); when
+ * nothing matches, a grounded conversational answer — Claude when the key is
+ * set, a friendly deterministic reply otherwise. Every answer is audited. */
+export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[] = []): Promise<SmartAnswer> {
+  // 1) structured handlers (authoritative, synchronous)
+  for (const h of HANDLERS) {
+    const hit = h(ctx, question);
+    if (hit) {
+      propose(ctx, {
+        agent: 'ask', title: `Q: ${question.slice(0, 70)}`,
+        input: { question }, output: { kind: 'noop.analysis', matched: hit.matched, summary: hit.summary }, confidence: 0.95,
+      });
+      return { ...hit, live: false, conversational: false };
+    }
+  }
+
+  // 2) conversational: small talk fallback, then Claude with org facts
+  const canned = smallTalk(question) || `I didn't find a report for that phrasing. ${CAPABILITIES}`;
+  const transcript = history.slice(-8).map((t) => `${t.role === 'you' ? 'Staff' : 'You'}: ${t.text}`).join('\n');
+  const res = await llmGenerate({
+    system: STAFF_SYSTEM,
+    prompt: `${orgFactsBlock(ctx)}\n\nCapabilities: ${CAPABILITIES}\n\n${transcript ? 'Conversation so far:\n' + transcript + '\n\n' : ''}Staff asks: "${question}"\n\nAnswer:`,
+    fallback: canned,
+    maxTokens: 220,
+  });
+  const summary = (res.text || canned).trim().slice(0, 700);
+  propose(ctx, {
+    agent: 'ask', title: `Q: ${question.slice(0, 70)}`,
+    input: { question }, output: { kind: 'noop.analysis', matched: res.live ? 'conversation' : 'smalltalk', summary }, confidence: 0.7,
+  });
+  return {
+    title: 'Ask StayLeased', summary, links: [], matched: res.live ? 'conversation' : 'smalltalk',
+    live: res.live, conversational: true,
+  };
+}
+
+export function askBrainLive(): boolean {
+  return llmStatus().live;
 }
