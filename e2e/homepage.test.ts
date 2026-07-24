@@ -69,6 +69,28 @@ test('gate: homepage interactions — nav dropdown and ontology accordion', asyn
   await page.close();
 });
 
+test('gate: footer reveals on scroll and back-to-top appears', async () => {
+  const page = await newPage(browser);
+  await page.setViewportSize({ width: 1200, height: 800 });
+  await page.goto(`${base}/`, { waitUntil: 'networkidle' });
+  // back-to-top hidden at the top
+  assert.equal(await page.locator('#mktop.show').count(), 0, 'back-to-top hidden at top');
+  // scroll to the very bottom
+  await page.evaluate(() => window.scrollTo({ top: document.body.scrollHeight, behavior: 'instant' as ScrollBehavior }));
+  // footer link columns must be visible (regression: they were stuck at opacity:0)
+  const footLink = page.locator('.mk-foot-grid a').first();
+  await footLink.waitFor({ state: 'visible', timeout: 5000 });
+  const op = await footLink.evaluate((el) => {
+    let n: Element | null = el; while (n) { if (getComputedStyle(n).opacity === '0') return '0'; n = n.parentElement; }
+    return 'visible';
+  });
+  assert.equal(op, 'visible', 'footer links are not stuck invisible');
+  // back-to-top now shown
+  await page.locator('#mktop.show').waitFor({ state: 'visible', timeout: 3000 });
+  assert.ok(await page.locator('#mktop.show').count() >= 1, 'back-to-top shows after scrolling');
+  await page.close();
+});
+
 test('gate: walkthrough form captures a platform lead and thanks the visitor', async () => {
   const page = await newPage(browser);
   await page.goto(`${base}/#walkthrough`, { waitUntil: 'networkidle' });
@@ -128,6 +150,41 @@ test('gate: demo persona chips are hidden until "Explore the demo" is clicked', 
   await summary.click();
   await firstChip.waitFor({ state: 'visible', timeout: 3000 });
   assert.ok(await firstChip.isVisible(), 'chips visible after clicking Explore the demo');
+  await page.close();
+});
+
+test('gate: Ask StayLeased types out an answer grounded in real data', async () => {
+  const page = await newPage(browser);
+  await page.goto(`${base}/`, { waitUntil: 'networkidle' });
+  // scroll the Ask panel into view — it auto-demos "What's my occupancy?"
+  await page.locator('#mk-askbox').scrollIntoViewIfNeeded();
+  // a YOU bubble and a typed AGENT answer with a real number appear
+  await page.waitForFunction(() => {
+    const a = Array.from(document.querySelectorAll('#mk-ask-msgs .mk-msg.agent'));
+    return a.some((el) => /occupanc/i.test(el.textContent || '') && /%/.test(el.textContent || ''));
+  }, undefined, { timeout: 15000 });
+  assert.ok(await page.locator('#mk-ask-msgs .mk-msg.you').count() >= 1, 'user question bubble shown');
+  await page.close();
+});
+
+test('gate: floating chat widget opens and answers a question', async () => {
+  const page = await newPage(browser);
+  await page.goto(`${base}/`, { waitUntil: 'networkidle' });
+  // launcher present, panel closed
+  assert.equal(await page.locator('#mkchat.open').count(), 0);
+  await page.click('#mkchat-launch');
+  await page.locator('#mkchat.open').waitFor({ state: 'attached', timeout: 3000 });
+  // ask via a quick chip
+  await page.click('#mkchat-chips .mk-ask-chip');
+  await page.waitForFunction(() => {
+    const msgs = Array.from(document.querySelectorAll('#mkchat-msgs .mk-msg.agent'));
+    // greeting + a real answer (>=2 agent bubbles) with substantive text
+    return msgs.length >= 2 && (msgs[msgs.length - 1]!.textContent || '').trim().length > 20;
+  }, undefined, { timeout: 15000 });
+  assert.ok(await page.locator('#mkchat-msgs .mk-msg.you').count() >= 1, 'question echoed in widget');
+  // close with the X
+  await page.click('#mkchat-close');
+  assert.equal(await page.locator('#mkchat.open').count(), 0, 'widget closes');
   await page.close();
 });
 

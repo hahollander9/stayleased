@@ -6,6 +6,8 @@ import { id } from '../../lib/ids.ts';
 import { nowIso } from '../../lib/dates.ts';
 import { logo } from '../../ui/ui.ts';
 import { env } from '../../lib/env.ts';
+import { askRoutes } from './ask.ts';
+import { llmStatus } from '../../lib/sim/llm.ts';
 
 /** The platform marketing homepage — the front door for logged-out visitors,
  * modeled section-for-section on entrata.com's architecture: sticky nav with
@@ -115,6 +117,8 @@ function cube(n: number): string {
 export function marketingHome(rq: Rq): Res {
   const signupOpen = !!env('SIGNUP_CODE');
   const thanks = rq.query.get('walkthrough') === 'thanks';
+  const aiLive = llmStatus().live;
+  const ASK_CHIPS = ["What's my occupancy?", "How's rent collection this month?", 'Any urgent maintenance?', "Who's at risk of non-renewal?"];
   const primaryCta = signupOpen
     ? html`<a class="mk-btn mk-btn-solid" href="/signup">Create your company</a>`
     : html`<a class="mk-btn mk-btn-solid" href="#walkthrough">Book a walkthrough</a>`;
@@ -188,6 +192,36 @@ export function marketingHome(rq: Rq): Res {
         <p>A portal residents actually use: balance and autopay, maintenance with photos, documents, insurance, deposit alternatives, and rent reporting.</p>
         <span class="mk-more">See it in the demo →</span>
       </a>
+    </div>
+  </div>
+</section>
+
+<section class="mk-band mk-band-alt" id="ask">
+  <div class="mk-wrap mk-ask-grid">
+    <div class="mk-ask-copy">
+      <div class="mk-kicker mk-kicker-ai">Ask StayLeased${aiLive ? ' · powered by Claude' : ''}</div>
+      <h2 class="mk-h2">Ask anything. Get answers grounded in your data.</h2>
+      <p class="mk-lead">Ask StayLeased in plain English and get a straight answer — pulled live from your occupancy, ledger, work orders, and leases. No report builder, no exports, no waiting on the office.</p>
+      <ul class="mk-ask-points">
+        <li>Grounded in your real numbers — it never makes figures up</li>
+        <li>Answers about occupancy, collections, maintenance, and renewals</li>
+        <li>${aiLive ? 'Powered by Anthropic’s Claude, live on this site' : 'Runs on-device in the demo; add a Claude key to go fully live'}</li>
+      </ul>
+      <div class="mk-cta-row"><a class="mk-btn mk-btn-solid" href="/login">Try the full assistant in the demo</a></div>
+    </div>
+    <div class="mk-askbox" id="mk-askbox">
+      <div class="mk-askbox-head">
+        <div class="mk-askbox-id"><span class="mk-askbox-av">SR</span><div><b>Summit Ridge assistant</b><span>demo company · live data</span></div></div>
+        <span class="mk-live"><i></i>${aiLive ? 'LIVE' : 'DEMO'}</span>
+      </div>
+      <div class="mk-ask-msgs" id="mk-ask-msgs" aria-live="polite"></div>
+      <div class="mk-ask-chips" id="mk-ask-chips">
+        ${ASK_CHIPS.map((c) => html`<button type="button" class="mk-ask-chip">${c}</button>`)}
+      </div>
+      <form class="mk-ask-form" id="mk-ask-form" autocomplete="off">
+        <input id="mk-ask-input" name="q" placeholder="Ask anything…" maxlength="500" aria-label="Ask StayLeased" />
+        <button type="submit" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+      </form>
     </div>
   </div>
 </section>
@@ -337,6 +371,33 @@ export function marketingHome(rq: Rq): Res {
   </div>
 </footer>
 
+<button id="mktop" type="button" aria-label="Back to top" title="Back to top">
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+</button>
+
+<div id="mkchat" class="mk-chat">
+  <div class="mk-chat-panel" id="mkchat-panel" role="dialog" aria-label="Ask StayLeased" aria-hidden="true">
+    <div class="mk-chat-head">
+      <div class="mk-chat-id"><span class="mk-chat-av">SL</span><div><b>Ask StayLeased</b><span>${aiLive ? 'powered by Claude · demo data' : 'demo assistant'}</span></div></div>
+      <button class="mk-chat-close" id="mkchat-close" type="button" aria-label="Close">✕</button>
+    </div>
+    <div class="mk-chat-msgs" id="mkchat-msgs" aria-live="polite">
+      <div class="mk-msg agent">Hi! I’m the StayLeased assistant. Ask about the Summit Ridge demo — occupancy, rent collection, maintenance, renewals — or how StayLeased works.</div>
+    </div>
+    <div class="mk-chat-chips" id="mkchat-chips">
+      ${ASK_CHIPS.slice(0, 3).map((c) => html`<button type="button" class="mk-ask-chip">${c}</button>`)}
+    </div>
+    <form class="mk-chat-form" id="mkchat-form" autocomplete="off">
+      <input id="mkchat-input" name="q" placeholder="Ask anything…" maxlength="500" aria-label="Ask StayLeased" />
+      <button type="submit" aria-label="Send"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
+    </form>
+  </div>
+  <button class="mk-chat-launch" id="mkchat-launch" type="button" aria-label="Ask StayLeased">
+    <svg class="mk-chat-ico-open" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+    <span>Ask StayLeased</span>
+  </button>
+</div>
+
 <script>
 (function () {
   'use strict';
@@ -364,18 +425,24 @@ export function marketingHome(rq: Rq): Res {
     });
   });
 
-  // scroll progress bar + condensed nav on scroll
+  // scroll progress bar + condensed nav + back-to-top on scroll
   var prog = document.getElementById('mkprog');
   var nav = document.querySelector('.mk-nav');
+  var toTop = document.getElementById('mktop');
   function onScroll() {
     var h = document.documentElement;
+    var y = window.pageYOffset || h.scrollTop;
     var max = (h.scrollHeight - h.clientHeight) || 1;
-    var p = Math.min(1, Math.max(0, (window.pageYOffset || h.scrollTop) / max));
+    var p = Math.min(1, Math.max(0, y / max));
     if (prog) prog.style.transform = 'scaleX(' + p + ')';
-    if (nav) nav.classList.toggle('scrolled', (window.pageYOffset || h.scrollTop) > 8);
+    if (nav) nav.classList.toggle('scrolled', y > 8);
+    if (toTop) toTop.classList.toggle('show', y > 560);
   }
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
+  if (toTop) toTop.addEventListener('click', function () {
+    window.scrollTo({ top: 0, behavior: reduce ? 'auto' : 'smooth' });
+  });
 
   if (reduce) {
     document.querySelectorAll('.mk-reveal, .mk-stag, .mk-frame-chart i').forEach(function (el) { el.classList.add('vis'); el.classList.add('grown'); });
@@ -397,7 +464,7 @@ export function marketingHome(rq: Rq): Res {
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('vis'); io.unobserve(en.target); } });
     }, { threshold: 0.1, rootMargin: '0px 0px -7% 0px' });
-    document.querySelectorAll('.mk-band .mk-wrap, .mk-hero-in').forEach(function (el) { el.classList.add('mk-reveal'); io.observe(el); });
+    document.querySelectorAll('.mk-band .mk-wrap, .mk-hero-in, .mk-foot .mk-wrap').forEach(function (el) { el.classList.add('mk-reveal'); io.observe(el); });
   } else {
     document.querySelectorAll('.mk-reveal, .mk-stag').forEach(function (el) { el.classList.add('vis'); });
   }
@@ -447,6 +514,95 @@ export function marketingHome(rq: Rq): Res {
       visual.style.setProperty('--ty', '0deg');
     });
   }
+
+  // ---------- Ask StayLeased (shared by the in-page panel + floating widget) ----------
+  function esc(t) { var d = document.createElement('div'); d.textContent = t; return d.innerHTML; }
+  function scrollDown(box) { box.scrollTop = box.scrollHeight; }
+
+  function typeInto(el, text, box, done) {
+    if (reduce) { el.textContent = text; scrollDown(box); if (done) done(); return; }
+    var i = 0, n = text.length;
+    // reveal a few chars per frame so long answers still feel quick
+    var per = n > 240 ? 3 : n > 120 ? 2 : 1;
+    function tick() {
+      i = Math.min(n, i + per);
+      el.textContent = text.slice(0, i);
+      scrollDown(box);
+      if (i < n) setTimeout(tick, 16); else if (done) done();
+    }
+    tick();
+  }
+
+  var busy = false;
+  function ask(question, box) {
+    if (busy || !question) return;
+    busy = true;
+    var you = document.createElement('div'); you.className = 'mk-msg you'; you.textContent = question;
+    box.appendChild(you);
+    var agent = document.createElement('div'); agent.className = 'mk-msg agent';
+    var dots = document.createElement('span'); dots.className = 'mk-typing'; dots.innerHTML = '<i></i><i></i><i></i>';
+    agent.appendChild(dots); box.appendChild(agent); scrollDown(box);
+    fetch('/company/ask', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
+      body: 'q=' + encodeURIComponent(question),
+    }).then(function (r) { return r.json(); }).then(function (data) {
+      agent.textContent = '';
+      typeInto(agent, (data && data.answer) || 'Sorry — I couldn’t reach the assistant just now.', box, function () { busy = false; });
+    }).catch(function () {
+      agent.textContent = 'Sorry — I couldn’t reach the assistant just now. Try the live demo.';
+      busy = false;
+    });
+  }
+
+  function wireAsk(formId, inputId, msgsId, chipsId) {
+    var form = document.getElementById(formId), input = document.getElementById(inputId), box = document.getElementById(msgsId);
+    if (!form || !input || !box) return;
+    form.addEventListener('submit', function (e) {
+      e.preventDefault();
+      var q = input.value.trim(); if (!q) return;
+      input.value = ''; ask(q, box);
+    });
+    var chips = chipsId && document.getElementById(chipsId);
+    if (chips) chips.addEventListener('click', function (e) {
+      var b = e.target.closest('.mk-ask-chip'); if (!b) return;
+      ask(b.textContent.trim(), box);
+      if (chips.parentElement && chips.id === 'mk-ask-chips') chips.classList.add('used');
+    });
+  }
+  wireAsk('mk-ask-form', 'mk-ask-input', 'mk-ask-msgs', 'mk-ask-chips');
+  wireAsk('mkchat-form', 'mkchat-input', 'mkchat-msgs', 'mkchat-chips');
+
+  // in-page panel: greet + auto-demo the first question when it scrolls in
+  var askMsgs = document.getElementById('mk-ask-msgs');
+  var askDemoed = false;
+  if (askMsgs && 'IntersectionObserver' in window) {
+    var aio = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (en.isIntersecting && !askDemoed) {
+          askDemoed = true; aio.disconnect();
+          setTimeout(function () { ask("What's my occupancy?", askMsgs); }, 500);
+        }
+      });
+    }, { threshold: 0.4 });
+    aio.observe(document.getElementById('mk-askbox'));
+  }
+
+  // floating chat widget
+  var chat = document.getElementById('mkchat');
+  var launch = document.getElementById('mkchat-launch');
+  var closeb = document.getElementById('mkchat-close');
+  var panel = document.getElementById('mkchat-panel');
+  function setChat(open) {
+    if (!chat) return;
+    chat.classList.toggle('open', open);
+    document.body.classList.toggle('mk-chat-open', open);
+    if (panel) panel.setAttribute('aria-hidden', open ? 'false' : 'true');
+    if (open) { var inp = document.getElementById('mkchat-input'); if (inp) setTimeout(function () { inp.focus(); }, 120); }
+  }
+  if (launch) launch.addEventListener('click', function () { setChat(!chat.classList.contains('open')); });
+  if (closeb) closeb.addEventListener('click', function () { setChat(false); });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && chat && chat.classList.contains('open')) setChat(false); });
 })();
 </script>`;
 
@@ -464,6 +620,7 @@ export function marketingHome(rq: Rq): Res {
 }
 
 export function homepageRoutes(r: Router): void {
+  askRoutes(r);
   r.post('/company/walkthrough', (rq) => {
     if (!rateLimit(`walkthrough:${rq.ip}`, 6, 60000)) return textRes('Too many requests', 429);
     const name = String(rq.body.name || '').trim().slice(0, 80);
@@ -534,7 +691,7 @@ a { color: inherit; text-decoration: none; }
 .mk-hero { position: relative; background: linear-gradient(180deg, #f7faff, #fff 78%); border-bottom: 1px solid var(--line); overflow: hidden; }
 .mk-hero::before { content: ''; position: absolute; inset: -20% -10% auto -10%; height: 640px; background: radial-gradient(720px 380px at 74% 8%, rgba(37,99,235,.20), transparent 62%), radial-gradient(560px 320px at 12% 0%, rgba(34,211,238,.14), transparent 60%); animation: mkDrift 16s ease-in-out infinite alternate; pointer-events: none; }
 .mk-hero-in { position: relative; display: grid; grid-template-columns: 1.05fr .95fr; gap: 44px; align-items: center; padding: 78px 22px 84px; }
-.mk-kicker { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: var(--blue); background: rgba(37,99,235,.09); border: 1px solid rgba(37,99,235,.22); padding: 5px 12px; border-radius: 99px; margin-bottom: 18px; }
+.mk-kicker { display: inline-block; font-size: 12px; font-weight: 800; letter-spacing: 1.3px; text-transform: uppercase; color: var(--blue); background: rgba(37,99,235,.09); border: 1px solid rgba(37,99,235,.22); padding: 5px 12px; border-radius: 99px; margin-bottom: 18px; animation: mkKicker 3.2s ease-in-out infinite; }
 .mk-hero h1 { font-size: clamp(34px, 4.7vw, 56px); line-height: 1.05; letter-spacing: -1.4px; font-weight: 800; background: linear-gradient(180deg, #0b1220, #22314e); -webkit-background-clip: text; background-clip: text; }
 .mk-sub { font-size: 18.5px; color: var(--ink2); margin: 18px 0 26px; max-width: 34em; }
 .mk-cta-row { display: flex; gap: 12px; flex-wrap: wrap; }
@@ -597,7 +754,8 @@ a { color: inherit; text-decoration: none; }
 
 /* automation levels */
 .mk-levels { position: relative; display: grid; gap: 12px; max-width: 860px; }
-.mk-levels::before { content: ''; position: absolute; left: 27px; top: 18px; bottom: 18px; width: 2px; background: linear-gradient(180deg, #2563eb, #dbe4f5); }
+.mk-levels::before { content: ''; position: absolute; left: 27px; top: 18px; bottom: 18px; width: 2px; background: linear-gradient(180deg, #2563eb, #dbe4f5); transform: scaleY(0); transform-origin: top; transition: transform .9s var(--ease) .15s; }
+.vis .mk-levels::before { transform: scaleY(1); }
 .mk-level { position: relative; display: flex; gap: 18px; background: #fff; border: 1px solid var(--line); border-radius: 13px; padding: 17px 20px; transition: transform .18s var(--ease), box-shadow .18s var(--ease), border-color .18s ease; }
 .mk-level:hover { transform: translateX(6px); box-shadow: 0 14px 34px rgba(16,24,40,.11); border-color: rgba(37,99,235,.28); }
 .mk-level-cube { flex: none; width: 30px; transition: transform .3s var(--ease); }
@@ -684,19 +842,82 @@ a { color: inherit; text-decoration: none; }
 .mk-stag { opacity: 0; transform: translateY(26px); transition: opacity .6s var(--ease), transform .6s var(--ease); }
 .vis .mk-stag, .mk-stag.vis { opacity: 1; transform: none; }
 
+/* ask stayleased section */
+.mk-kicker-ai { display: inline-flex; align-items: center; gap: 7px; }
+.mk-ask-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; }
+.mk-ask-copy .mk-h2 { margin-bottom: 0; }
+.mk-ask-points { list-style: none; padding: 0; margin: 18px 0 24px; display: grid; gap: 9px; }
+.mk-ask-points li { position: relative; padding-left: 26px; font-size: 14.5px; color: var(--ink2); }
+.mk-ask-points li::before { content: ''; position: absolute; left: 0; top: 6px; width: 15px; height: 15px; border-radius: 99px; background: rgba(37,99,235,.14); }
+.mk-ask-points li::after { content: ''; position: absolute; left: 5px; top: 10px; width: 5px; height: 5px; border-radius: 99px; background: var(--blue); }
+.mk-askbox { background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 30px 66px rgba(16,24,40,.14); overflow: hidden; display: flex; flex-direction: column; min-height: 420px; }
+.mk-askbox-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background: linear-gradient(180deg, #f7f9ff, #fff); border-bottom: 1px solid var(--line); }
+.mk-askbox-id { display: flex; align-items: center; gap: 10px; }
+.mk-askbox-av { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #2563eb, #22d3ee); color: #fff; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.mk-askbox-id b { font-size: 14px; display: block; }
+.mk-askbox-id span { font-size: 11.5px; color: var(--mut); }
+.mk-live { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; font-weight: 800; letter-spacing: .8px; color: #15803d; background: #dcfce7; border-radius: 99px; padding: 3px 9px; }
+.mk-live i { width: 7px; height: 7px; border-radius: 99px; background: #22c55e; animation: mkPulse 1.8s ease-in-out infinite; }
+.mk-ask-msgs, .mk-chat-msgs { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
+.mk-ask-msgs { min-height: 210px; max-height: 300px; }
+.mk-msg { max-width: 85%; padding: 10px 13px; border-radius: 14px; font-size: 14px; line-height: 1.5; white-space: pre-wrap; animation: mkMsgIn .3s var(--ease); }
+.mk-msg.you { align-self: flex-end; background: var(--blue); color: #fff; border-bottom-right-radius: 5px; }
+.mk-msg.agent { align-self: flex-start; background: var(--bg2); color: var(--ink); border-bottom-left-radius: 5px; border: 1px solid var(--line); }
+.mk-typing { display: inline-flex; gap: 4px; padding: 2px 0; }
+.mk-typing i { width: 6px; height: 6px; border-radius: 99px; background: #9aa6b8; animation: mkBlink 1.2s infinite ease-in-out; }
+.mk-typing i:nth-child(2) { animation-delay: .18s; }
+.mk-typing i:nth-child(3) { animation-delay: .36s; }
+.mk-ask-chips, .mk-chat-chips { display: flex; flex-wrap: wrap; gap: 7px; padding: 0 16px 12px; }
+.mk-ask-chips.used { opacity: .55; }
+.mk-ask-chip { font: inherit; font-size: 12.5px; font-weight: 600; color: var(--ink2); background: #fff; border: 1px solid #d6dce8; border-radius: 99px; padding: 6px 12px; cursor: pointer; transition: border-color .15s ease, color .15s ease, background .15s ease, transform .15s var(--ease); }
+.mk-ask-chip:hover { border-color: var(--blue); color: var(--blue); background: rgba(37,99,235,.05); transform: translateY(-1px); }
+.mk-ask-form, .mk-chat-form { display: flex; gap: 8px; padding: 12px 14px; border-top: 1px solid var(--line); background: #fff; }
+.mk-ask-form input, .mk-chat-form input { flex: 1; font: inherit; font-size: 14px; padding: 10px 13px; border: 1.4px solid #d6dce8; border-radius: 11px; background: #fff; }
+.mk-ask-form input:focus, .mk-chat-form input:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px rgba(37,99,235,.14); }
+.mk-ask-form button, .mk-chat-form button { flex: none; width: 42px; border: 0; border-radius: 11px; background: var(--blue); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background .16s ease, transform .16s var(--ease); }
+.mk-ask-form button:hover, .mk-chat-form button:hover { background: var(--blue-d); transform: translateY(-1px); }
+
+/* floating chat widget */
+.mk-chat { position: fixed; right: 22px; bottom: 22px; z-index: 80; }
+.mk-chat-launch { display: inline-flex; align-items: center; gap: 9px; font: inherit; font-weight: 700; font-size: 14.5px; color: #fff; background: var(--blue); border: 0; border-radius: 99px; padding: 12px 18px 12px 15px; cursor: pointer; box-shadow: 0 14px 34px rgba(37,99,235,.45); transition: transform .2s var(--ease), box-shadow .2s var(--ease), background .2s ease; }
+.mk-chat-launch:hover { transform: translateY(-2px); box-shadow: 0 18px 42px rgba(37,99,235,.55); background: var(--blue-d); }
+.mk-chat.open .mk-chat-launch { transform: scale(.9); opacity: 0; pointer-events: none; }
+.mk-chat-panel { position: absolute; right: 0; bottom: 0; width: min(380px, calc(100vw - 32px)); height: min(560px, calc(100vh - 110px)); background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 34px 80px rgba(16,24,40,.28); display: flex; flex-direction: column; overflow: hidden; opacity: 0; transform: translateY(20px) scale(.96); transform-origin: bottom right; pointer-events: none; transition: opacity .24s var(--ease), transform .24s var(--ease); }
+.mk-chat.open .mk-chat-panel { opacity: 1; transform: none; pointer-events: auto; }
+.mk-chat-head { display: flex; align-items: center; justify-content: space-between; padding: 13px 15px; background: linear-gradient(135deg, #2563eb, #1d4ed8); color: #fff; }
+.mk-chat-id { display: flex; align-items: center; gap: 10px; }
+.mk-chat-av { width: 32px; height: 32px; border-radius: 9px; background: rgba(255,255,255,.2); color: #fff; font-size: 12px; font-weight: 800; display: flex; align-items: center; justify-content: center; }
+.mk-chat-id b { font-size: 14px; display: block; }
+.mk-chat-id span { font-size: 11px; opacity: .85; }
+.mk-chat-close { background: rgba(255,255,255,.16); border: 0; color: #fff; width: 28px; height: 28px; border-radius: 8px; cursor: pointer; font-size: 14px; transition: background .15s ease; }
+.mk-chat-close:hover { background: rgba(255,255,255,.28); }
+.mk-chat-msgs { background: var(--bg2); }
+.mk-chat-chips { padding-top: 10px; background: var(--bg2); }
+body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
+
 /* keyframes */
+@keyframes mkPulse { 0%,100% { opacity: 1; } 50% { opacity: .35; } }
+@keyframes mkBlink { 0%,80%,100% { transform: translateY(0); opacity: .5; } 40% { transform: translateY(-3px); opacity: 1; } }
+@keyframes mkMsgIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 @keyframes mkDropIn { from { opacity: 0; transform: translateY(-8px); } to { opacity: 1; transform: none; } }
 @keyframes mkFade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mkFloat { 0%,100% { transform: translateY(0); } 50% { transform: translateY(-12px); } }
 @keyframes mkDrift { 0% { transform: translate3d(0,0,0) scale(1); } 100% { transform: translate3d(-4%,3%,0) scale(1.08); } }
 @keyframes mkPing { 0% { box-shadow: 0 0 0 0 rgba(34,197,94,.45); } 70%,100% { box-shadow: 0 0 0 7px rgba(34,197,94,0); } }
+@keyframes mkKicker { 0%,100% { box-shadow: 0 0 0 0 rgba(37,99,235,0); } 50% { box-shadow: 0 0 0 5px rgba(37,99,235,.08); } }
+
+/* back-to-top */
+#mktop { position: fixed; right: 22px; bottom: 22px; z-index: 70; width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--blue); color: #fff; display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 12px 28px rgba(37,99,235,.42); opacity: 0; transform: translateY(16px) scale(.9); pointer-events: none; transition: opacity .28s var(--ease), transform .28s var(--ease), background .2s ease; }
+#mktop.show { opacity: 1; transform: none; pointer-events: auto; }
+#mktop:hover { background: var(--blue-d); transform: translateY(-3px); box-shadow: 0 16px 34px rgba(37,99,235,.5); }
+#mktop:active { transform: translateY(0); }
 
 /* responsive */
 @media (max-width: 980px) {
   .mk-menu { display: none; }
   .mk-hero-in { grid-template-columns: 1fr; padding: 46px 22px 54px; }
   .mk-hero-visual { animation: none; }
-  .mk-two, .mk-two-col { grid-template-columns: 1fr; }
+  .mk-two, .mk-two-col, .mk-ask-grid { grid-template-columns: 1fr; }
   .mk-grid3 { grid-template-columns: 1fr 1fr; }
   .mk-grid5 { grid-template-columns: 1fr 1fr; }
   .mk-checks { grid-template-columns: 1fr; }
@@ -707,8 +928,12 @@ a { color: inherit; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
   body.mk { scroll-behavior: auto; }
   .mk-reveal, .mk-stag { opacity: 1 !important; transform: none !important; transition: none; }
-  .mk-hero::before, .mk-dark::before, .mk-hero-visual, .mk-frame-feed div::before { animation: none !important; }
+  .mk-hero::before, .mk-dark::before, .mk-hero-visual, .mk-frame-feed div::before, .mk-kicker { animation: none !important; }
   .mk-frame-chart i { transform: scaleY(1); }
+  .mk-levels::before { transform: none !important; }
   .mk-btn-solid::after { display: none; }
+  #mktop { transition: opacity .2s ease; }
+  .mk-live i, .mk-typing i { animation: none !important; }
+  .mk-msg { animation: none; }
 }
 `;

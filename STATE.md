@@ -147,3 +147,18 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
 - [x] "What to have ready" panel on /welcome + Import Hub: 5 documents, what
       each unlocks, what automates after
 - Gates: tsc clean · 153 unit · 127 e2e
+
+## Ask StayLeased + homepage chat (2026-07-24)
+
+- [x] Fixed footer disappearing (staggered footer cols weren't in the reveal
+      observer → stuck at opacity:0); footer now reveals on scroll
+- [x] More homepage motion: automation-ladder connector draws on reveal,
+      hero badge pulse, floating back-to-top button
+- [x] Ask StayLeased (public, Claude-powered): prominent interactive #ask
+      section with suggested chips + typed-out answers, and a floating chat
+      widget bottom-right of the marketing page
+- [x] Public POST /company/ask — answers grounded in the demo org's REAL
+      computed facts (occupancy, collections, delinquency, maintenance,
+      renewals) + product Q&A; Claude phrases when ANTHROPIC_API_KEY is set,
+      deterministic correct fallback otherwise; rate-limited per IP
+- Gates: tsc clean · 152 unit · 131 e2e
