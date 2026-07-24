@@ -42,12 +42,12 @@ export function routes(r: Router): void {
         </form>
         ${when(!!env('SIGNUP_CODE'), () => html`<p class="small muted" style="margin-top:12px;text-align:center">New to StayLeased? <a href="/signup">Create your company</a></p>`)}
         ${when(personas.length, () => html`
-          <div class="demo-personas">
-            <div class="dp-head">Explore the demo — choose a role to sign in</div>
+          <details class="demo-personas">
+            <summary class="dp-head">Explore the demo — choose a role to sign in</summary>
             <div class="chips">
               ${personas.map((p) => html`<button type="button" class="chip" data-email="${p.email}" data-password="demo1234">${p.name} · ${ROLE_LABELS[p.role as Role] ?? p.role}</button>`)}
             </div>
-          </div>`)}
+          </details>`)}
       `,
     );
   });

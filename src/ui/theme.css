@@ -378,7 +378,12 @@ a.kpi:hover { text-decoration: none; border-color: var(--accent); }
 .auth-brand { display: flex; align-items: center; gap: 10px; font-size: 20px; font-weight: 800; margin-bottom: 4px; }
 .auth-sub { color: var(--muted); font-size: 13px; margin-bottom: 18px; }
 .demo-personas { margin-top: 16px; border-top: 1px solid var(--line-2); padding-top: 12px; }
-.demo-personas .dp-head { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 7px; }
+.demo-personas .dp-head { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin-bottom: 0; cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; user-select: none; }
+.demo-personas .dp-head::-webkit-details-marker { display: none; }
+.demo-personas .dp-head::before { content: '▸'; font-size: 10px; transition: transform .15s ease; }
+.demo-personas[open] .dp-head::before { transform: rotate(90deg); }
+.demo-personas .dp-head:hover { color: var(--ink, #1b2331); }
+.demo-personas[open] .dp-head { margin-bottom: 9px; }
 .demo-personas .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { border: 1px solid var(--line); background: var(--surface-2); border-radius: 999px; padding: 3px 10px; font-size: 12px; cursor: pointer; color: var(--ink-2); }
 .chip:hover { border-color: var(--accent); color: var(--accent-ink); }

@@ -108,6 +108,22 @@ test('gate: signed-in users still land on their app, not marketing', async () =>
   await page.close();
 });
 
+test('gate: demo persona chips are hidden until "Explore the demo" is clicked', async () => {
+  const page = await newPage(browser);
+  await page.goto(`${base}/login`, { waitUntil: 'networkidle' });
+  // the summary is present, but the chips are collapsed (not visible) by default
+  const summary = page.locator('.demo-personas summary.dp-head');
+  await summary.waitFor({ state: 'visible' });
+  assert.match((await summary.textContent()) || '', /Explore the demo/);
+  const firstChip = page.locator('.demo-personas .chip').first();
+  assert.equal(await firstChip.isVisible(), false, 'chips hidden before expanding');
+  // clicking the summary reveals them
+  await summary.click();
+  await firstChip.waitFor({ state: 'visible', timeout: 3000 });
+  assert.ok(await firstChip.isVisible(), 'chips visible after clicking Explore the demo');
+  await page.close();
+});
+
 test('gate: chart hover shows a value tooltip', async () => {
   const page = await newPage(browser);
   await login(page, base, 'admin@summitridge.demo');
