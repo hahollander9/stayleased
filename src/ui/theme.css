@@ -96,12 +96,16 @@ small, .small { font-size: 12px; }
   display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 13px; background: none;
   border: 0; color: rgba(255, 255, 255, .92); font: 600 13px var(--font);
   cursor: pointer; text-decoration: none; white-space: nowrap;
+  transition: background .15s ease, color .15s ease;
 }
 .mtab-btn:hover { color: #fff; background: rgba(255, 255, 255, .14); text-decoration: none; }
-.mtab-btn .caret { opacity: .7; }
+.mtab-btn .caret { opacity: .7; transition: transform .18s ease, opacity .15s ease; }
+/* header reads as "expanded" while its menu is open: lit background + flipped caret */
+.mtab:has(.menu.open) > .mtab-btn { color: #fff; background: rgba(255, 255, 255, .14); }
+.mtab:has(.menu.open) .caret { transform: rotate(180deg); opacity: 1; }
 /* active tab reads as a white tab connected to the white sub-nav below (Entrata) */
 .mtab.active > .mtab-btn, a.mtab-btn.active { background: #fff; color: var(--brand-ink); }
-.mmenu { left: 0; right: auto; top: 42px; }
+.mmenu { left: 0; right: auto; top: 42px; transform-origin: top left; }
 .mmenu a.active { background: var(--brand-soft); color: var(--brand-ink); font-weight: 600; }
 
 /* white second-row sub-nav: the active module's pages (Entrata pattern) */
@@ -114,7 +118,8 @@ small, .small { font-size: 12px; }
   font: 600 12.5px var(--font); color: var(--ink-2); text-decoration: none;
   border-bottom: 2px solid transparent; white-space: nowrap;
 }
-.subnav a:hover { color: var(--brand-ink); text-decoration: none; }
+.subnav a { transition: color .15s ease, border-color .15s ease; }
+.subnav a:hover { color: var(--brand-ink); text-decoration: none; border-bottom-color: var(--line); }
 .subnav a.active { color: var(--brand-ink); border-bottom-color: var(--brand); }
 
 /* utility controls on the white header */
@@ -176,11 +181,22 @@ small, .small { font-size: 12px; }
 .nav a .dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; opacity: .45; flex: none; }
 .menu {
   position: absolute; right: 0; top: 44px; background: var(--surface); border: 1px solid var(--line);
-  border-radius: var(--radius); box-shadow: var(--shadow-lg); min-width: 210px; padding: 6px; display: none; z-index: 60;
+  border-radius: var(--radius); box-shadow: var(--shadow-lg); min-width: 210px; padding: 6px; z-index: 60;
+  /* animated expand: kept out of hit-testing while closed (visibility +
+     pointer-events), so behavior matches the old display:none exactly */
+  display: block; visibility: hidden; opacity: 0; pointer-events: none;
+  transform: translateY(-7px) scale(.98); transform-origin: top left;
+  transition: opacity .16s ease, transform .18s cubic-bezier(.2, .9, .3, 1), visibility 0s linear .18s;
 }
-.menu.open { display: block; }
-.menu a, .menu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--ink); background: none; border: 0; font: 13px var(--font); cursor: pointer; text-decoration: none; }
-.menu a:hover, .menu button:hover { background: var(--surface-2); text-decoration: none; }
+.menu.open {
+  visibility: visible; opacity: 1; pointer-events: auto; transform: none;
+  transition: opacity .16s ease, transform .18s cubic-bezier(.2, .9, .3, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .menu, .menu.open, .mtab-btn, .mtab-btn .caret { transition: none; }
+}
+.menu a, .menu button { display: block; width: 100%; text-align: left; padding: 7px 10px; border-radius: 6px; color: var(--ink); background: none; border: 0; font: 13px var(--font); cursor: pointer; text-decoration: none; transition: background .12s ease, transform .12s ease; }
+.menu a:hover, .menu button:hover { background: var(--surface-2); text-decoration: none; transform: translateX(2px); }
 .menu .menu-head { padding: 7px 10px 4px; font-size: 11px; color: var(--muted); }
 .menu hr { border: 0; border-top: 1px solid var(--line-2); margin: 5px 0; }
 

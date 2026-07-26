@@ -23,9 +23,13 @@ test('top module bar renders the module tabs', async () => {
   const page = await newPage(browser);
   await login(page, base, 'admin@summitridge.demo');
   const bar = await page.locator('.modulebar').first().textContent();
-  for (const tab of ['Dashboard', 'Leasing', 'Residents', 'Financials', 'Property', 'Operations', 'Marketing', 'Messages', 'Reports']) {
+  // Small-operator chrome: seven tabs. Marketing is not a top-level tab —
+  // its pages (CMS/Syndication) live inside the Leasing dropdown.
+  for (const tab of ['Dashboard', 'Leasing', 'Residents', 'Financials', 'Property', 'Operations', 'Messages', 'Reports']) {
     assert.match(bar || '', new RegExp(tab), `module bar should contain ${tab}`);
   }
+  assert.doesNotMatch(bar || '', /Marketing/, 'Marketing must not be a top-level tab (merged into Leasing)');
+  assert.match(bar || '', /Websites \(CMS\)/, 'Leasing dropdown should carry the CMS page');
   const brand = await page.locator('.brand').first().textContent();
   assert.match(brand || '', /StayLeased/);
   await page.close();

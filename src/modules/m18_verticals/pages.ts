@@ -23,9 +23,18 @@ import { registerLeaseAction } from '../people/pages.ts';
  * roommate matching), the affordable compliance center (certs, limits,
  * waitlist), the military toolkit, and the CAM worksheet. */
 
-registerNav('Property', { href: '/student', label: 'Student housing', perm: 'leases:view', match: ['/student'] });
-registerNav('Property', { href: '/affordable', label: 'Affordable', perm: 'leases:view', match: ['/affordable'] });
-registerNav('Property', { href: '/verticals', label: 'Vertical modes', perm: 'admin:settings', match: ['/verticals'] });
+// Adaptive nav: vertical screens only appear when the portfolio actually has
+// that vertical — a conventional 40–60 unit operator never sees them. The
+// /verticals mode manager is configuration, so it lives in the Setup gear.
+registerNav('Property', {
+  href: '/student', label: 'Student housing', perm: 'leases:view', match: ['/student'],
+  show: (ctx) => !!q1(`SELECT 1 FROM properties WHERE org_id=? AND type='student' LIMIT 1`, ctx.orgId),
+});
+registerNav('Property', {
+  href: '/affordable', label: 'Affordable', perm: 'leases:view', match: ['/affordable'],
+  show: (ctx) => !!q1(`SELECT 1 FROM units WHERE org_id=? AND program IS NOT NULL AND program!='' LIMIT 1`, ctx.orgId),
+});
+registerNav('Admin', { href: '/verticals', label: 'Vertical modes', perm: 'admin:settings', match: ['/verticals'] });
 
 // PCS break action on every active lease detail (military households live everywhere)
 registerLeaseAction((ctx, lease) => {

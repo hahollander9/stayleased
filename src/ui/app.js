@@ -8,11 +8,19 @@
     if (t) {
       var el = document.querySelector(t.getAttribute('data-toggle'));
       if (el) {
+        // a menu the pointer just hover-opened stays open on its first click
+        // (the click "confirms" it); the next click toggles it closed as usual
+        if (el.classList.contains('open') && el.dataset.hoverOpened) {
+          delete el.dataset.hoverOpened;
+          e.stopPropagation();
+          return;
+        }
         var opening = !el.classList.contains('open');
         document.querySelectorAll('.menu.open').forEach(function (m) {
           if (m !== el) m.classList.remove('open');
         });
         el.classList.toggle('open', opening);
+        delete el.dataset.hoverOpened;
       }
       e.stopPropagation();
       return;
@@ -26,6 +34,36 @@
       sb.classList.remove('open');
     }
   });
+
+  // hover-open module-bar dropdowns (desktop, pointer devices only): headers
+  // expand on hover with the same exclusivity as clicks; a short close delay
+  // forgives diagonal travel into the open menu. Click/keyboard still work —
+  // hover is an enhancement, not the mechanism.
+  if (window.matchMedia && window.matchMedia('(hover: hover) and (pointer: fine)').matches) {
+    var hoverCloseTimer = null;
+    document.querySelectorAll('.modulebar .mtab').forEach(function (tab) {
+      var btn = tab.querySelector('[data-toggle]');
+      var menu = btn && document.querySelector(btn.getAttribute('data-toggle'));
+      if (!menu) return;
+      tab.addEventListener('mouseenter', function () {
+        if (hoverCloseTimer) { clearTimeout(hoverCloseTimer); hoverCloseTimer = null; }
+        if (!menu.classList.contains('open')) {
+          document.querySelectorAll('.menu.open').forEach(function (m) {
+            if (m !== menu) m.classList.remove('open');
+          });
+          menu.dataset.hoverOpened = '1';
+          menu.classList.add('open');
+        }
+      });
+      tab.addEventListener('mouseleave', function () {
+        if (hoverCloseTimer) clearTimeout(hoverCloseTimer);
+        hoverCloseTimer = setTimeout(function () {
+          menu.classList.remove('open');
+          delete menu.dataset.hoverOpened;
+        }, 160);
+      });
+    });
+  }
 
   // chart hover tooltips: any SVG element with data-tip gets a cursor-following
   // value bubble (charts also keep native <title> for accessibility)

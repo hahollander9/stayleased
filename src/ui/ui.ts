@@ -52,6 +52,10 @@ export interface NavItem {
   match?: string[];
   /** demo-world tooling (simulator etc.) — hidden inside live customer orgs */
   demoOnly?: boolean;
+  /** adaptive nav: render only when relevant to this org's portfolio
+   * (e.g. Student housing only when a student property exists). Evaluated
+   * per request server-side, so the chrome molds itself to the operator. */
+  show?: (ctx: Ctx) => boolean;
 }
 const SECTION_ORDER = [
   '',
@@ -78,10 +82,14 @@ export function registerNav(section: string, item: NavItem): void {
 // The desktop chrome is a top module bar with dropdowns; the sidebar becomes a
 // mobile-only drawer. Tabs group the same nav items modules already register,
 // so nothing downstream changes. A gear → /setup holds administration.
-const TAB_ORDER = ['Dashboard', 'Leasing', 'Residents', 'Financials', 'Property', 'Operations', 'Marketing', 'Messages', 'Reports'];
+// Small-operator focus (40–60 unit target): Marketing's two pages live inside
+// the Leasing dropdown rather than holding a top-level tab of their own, and
+// vertical modules (student/affordable) only appear when the portfolio has
+// them (NavItem.show) — eight enterprise tabs become a calmer seven.
+const TAB_ORDER = ['Dashboard', 'Leasing', 'Residents', 'Financials', 'Property', 'Operations', 'Messages', 'Reports'];
 const SECTION_TO_TAB: Record<string, string> = {
   '': 'Dashboard', Leasing: 'Leasing', Residents: 'Residents', Money: 'Financials',
-  Property: 'Property', Operations: 'Operations', Marketing: 'Marketing',
+  Property: 'Property', Operations: 'Operations', Marketing: 'Leasing',
   Intelligence: 'Reports', Admin: 'Setup', Developer: 'Setup',
 };
 const HREF_TO_TAB: Record<string, string> = { '/inbox': 'Messages', '/comms': 'Messages' };
@@ -92,6 +100,7 @@ function tabItems(ctx: Ctx): Map<string, NavItem[]> {
     for (const it of items) {
       if (it.perm && !can(ctx, it.perm)) continue;
       if (it.demoOnly && ctx.orgKind === 'live') continue;
+      if (it.show && !it.show(ctx)) continue;
       const tab = HREF_TO_TAB[it.href] || SECTION_TO_TAB[sec] || 'Reports';
       const list = out.get(tab) || [];
       list.push(it);
