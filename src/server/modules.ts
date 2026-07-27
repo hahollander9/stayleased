@@ -7,6 +7,7 @@ import * as m7 from '../modules/m7_portal/pages.ts';
 import * as m10 from '../modules/m10_facilities/pages.ts';
 import * as m10tech from '../modules/m10_facilities/tech.ts';
 import * as m3 from '../modules/m3_crm/pages.ts';
+import * as ilsEmail from '../modules/m3_crm/ils_email.ts';
 import '../modules/m3_crm/service.ts'; // registers ils_leads + tour_reminders jobs
 import * as m4pub from '../modules/m4_marketing/public.ts';
 import * as m4cms from '../modules/m4_marketing/cms.ts';
@@ -45,6 +46,7 @@ export function registerModules(r: Router): void {
   m10.routes(r); // Phase 5: facilities staff screens
   m10tech.routes(r); // Phase 5: tech My Day + vendor portal
   m3.routes(r); // Phase 6: CRM & centralized leasing
+  ilsEmail.routes(r); // M3.9: ILS lead-email webhook + staff test lane
   m4pub.routes(r); // Phase 7: public marketing sites + prospect flows
   m4cms.routes(r); // Phase 7: CMS + syndication manager
   m5apply.routes(r); // Phase 8: applicant wizard (tokenized)

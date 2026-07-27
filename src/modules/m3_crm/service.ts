@@ -338,6 +338,7 @@ function sourceLabel(s: string): string {
   const map: Record<string, string> = {
     zillow: 'Zillow', apartments_com: 'Apartments.com', facebook: 'Facebook', craigslist: 'Craigslist',
     google: 'Google', website: 'Website', walk_in: 'Walk-in', phone: 'Phone', referral: 'Referral',
+    zumper: 'Zumper', rent_com: 'Rent.com', ils_email: 'ILS email',
   };
   return map[s] || s;
 }

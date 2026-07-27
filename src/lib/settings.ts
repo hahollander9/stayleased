@@ -58,6 +58,7 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   },
   // AI layer (M17)
   ai_enabled: true, // global kill switch — false pauses every AI agent org-wide
+  ai_first_touch: true, // auto-engage the Leasing AI the moment a website/ILS lead arrives (dials still gate sending)
   ai_autonomy: { leasing: 'approve', maintenance: 'approve', payments: 'draft', renewals: 'draft' },
   ai_plan_bounds: { maxInstallments: 4, minInstallmentCents: 15000 },
   ai_renewal_max_discount_pct: 2.5,

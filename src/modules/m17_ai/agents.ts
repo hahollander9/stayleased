@@ -475,3 +475,23 @@ on('maintenance.requested', (ctx, payload) => {
     /* agents never break intake */
   }
 });
+
+/** Instant first touch: the moment a website inquiry lands, the Leasing AI
+ * drafts (or, on an `auto` dial, sends) the first reply — the five-minute
+ * first-response window is where leases are won. ILS-email leads are NOT
+ * handled here: their message arrives as a real inbound thread message, so
+ * the message.inbound hook above already covers them. Sim-generated leads
+ * (zillow/apartments_com from the demo job) are excluded so the demo queue
+ * isn't flooded. Org/property-overridable via the ai_first_touch setting. */
+on('lead.created', (ctx, payload) => {
+  if (!live) return;
+  try {
+    if (payload.source !== 'website') return;
+    if (getSetting<boolean>(sysCtx(ctx.orgId), 'ai_first_touch', payload.propertyId) === false) return;
+    const lead = q1<any>('SELECT * FROM leads WHERE id=?', payload.entityId);
+    if (!lead) return;
+    handleLeadInbound(sysCtx(ctx.orgId), lead.id, lead.message || 'Hi — I found your listing and I would love more information and a tour.');
+  } catch {
+    /* agents never break intake */
+  }
+});

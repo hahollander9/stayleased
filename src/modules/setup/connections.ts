@@ -8,6 +8,7 @@ import { env } from '../../lib/env.ts';
 import { dbPath } from '../../lib/db.ts';
 import { isAbsolute } from 'node:path';
 import { shell, card, statusBadge, dl } from '../../ui/ui.ts';
+import { ilsIntakeCard } from '../m3_crm/ils_email.ts';
 
 /** Connections — one honest page about every external rail.
  * What's live is labeled live; what's simulated says so in plain words; what
@@ -151,6 +152,7 @@ export function routes(r: Router): void {
         : 'The demo org runs every external rail on deterministic simulators, so the whole product works offline.',
       content: html`
         ${platformStatusCard(ctx)}
+        ${ilsIntakeCard(ctx)}
         ${card('Working now', html`<div class="conn-grid">${working.map(railCard)}</div>`)}
         ${card(ctx.orgKind === 'live' ? 'Coming soon — join the waitlist' : 'Simulated in the demo world', html`<div class="conn-grid">${rest.map(railCard)}</div>`)}
         ${when(ctx.orgKind === 'demo', () => raw('<p class="muted small">Tip: in a live customer org this page shows waitlists instead of simulators — nothing simulated ever poses as a real rail.</p>'))}
