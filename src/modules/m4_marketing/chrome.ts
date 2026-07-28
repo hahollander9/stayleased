@@ -38,30 +38,21 @@ export const MK_NAV: MkNavGroup[] = [
       ['Renewals & pricing', '/platform/renewals-pricing', 'Under-market flags and renewal offers in bounds'],
       ['Reports', '/platform/reports', '50-report catalog, custom builder, scheduled email'],
       ['Utilities & RUBS', '/platform/utilities-rubs', 'Bill utilities back fairly when you need to'],
-    ],
-  },
-  {
-    label: 'Residents',
-    href: '/resident',
-    items: [
-      ['Resident portal', '/resident/portal', 'Balance, payments, documents, requests'],
-      ['Autopay & payments', '/resident/autopay', 'Autopay with receipts, plans, and a clear ledger'],
-      ['Maintenance requests', '/resident/maintenance', 'Photos, updates, and satisfaction ratings'],
-      ['Renters insurance', '/resident/insurance', 'Compliance tracking and master policy'],
-      ['Deposit alternative', '/resident/deposit-alternative', 'Lower move-in costs, covered risk'],
+      ['Resident portal', '/platform/resident-portal', 'Tenants pay online and send requests with photos'],
     ],
   },
   {
     label: 'AI',
     href: '/agents',
     items: [
+      ['New to AI? Start here', '/agents/new-to-ai', 'What it does, what it never does, how you stay in charge'],
       ['Leasing AI', '/agents/leasing', 'Answers every prospect from live availability'],
       ['Maintenance AI', '/agents/maintenance', 'Triage, emergency escalation, troubleshooting'],
-      ['Payments AI', '/agents/payments', 'Delinquency outreach inside compliance rails'],
+      ['Payments AI', '/agents/payments', 'Rent reminders in your tone, inside the law'],
       ['Renewals AI', '/agents/renewals', 'Personalized offers, counters within bounds'],
       ['Call analysis', '/agents/call-analysis', 'Summaries, sentiment, and coaching notes'],
       ['Ask StayLeased', '/agents/ask-stayleased', 'Questions answered from your own data'],
-      ['Autonomy & governance', '/agents/governance', 'Dials, approvals, and audit on every action'],
+      ['Approvals & control', '/agents/governance', 'Approval queue, audit trail, and the off switch'],
     ],
   },
   {
@@ -126,9 +117,8 @@ export function mkFooter(): Raw {
   return html`<footer class="mk-foot">
   <div class="mk-wrap mk-foot-grid">
     <div><div class="mk-foot-head">Platform</div>${MK_NAV[0]!.items.slice(0, 8).map(([l, h]) => html`<a href="${h}">${l}</a>`)}<a href="/platform">All platform →</a></div>
-    <div><div class="mk-foot-head">Residents</div>${MK_NAV[1]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
-    <div><div class="mk-foot-head">Intelligence</div>${MK_NAV[2]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
-    <div><div class="mk-foot-head">Who it's for</div>${MK_NAV[3]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
+    <div><div class="mk-foot-head">AI</div>${MK_NAV[1]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
+    <div><div class="mk-foot-head">Who it's for</div>${MK_NAV[2]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}</div>
     <div><div class="mk-foot-head">Company</div>
       <a href="/login">Sign in</a>
       ${when(signupOpen, () => html`<a href="/signup">Create your company</a>`)}
@@ -425,23 +415,31 @@ body.mk-mm-open { overflow: hidden; }
 .mk-more { display: inline-block; margin-top: 14px; font-weight: 700; color: var(--blue); font-size: 14px; transition: transform .2s var(--ease); }
 .mk-plat:hover .mk-more { transform: translateX(5px); }
 
-/* ontology stack */
-.mk-stack { display: grid; gap: 8px; max-width: 860px; }
-.mk-layer { border: 1px solid var(--line); background: #fff; border-radius: 13px; overflow: hidden; transition: border-color .2s ease, box-shadow .2s ease, transform .2s var(--ease); }
-.mk-layer:hover { transform: translateX(3px); box-shadow: 0 8px 22px rgba(16,24,40,.07); }
-.mk-layer summary { display: flex; align-items: center; gap: 14px; padding: 15px 18px; cursor: pointer; list-style: none; }
-.mk-layer summary::-webkit-details-marker { display: none; }
-.mk-lnum { flex: none; width: 34px; height: 34px; border-radius: 10px; background: rgba(37,99,235,.1); color: var(--blue); font-weight: 800; display: flex; align-items: center; justify-content: center; transition: background .2s ease, transform .2s var(--ease); }
-.mk-layer[open] .mk-lnum, .mk-layer:hover .mk-lnum { background: var(--blue); color: #fff; transform: scale(1.06); }
-.mk-lname { font-weight: 700; font-size: 16px; }
-.mk-ltag { margin-left: auto; font-size: 11.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--mut); }
-.mk-plus { flex: none; width: 16px; height: 16px; position: relative; margin-left: 6px; }
-.mk-plus::before, .mk-plus::after { content: ''; position: absolute; background: var(--mut); border-radius: 2px; transition: transform .2s var(--ease); }
-.mk-plus::before { left: 0; right: 0; top: 7px; height: 2.4px; }
-.mk-plus::after { top: 0; bottom: 0; left: 7px; width: 2.4px; }
-.mk-layer[open] .mk-plus::after { transform: scaleY(0); }
-.mk-layer[open] { border-color: rgba(37,99,235,.5); box-shadow: 0 10px 30px rgba(37,99,235,.10); }
-.mk-lbody { padding: 0 18px 17px 66px; color: var(--ink2); font-size: 15px; animation: mkFade .3s var(--ease); }
+/* first-week steps */
+.mk-steps { display: grid; gap: 12px; max-width: 860px; }
+.mk-step { display: flex; gap: 18px; background: #fff; border: 1px solid var(--line); border-radius: 13px; padding: 18px 20px; transition: transform .18s var(--ease), box-shadow .18s var(--ease), border-color .18s ease; }
+.mk-step:hover { transform: translateX(6px); box-shadow: 0 14px 34px rgba(16,24,40,.11); border-color: rgba(37,99,235,.28); }
+.mk-step-n { flex: none; width: 34px; height: 34px; border-radius: 10px; background: rgba(37,99,235,.1); color: var(--blue); font-weight: 800; display: flex; align-items: center; justify-content: center; transition: background .2s ease, transform .2s var(--ease); }
+.mk-step:hover .mk-step-n { background: var(--blue); color: #fff; transform: scale(1.06); }
+.mk-step-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+.mk-step-head b { font-size: 16.5px; }
+.mk-step-tag { font-size: 11.5px; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; color: var(--mut); }
+.mk-step p { color: var(--ink2); font-size: 14.5px; }
+
+/* never-used-AI example card */
+.mk-nta-card { background: #fff; border: 1px solid var(--line); border-radius: 18px; box-shadow: 0 30px 66px rgba(16,24,40,.14); padding: 20px; display: grid; gap: 14px; }
+.mk-nta-row { font-size: 14px; color: var(--ink2); }
+.mk-nta-row i { color: var(--ink); font-style: normal; font-weight: 600; }
+.mk-nta-time { display: inline-block; font-size: 11px; font-weight: 800; letter-spacing: .8px; color: var(--mut); background: var(--bg2); border-radius: 99px; padding: 2px 9px; margin-right: 6px; }
+.mk-nta-draft { border: 1.5px solid rgba(37,99,235,.35); background: #f7faff; border-radius: 13px; padding: 14px 15px; }
+.mk-nta-draft-tag { font-size: 11px; font-weight: 800; letter-spacing: .9px; text-transform: uppercase; color: var(--blue); margin-bottom: 7px; }
+.mk-nta-draft p { font-size: 14px; color: var(--ink); }
+.mk-nta-actions { display: flex; gap: 8px; margin-top: 12px; }
+.mk-nta-actions span { font-size: 12.5px; font-weight: 700; border-radius: 8px; padding: 6px 12px; }
+.mk-nta-ok { background: var(--blue); color: #fff; box-shadow: 0 6px 14px rgba(37,99,235,.3); }
+.mk-nta-edit { border: 1.4px solid #c9d4ea; color: var(--ink2); background: #fff; }
+.mk-nta-skip { color: var(--mut); }
+.mk-nta-note { font-size: 12.5px; color: var(--mut); border-top: 1px dashed var(--line); padding-top: 12px; }
 
 /* automation levels */
 .mk-levels { position: relative; display: grid; gap: 12px; max-width: 860px; }
@@ -466,20 +464,6 @@ body.mk-mm-open { overflow: hidden; }
 .mk-card p { color: var(--ink2); font-size: 14.5px; }
 .mk-card .mk-more { margin-top: 10px; }
 .mk-inline-cta { margin-top: 28px; }
-
-/* phones */
-.mk-phones { display: flex; gap: 20px; justify-content: center; flex-wrap: wrap; }
-.mk-phone { width: 250px; border: 1px solid var(--line); border-radius: 22px; background: #fff; box-shadow: 0 24px 50px rgba(16,24,40,.13); padding: 20px 18px 22px; transition: transform .25s var(--ease), box-shadow .25s var(--ease); }
-.mk-phone:hover { transform: translateY(-8px) rotate(-1.5deg); box-shadow: 0 34px 66px rgba(16,24,40,.2); }
-.mk-phone-mid { transform: translateY(-16px); }
-.mk-phone-mid:hover { transform: translateY(-24px) rotate(1.5deg); }
-.mk-ph-head { font-size: 11.5px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: var(--mut); margin-bottom: 10px; }
-.mk-ph-big { font-size: 30px; font-weight: 800; letter-spacing: -.8px; margin-bottom: 6px; }
-.mk-ph-line { font-size: 13.5px; padding: 7px 0; border-bottom: 1px dashed var(--line); }
-.mk-ph-line.ok { color: #15803d; font-weight: 600; }
-.mk-ph-line.muted { color: var(--mut); border-bottom: 0; }
-.mk-ph-btn { margin-top: 12px; background: var(--blue); color: #fff; text-align: center; font-weight: 700; border-radius: 10px; padding: 10px; transition: background .18s ease; }
-.mk-phone:hover .mk-ph-btn { background: var(--blue-d); }
 
 /* governance */
 .mk-dark { position: relative; background: linear-gradient(180deg, #0b1220, #101b33); color: #e7edf7; overflow: hidden; }
@@ -523,7 +507,7 @@ body.mk-mm-open { overflow: hidden; }
 
 /* footer */
 .mk-foot { background: #0b1220; color: #aeb9cd; padding: 54px 0 26px; }
-.mk-foot-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 24px; padding-bottom: 32px; border-bottom: 1px solid rgba(148,163,184,.18); }
+.mk-foot-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; padding-bottom: 32px; border-bottom: 1px solid rgba(148,163,184,.18); }
 .mk-foot-head { font-size: 12px; font-weight: 800; letter-spacing: 1.1px; text-transform: uppercase; color: #e7edf7; margin-bottom: 12px; }
 .mk-foot-grid a { display: block; font-size: 13px; padding: 3.5px 0; color: #aeb9cd; transition: color .15s ease, transform .15s var(--ease); }
 .mk-foot-grid a:hover { color: #fff; transform: translateX(3px); }
@@ -663,7 +647,6 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
   .mk-grid5 { grid-template-columns: 1fr 1fr; }
   .mk-grid2 { grid-template-columns: 1fr; }
   .mk-checks { grid-template-columns: 1fr; }
-  .mk-phone-mid { transform: none; }
   .mkp-stats { grid-template-columns: 1fr; }
 }
 @media (max-width: 620px) { .mk-grid3, .mk-grid5, .mk-form-grid { grid-template-columns: 1fr; } .mk-foot-grid { grid-template-columns: 1fr 1fr; } }

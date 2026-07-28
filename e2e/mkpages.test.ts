@@ -48,6 +48,14 @@ test('gate: unknown feature slugs 404 instead of erroring', async () => {
   }
 });
 
+test('gate: retired /resident URLs redirect to the portal page', async () => {
+  for (const url of ['/resident', '/resident/portal', '/resident/autopay', '/resident/anything']) {
+    const res = await fetch(`${base}${url}`); // follows redirects
+    assert.equal(res.status, 200, `${url} lands 200`);
+    assert.match(res.url, /\/platform\/resident-portal$/, `${url} → /platform/resident-portal`);
+  }
+});
+
 test('gate: every internal link on the homepage resolves', async () => {
   const res = await fetch(`${base}/`);
   const body = await res.text();

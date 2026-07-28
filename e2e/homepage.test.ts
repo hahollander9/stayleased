@@ -4,10 +4,11 @@ import { boot, login, newPage } from './lib.ts';
 import { q1 } from '../src/lib/db.ts';
 import type { Browser } from 'playwright';
 
-/** Marketing front door gate: logged-out visitors get the Entrata-modeled
- * homepage (nav dropdowns, six-layer ontology stack, L1–L5 ladder, agents,
- * governance, walkthrough capture); signed-in users still land on their
- * dashboard/portal; chart hover tooltips show values. */
+/** Marketing front door gate: logged-out visitors get the small-operator
+ * homepage (nav dropdowns, first-week walkthrough, never-used-AI example,
+ * three autonomy modes, agents, control, walkthrough capture) with the
+ * retired enterprise framing verifiably absent; signed-in users still land
+ * on their dashboard/portal; chart hover tooltips show values. */
 
 let base: string;
 let browser: Browser;
@@ -27,27 +28,32 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   assert.equal(resp!.status(), 200);
   const body = await page.content();
   assert.match(body, /Autonomous property management/);
-  assert.match(body, /agentic operating system/i);
-  assert.match(body, /Two platforms\. One operating system\./);
-  assert.match(body, /Built for the way property management actually works/);
-  assert.match(body, /Automation that fits the way you operate/);
-  assert.match(body, /Functional agents embedded in every corner/);
-  assert.match(body, /Autonomy that operates inside your rules/);
+  assert.match(body, /Property management software that does the work/i);
+  assert.match(body, /Live in an afternoon\. Calmer by Friday\./);
+  assert.match(body, /Everything in one place\./);
+  assert.match(body, /Never used AI before\?/);
+  assert.match(body, /You choose how much it does\./);
+  assert.match(body, /Meet the help\./);
+  assert.match(body, /You stay in control\. Always\./);
   assert.match(body, /Built for operators like you/);
   assert.match(body, /Simple, honest pricing/);
   assert.match(body, /Self-managing owners/);
   assert.match(body, /Equal Housing Opportunity/);
-  // all six ontology layers and five automation levels
-  for (const layer of ['Workflow autonomy', 'Where agents act', 'System of action', 'System of context', 'System of record', 'Foundation']) {
-    assert.match(body, new RegExp(layer), `layer "${layer}" present`);
+  // small-operator language: the retired enterprise framing must stay gone
+  assert.ok(!/ontology/i.test(body), 'no ontology-layer jargon');
+  assert.ok(!/Operations Experience|Resident Experience/.test(body), 'no OXP/RXP platform framing');
+  assert.ok(!/agentic operating system/i.test(body), 'no agentic-OS meta line');
+  // the three first-week steps and three autonomy modes
+  for (const step of ['Upload what you have', 'Watch it draft, click approve', 'Hand off what you trust']) {
+    assert.match(body, new RegExp(step), `step "${step}" present`);
   }
-  for (const lvl of ['L1', 'L2', 'L3', 'L4', 'L5', 'Adaptive self-improvement', 'Generative assistance']) {
-    assert.match(body, new RegExp(lvl), `level "${lvl}" present`);
+  for (const mode of ['It drafts, you approve', 'It handles the routine, asks about the rest', 'It runs the job, you watch the log']) {
+    assert.match(body, new RegExp(mode), `mode "${mode}" present`);
   }
   await page.close();
 });
 
-test('gate: homepage interactions — nav dropdown and ontology accordion', async () => {
+test('gate: homepage interactions — nav dropdown exclusivity and the new-to-AI example', async () => {
   const page = await newPage(browser);
   await page.goto(`${base}/`, { waitUntil: 'networkidle' });
 
@@ -57,15 +63,13 @@ test('gate: homepage interactions — nav dropdown and ontology accordion', asyn
   await page.click('.mk-item-btn:has-text("AI")');
   assert.equal(await page.locator('.mk-item.open').count(), 1, 'only one dropdown open at a time');
 
-  // ontology stack behaves as an accordion: opening one closes the default-open one
-  const first = page.locator('details.mk-layer').first();
-  assert.equal(await first.getAttribute('open'), '', 'top layer starts open');
-  await page.click('details.mk-layer:nth-of-type(3) summary');
-  // the exclusive-close runs on the async 'toggle' event — wait for the state
-  await page.waitForFunction(() => {
-    const ds = document.querySelectorAll('details.mk-layer');
-    return ds.length >= 3 && !ds[0]!.hasAttribute('open') && ds[2]!.hasAttribute('open');
-  }, undefined, { timeout: 5000 });
+  // the never-used-AI example card renders the drafted reply + approval row
+  const card = page.locator('.mk-nta-card');
+  await card.scrollIntoViewIfNeeded();
+  assert.match(await card.textContent() || '', /waiting for your approval/i, 'draft card shows approval framing');
+  assert.match(await card.textContent() || '', /Approve/, 'approve action shown');
+  // and it links to the plain-English tour
+  assert.ok(await page.locator('a[href="/agents/new-to-ai"]').first().isVisible(), 'new-to-AI page linked');
   await page.close();
 });
 

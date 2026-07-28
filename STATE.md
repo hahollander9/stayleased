@@ -233,3 +233,36 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
       resolves, hover-gap/grace/exclusivity, click-confirm + Escape,
       mobile menu navigation, robots/sitemap)
 - Gates: tsc clean · 166 unit · 143 e2e, all green
+
+## Small-operator retarget v2: Residents pillar retired, homepage de-enterprised, new-to-AI lane (2026-07-28)
+
+- [x] Residents marketing pillar retired (Henry: "not doing anything with
+      resident experience yet"): nav group + 5 /resident/* pages removed;
+      the portal survives as ONE Platform item (/platform/resident-portal,
+      operator-voiced: fewer calls, faster rent); old /resident/* URLs
+      redirect there; footer now 4 columns
+- [x] Homepage de-enterprised — the Entrata-inherited framing that says
+      "not for you" to a 40-door operator is gone: "Two platforms /
+      Operations Experience / Resident Experience" → "Everything in one
+      place" (+ chip row linking all 11 platform pages); six-layer ontology
+      stack → "Live in an afternoon. Calmer by Friday." first-week
+      walkthrough (upload → approve drafts → hand off); L1–L5 ladder →
+      "You choose how much it does" in three plain modes; "Functional
+      agents" → "Meet the help."; governance → "You stay in control.
+      Always."; GOV_CARDS reworded (SOP-friendly/Configurable →
+      Your rules/Your voice/On the record/Locked down/You approve);
+      meta description de-jargoned ("agentic operating system" gone);
+      kicker now "independent landlords & small management companies"
+- [x] New-to-AI lane for operators who've never used AI: homepage section
+      ("Never used AI before? Perfect.") with a concrete 9:04pm
+      Zillow-lead draft card (draft → Approve/Edit/Reject) + the three
+      reassurances, and /agents/new-to-ai ("Never used AI before? Good.
+      This was built for you.") — what it does / never does / how you
+      start / off switch, ChatGPT-difference FAQ. AI nav group leads with
+      it; governance nav label plainer ("Approvals & control")
+- [x] Tests updated to the new contract: homepage e2e now asserts the new
+      sections AND that the retired jargon stays absent (no "ontology",
+      no OXP/RXP, no "agentic operating system"); unit guards: resident
+      pillar stays retired, AI group leads with new-to-ai; e2e redirect
+      gate for old /resident URLs
+- Gates: tsc clean · 168 unit · 144 e2e, all green

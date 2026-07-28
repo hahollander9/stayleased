@@ -6,33 +6,30 @@ import { id } from '../../lib/ids.ts';
 import { nowIso } from '../../lib/dates.ts';
 import { askRoutes } from './ask.ts';
 import { llmStatus } from '../../lib/sim/llm.ts';
-import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS } from './chrome.ts';
+import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS, MK_NAV } from './chrome.ts';
 
 /** The platform marketing homepage — the front door for logged-out visitors,
- * modeled section-for-section on entrata.com's architecture: sticky nav with
- * mega-dropdowns → hero → two-platforms → six-layer ontology stack
- * (expandable) → L1–L5 automation ladder → agent grid → resident products →
- * governance → property types → walkthrough form → mega-footer. Every claim
- * on this page maps to something the product actually does; the demo login
- * and /signup are one click away everywhere. Nav, footer, styles, and menu
- * behavior live in chrome.ts, shared with the /platform, /resident, /agents,
- * /for, and /legal pages. */
+ * written for small operators (10–500 units), including ones who have never
+ * used AI: hero → first-week walkthrough → everything-in-one-place → Ask
+ * demo → never-used-AI reassurance → three autonomy modes → agent grid →
+ * you-stay-in-control → who-it's-for → pricing → walkthrough form →
+ * mega-footer. Entrata's enterprise framing (two platforms / ontology
+ * layers / L1–L5 ladder) was deliberately retired 2026-07-28 — that
+ * language sells to REITs, not landlords. Every claim maps to something
+ * the product actually does; the demo login and /signup are one click away
+ * everywhere. Nav, footer, styles, and menu behavior live in chrome.ts,
+ * shared with the /platform, /agents, /for, and /legal pages. */
 
-const LAYERS: { n: number; tag: string; name: string; body: string }[] = [
-  { n: 6, tag: 'Autonomous Workflows', name: 'Workflow autonomy', body: 'AI capabilities that scale from workflow augmentation to fully autonomous operation — you choose the dial per agent, per property, and change it any time.' },
-  { n: 5, tag: 'Agentic Layer', name: 'Where agents act', body: 'AI agents work inside the same systems as your team — drafting, deciding, and executing with a proposal-and-approval trail behind every action.' },
-  { n: 4, tag: 'Operational Layer', name: 'System of action', body: 'The CRM, accounting, and property management screens your site and corporate teams work in every day — one login, one nav, no swivel-chair.' },
-  { n: 3, tag: 'Ontology Layer', name: 'System of context', body: 'A purpose-built multifamily data model — property → unit → lease → resident → ledger — so people and agents always act on the right information at the right moment.' },
-  { n: 2, tag: 'Unified Data Layer', name: 'System of record', body: 'An always-current foundation with resident, asset, property, and financial detail. One database: a lead becomes a lease becomes a ledger entry with no re-keying.' },
-  { n: 1, tag: 'Infrastructure', name: 'Foundation', body: 'Multi-tenant cloud foundation with role-based security, org isolation, and a full audit log under everything.' },
+const STEPS: { n: string; name: string; tag: string; body: string }[] = [
+  { n: '1', name: 'Upload what you have', tag: 'Day one · ~1 hour', body: 'Your rent roll — a spreadsheet, or an export from Buildium or AppFolio. The system reads it, shows you what it understood, and you approve. Properties, units, tenants, leases, and balances build themselves. No implementation team, because there’s nothing to implement.' },
+  { n: '2', name: 'Watch it draft, click approve', tag: 'Week one', body: 'Leads get draft replies with your real prices. Late balances get draft reminders in your tone. Repair requests get sorted with a suggested next step. Everything waits in one queue for your OK — nothing reaches a tenant without it. Meanwhile every payment and bill posts itself into real books.' },
+  { n: '3', name: 'Hand off what you trust', tag: 'When you’re ready', body: 'When you notice you’ve stopped editing certain drafts, let those send themselves — most owners start with after-hours lead replies. Your call, per property, reversible any time.' },
 ];
 
-const LEVELS: { l: string; name: string; body: string }[] = [
-  { l: 'L5', name: 'Adaptive self-improvement', body: 'Outcomes from every property feed back so the system tightens the operation over time, not just in a single task.' },
-  { l: 'L4', name: 'Interactive agents', body: 'The system initiates, adapts, and follows through with prospects and residents — with full context from leases, payments, and maintenance, plus the escalations you define.' },
-  { l: 'L3', name: 'Scalable processing', body: 'High volume, messy inputs, and decisions that need expertise are handled at a scale and depth no operations team can sustain.' },
-  { l: 'L2', name: 'Rules-based orchestration', body: 'Structured work runs in sequence: the same inputs, the same steps, the same output, without anyone touching it.' },
-  { l: 'L1', name: 'Generative assistance', body: 'The platform answers questions, drafts, and explains using your data and your policies, with an audit trail behind every response.' },
+const MODES: { l: string; name: string; body: string }[] = [
+  { l: '1', name: 'It drafts, you approve', body: 'The default. Every message and action it proposes waits in your queue. You read, edit if you want, and click approve — like reviewing a sharp new employee’s emails.' },
+  { l: '2', name: 'It handles the routine, asks about the rest', body: 'The stuff you approved a hundred times without edits goes out on its own — inside limits you set. Anything unusual, sensitive, or outside bounds still comes to you.' },
+  { l: '3', name: 'It runs the job, you watch the log', body: 'For work you fully trust it with — say, answering leads at 2am — it just does the job, and every word and action sits in a log you can read anytime.' },
 ];
 
 const AGENTS: { name: string; blurb: string }[] = [
@@ -45,11 +42,11 @@ const AGENTS: { name: string; blurb: string }[] = [
 ];
 
 const GOV_CARDS: { name: string; body: string }[] = [
-  { name: 'Configurable', body: 'Policies set at the org or property level — late fees, screening criteria, tour hours, autonomy dials — inherited and overridable.' },
-  { name: 'SOP-friendly', body: 'Agents operate the way you train your team: your templates, your bounds, your escalation paths.' },
-  { name: 'Auditable', body: 'Who did what, when, and why — every human and AI action lands in one reviewable audit trail.' },
-  { name: 'Secure', body: 'Role-based permissions, org isolation, and sessions built on modern hashing. No copy-paste of stale sensitive data.' },
-  { name: 'Controlled', body: 'Human-in-the-loop by default. Approve, edit, or reject anything an agent proposes — autonomy is earned, not assumed.' },
+  { name: 'Your rules', body: 'Late fees, screening criteria, tour hours, how far the AI can go — set once, per company or per property, and everything follows them.' },
+  { name: 'Your voice', body: 'It writes the way you approve — your templates, your tone, your escalation paths. Firm when needed, never nasty; that part is enforced in code.' },
+  { name: 'On the record', body: 'Who did what, when, and why — every human and AI action lands in one log you can read. No wondering what got said to whom.' },
+  { name: 'Locked down', body: 'Every login sees only what their role allows. Your data is isolated, your books can’t be edited into fiction, and exports are always yours.' },
+  { name: 'You approve', body: 'Drafts wait for your OK by default. More autonomy is something you grant later — never something the software assumes.' },
 ];
 
 const SOLUTIONS: { name: string; body: string }[] = [
@@ -78,9 +75,9 @@ ${mkHeader()}
 <section class="mk-hero" id="top">
   <div class="mk-wrap mk-hero-in">
     <div class="mk-hero-copy">
-      <div class="mk-kicker">For independent multifamily operators · 10–500 units</div>
+      <div class="mk-kicker">For independent landlords & small management companies · 10–500 units</div>
       <h1>Autonomous property management</h1>
-      <p class="mk-sub">The property manager you can't afford to hire. Purpose-built AI workflows for leasing, rent collection, maintenance, and real accounting — sized for operators who do this without a corporate office.</p>
+      <p class="mk-sub">The property manager you can't afford to hire. It answers your leads, collects your rent, handles the maintenance calls, and keeps real books — built for people who do all of this themselves, without a corporate office.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Explore the live demo</a>
         ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="#walkthrough">Book a walkthrough</a>`}
@@ -109,26 +106,42 @@ ${mkHeader()}
 
 <section class="mk-band" id="how">
   <div class="mk-wrap">
-    <h2 class="mk-h2">Two platforms. One operating system.</h2>
-    <p class="mk-lead">Everything shares one database — a lead becomes a lease becomes a ledger entry becomes a renewal, with nothing re-keyed and nothing synced.</p>
-    <div class="mk-two">
-      <a class="mk-plat" href="/login">
-        <div class="mk-plat-tag">For your team</div>
-        <h3>Operations Experience</h3>
-        <p>Leasing CRM, applications, e-sign, payments, dual-basis accounting, facilities, utilities, revenue intelligence, and BI — the whole desk in one login.</p>
-        <span class="mk-more">See it in the demo →</span>
-      </a>
-      <a class="mk-plat" href="/login">
-        <div class="mk-plat-tag">For your residents</div>
-        <h3>Resident Experience</h3>
-        <p>A portal residents actually use: balance and autopay, maintenance with photos, documents, renters insurance, and deposit alternatives.</p>
-        <span class="mk-more">See it in the demo →</span>
-      </a>
+    <h2 class="mk-h2">Live in an afternoon. Calmer by Friday.</h2>
+    <p class="mk-lead">No sales calls, no implementation project, no six-week onboarding. Here's the whole first week:</p>
+    <div class="mk-steps">
+      ${STEPS.map((st) => html`<div class="mk-step">
+        <span class="mk-step-n">${st.n}</span>
+        <div><div class="mk-step-head"><b>${st.name}</b><span class="mk-step-tag">${st.tag}</span></div><p>${st.body}</p></div>
+      </div>`)}
     </div>
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="ask">
+<section class="mk-band mk-band-alt" id="platform">
+  <div class="mk-wrap">
+    <h2 class="mk-h2">Everything in one place.</h2>
+    <p class="mk-lead">One login runs the whole operation, and it all shares one set of records — a lead becomes a lease becomes rent in your books without you re-typing anything into a second tool.</p>
+    <div class="mk-two">
+      <a class="mk-plat" href="/platform">
+        <div class="mk-plat-tag">For you</div>
+        <h3>Run the operation</h3>
+        <p>Leads and tours, applications and leases, rent and late fees, repair requests and vendors, real double-entry books, and the reports your owners or CPA actually ask for.</p>
+        <span class="mk-more">See everything included →</span>
+      </a>
+      <a class="mk-plat" href="/platform/resident-portal">
+        <div class="mk-plat-tag">For your tenants</div>
+        <h3>A portal they'll actually use</h3>
+        <p>Pay rent online with autopay, send repair requests with photos, find their lease and documents — the calls that eat your week, answered by a website.</p>
+        <span class="mk-more">How the portal works →</span>
+      </a>
+    </div>
+    <div class="mkp-related" style="margin-top:22px">
+      ${MK_NAV[0]!.items.map(([l, h]) => html`<a href="${h}">${l}</a>`)}
+    </div>
+  </div>
+</section>
+
+<section class="mk-band" id="ask">
   <div class="mk-wrap mk-ask-grid">
     <div class="mk-ask-copy">
       <div class="mk-kicker mk-kicker-ai">Ask StayLeased${aiLive ? ' · powered by Claude' : ''}</div>
@@ -158,25 +171,40 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="platform">
-  <div class="mk-wrap">
-    <h2 class="mk-h2">Built for the way property management actually works.</h2>
-    <p class="mk-lead">A purpose-built ontology across record, context, and action — so your people and your agents always have the right information at the right moment.</p>
-    <div class="mk-stack">
-      ${LAYERS.map((ly, i) => html`<details class="mk-layer" ${i === 0 ? 'open' : ''}>
-        <summary><span class="mk-lnum">${String(ly.n)}</span><span class="mk-lname">${ly.name}</span><span class="mk-ltag">${ly.tag}</span><span class="mk-plus" aria-hidden="true"></span></summary>
-        <div class="mk-lbody">${ly.body}</div>
-      </details>`)}
+<section class="mk-band mk-band-alt" id="newtoai">
+  <div class="mk-wrap mk-ask-grid">
+    <div>
+      <div class="mk-kicker">Never used AI before?</div>
+      <h2 class="mk-h2">Perfect. There's nothing to learn.</h2>
+      <p class="mk-lead" style="margin-bottom:22px">No prompts to write, no course to take, no robot talking to your tenants behind your back. It reads what comes in, drafts what should go out, and waits for your OK.</p>
+      <ul class="mkp-points">
+        <li>Nothing is sent to a tenant or prospect until you approve it — that's the default</li>
+        <li>You read every word it writes, and you can edit before approving</li>
+        <li>One off switch stops all of it instantly, any time</li>
+      </ul>
+      <div class="mk-cta-row" style="margin-top:24px">
+        <a class="mk-btn mk-btn-solid" href="/agents/new-to-ai">The plain-English tour</a>
+        <a class="mk-btn mk-btn-line" href="/login">Watch it work in the demo</a>
+      </div>
+    </div>
+    <div class="mk-nta-card" aria-hidden="true">
+      <div class="mk-nta-row"><span class="mk-nta-time">9:04 pm</span> New lead from Zillow: <i>"Hi — is the 2 bedroom still available? Could I see it this weekend?"</i></div>
+      <div class="mk-nta-draft">
+        <div class="mk-nta-draft-tag">AI draft · waiting for your approval</div>
+        <p>"Hi Sam — yes! The 2BR at Summit Ridge is available at $1,450, and Saturday works: I have 10:00, 11:30, or 2:00 open for a tour. Want me to hold one for you?"</p>
+        <div class="mk-nta-actions"><span class="mk-nta-ok">✓ Approve</span><span class="mk-nta-edit">Edit</span><span class="mk-nta-skip">Reject</span></div>
+      </div>
+      <div class="mk-nta-note">Every price and time above came from the live system — it can't make things up. You approve it over coffee, or let after-hours replies send themselves once you trust it.</div>
     </div>
   </div>
 </section>
 
 <section class="mk-band" id="automation">
   <div class="mk-wrap">
-    <h2 class="mk-h2">Automation that fits the way you operate.</h2>
-    <p class="mk-lead">Five levels of autonomy, dialed per agent and per property — from drafting for your review to running the workflow end to end.</p>
+    <h2 class="mk-h2">You choose how much it does.</h2>
+    <p class="mk-lead">Three speeds, set per property and per job — and you can change your mind any time. It earns autonomy the way an employee would: by showing its work.</p>
     <div class="mk-levels">
-      ${LEVELS.map((lv, i) => html`<div class="mk-level">
+      ${MODES.map((lv, i) => html`<div class="mk-level">
         <div class="mk-level-cube">${raw(cube(i))}</div>
         <div><div class="mk-level-head"><b>${lv.l}</b> · ${lv.name}</div><p>${lv.body}</p></div>
       </div>`)}
@@ -186,8 +214,8 @@ ${mkHeader()}
 
 <section class="mk-band mk-band-alt" id="agents">
   <div class="mk-wrap">
-    <h2 class="mk-h2">Functional agents embedded in every corner.</h2>
-    <p class="mk-lead">Not a chatbot bolted on — agents that live inside leasing, maintenance, payments, and renewals, proposing real actions into a human approval queue.</p>
+    <h2 class="mk-h2">Meet the help.</h2>
+    <p class="mk-lead">Not a chatbot bolted on the side — help that lives inside your leasing, rent collection, maintenance, and renewals, drafting real work into your approval queue.</p>
     <div class="mk-grid3">
       ${AGENTS.map((a) => html`<div class="mk-card"><h3>${a.name}</h3><p>${a.blurb}</p></div>`)}
     </div>
@@ -195,29 +223,17 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="residents">
-  <div class="mk-wrap">
-    <h2 class="mk-h2">Residents feel it too.</h2>
-    <p class="mk-lead">Fast answers at 2am, maintenance that responds in minutes, payments that take seconds — and move-in costs a deposit alternative can cut to a fraction.</p>
-    <div class="mk-phones" aria-hidden="true">
-      <div class="mk-phone"><div class="mk-ph-head">Rent</div><div class="mk-ph-big">$1,450</div><div class="mk-ph-line ok">Autopay on · due Aug 1</div><div class="mk-ph-btn">Pay now</div></div>
-      <div class="mk-phone mk-phone-mid"><div class="mk-ph-head">Maintenance</div><div class="mk-ph-line">Leak under sink</div><div class="mk-ph-line ok">Tech scheduled · Tue 9–11</div><div class="mk-ph-line muted">“Shut the valve behind the cabinet — we're on the way.”</div></div>
-      <div class="mk-phone"><div class="mk-ph-head">Perks</div><div class="mk-ph-line">Deposit alternative: active</div><div class="mk-ph-line ok">Move-in saved $1,050</div><div class="mk-ph-line">Insurance: covered ✓</div></div>
-    </div>
-  </div>
-</section>
-
 <section class="mk-band mk-dark" id="governance">
   <div class="mk-wrap">
-    <h2 class="mk-h2">Autonomy that operates inside your rules.</h2>
-    <p class="mk-lead">Every action runs through your policies. AI doesn't bypass governance — it executes within it.</p>
+    <h2 class="mk-h2">You stay in control. Always.</h2>
+    <p class="mk-lead">The AI works inside your rules, and everything it does is on the record. In practice, that means:</p>
     <ul class="mk-checks">
-      <li>Fair-housing guardrails on every prospect-facing reply</li>
-      <li>Payment-plan and concession bounds you define</li>
-      <li>Role-based permissions and approval workflows</li>
-      <li>Per-agent, per-property autonomy dials</li>
-      <li>A global AI kill switch, one click</li>
-      <li>Full audit trail on every human and AI action</li>
+      <li>Fair-housing guardrails on every prospect-facing reply — enforced in code</li>
+      <li>Payment plans and concessions only inside limits you set</li>
+      <li>An approval queue for anything you haven't handed off yet</li>
+      <li>Per-property settings for how much it does on its own</li>
+      <li>One off switch that stops all AI, platform-wide, in one click</li>
+      <li>A full log of every action — human and AI — you can read anytime</li>
     </ul>
     <div class="mk-grid5">
       ${GOV_CARDS.map((g) => html`<div class="mk-gov"><h4>${g.name}</h4><p>${g.body}</p></div>`)}
@@ -319,14 +335,6 @@ ${mkFooter()}
   var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   // nav dropdown + mobile-menu behavior lives in the shared chrome script
 
-  // ontology stack: opening one layer closes the others (accordion)
-  var layers = document.querySelectorAll('details.mk-layer');
-  layers.forEach(function (d) {
-    d.addEventListener('toggle', function () {
-      if (d.open) layers.forEach(function (o) { if (o !== d) o.open = false; });
-    });
-  });
-
   // scroll progress bar + back-to-top on scroll (condensed nav: chrome script)
   var prog = document.getElementById('mkprog');
   var toTop = document.getElementById('mktop');
@@ -350,7 +358,7 @@ ${mkFooter()}
   }
 
   // stagger children within revealing groups (cards cascade in)
-  ['.mk-two', '.mk-grid3', '.mk-grid5', '.mk-levels', '.mk-stack', '.mk-price-row', '.mk-phones', '.mk-checks', '.mk-foot-grid'].forEach(function (sel) {
+  ['.mk-two', '.mk-grid3', '.mk-grid5', '.mk-levels', '.mk-steps', '.mk-price-row', '.mk-checks', '.mk-foot-grid'].forEach(function (sel) {
     document.querySelectorAll(sel).forEach(function (grp) {
       Array.prototype.forEach.call(grp.children, function (child, i) {
         child.classList.add('mk-stag');
@@ -554,9 +562,9 @@ ${mkFooter()}
   return htmlRes(`<!doctype html>${html`<html lang="en"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>StayLeased — Autonomous Property Management</title>
-<meta name="description" content="The agentic operating system for the places people live. AI workflows for leasing, operations, accounting — with human approval and a full audit trail." />
+<meta name="description" content="Property management software that does the work: answers your leads, collects rent, handles maintenance calls, and keeps real books. Built for independent landlords and small management companies, 10–500 units." />
 <meta property="og:title" content="StayLeased — Autonomous Property Management" />
-<meta property="og:description" content="Purpose-built AI workflows for leasing, operations, and accounting. Import your portfolio in an afternoon." />
+<meta property="og:description" content="The property manager you can't afford to hire. Upload your rent roll and be running in an afternoon — every AI draft waits for your approval." />
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
 <style>${raw(MARKETING_CSS)}</style>

@@ -14,7 +14,7 @@ const ALL_URLS = new Set(MK_PAGES.map((p) => pageUrl(p.group, p.slug)));
 
 test('every nav dropdown item points at a dedicated page that exists', () => {
   const groupByLabel: Record<string, keyof typeof MK_GROUPS> = {
-    Platform: 'platform', Residents: 'resident', AI: 'agents', "Who it's for": 'for',
+    Platform: 'platform', AI: 'agents', "Who it's for": 'for',
   };
   for (const g of MK_NAV) {
     const groupKey = groupByLabel[g.label];
@@ -75,14 +75,24 @@ test('rent reporting stays out: not in the product, so not in nav or catalog', (
 });
 
 test('rails still in rollout carry an honest status chip', () => {
-  // money movement, screening bureau, and carrier verification are simulated
-  // rails (see /setup/connections) — their pages must say so
-  for (const slug of ['rent-collection', 'applications-screening']) {
+  // money movement and the screening bureau are simulated rails (see
+  // /setup/connections) — their pages must say so
+  for (const slug of ['rent-collection', 'applications-screening', 'resident-portal']) {
     const p = MK_PAGES.find((x) => x.group === 'platform' && x.slug === slug)!;
     assert.ok(p.chip, `platform/${slug} has a status chip`);
   }
-  const autopay = MK_PAGES.find((x) => x.group === 'resident' && x.slug === 'autopay')!;
-  assert.ok(autopay.chip, 'resident/autopay has a status chip');
-  const insurance = MK_PAGES.find((x) => x.group === 'resident' && x.slug === 'insurance')!;
-  assert.ok(insurance.chip, 'resident/insurance has a status chip');
+});
+
+test('the retired Residents pillar stays retired: no resident group, portal folded into Platform', () => {
+  assert.ok(!('resident' in MK_GROUPS), 'no resident marketing group');
+  assert.ok(!MK_NAV.some((g) => g.label === 'Residents'), 'no Residents nav dropdown');
+  const portal = MK_PAGES.find((p) => p.slug === 'resident-portal');
+  assert.ok(portal && portal.group === 'platform', 'resident portal lives as ONE Platform item');
+});
+
+test('the AI group leads with the new-to-AI explainer', () => {
+  const ai = MK_NAV.find((g) => g.label === 'AI')!;
+  assert.match(ai.items[0]![0], /New to AI/i, 'first AI nav item is the newcomer page');
+  const page = MK_PAGES.find((p) => p.slug === 'new-to-ai');
+  assert.ok(page, 'new-to-ai page exists');
 });

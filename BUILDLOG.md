@@ -179,3 +179,9 @@
 **Verified:** tsc clean · 166/166 unit (7 new: catalog↔nav drift guard, completeness, honesty chips, rent-reporting keep-out) · 143/143 e2e (8 new: all pages render w/ chrome, 404s, homepage link sweep, hover-gap survival + grace-period close + exclusivity, hover-open click-confirm + Escape, mobile menu navigation, robots/sitemap). Existing homepage/nav e2e contracts unchanged and green.
 
 **Gotcha for the log:** `backdrop-filter` on the sticky header makes it the containing block for `position:fixed` descendants — the mobile panel computed to zero height until it moved outside `<header>`.
+
+## 2026-07-28 — Small-operator retarget v2: Residents pillar retired, homepage de-enterprised, new-to-AI lane
+
+**Built:** per Henry — no resident-experience marketing yet, speak to small operators, include people who've never used AI. Residents nav group + 5 pages removed (portal folded into Platform as /platform/resident-portal, operator-voiced; old URLs redirect). Homepage rewritten in plain language: first-week walkthrough replaces the ontology stack, "Everything in one place" replaces the OXP/RXP two-platforms section, three plain autonomy modes replace the L1–L5 ladder, "You stay in control. Always." replaces governance-speak, and a "Never used AI before?" section (with a concrete 9pm-lead draft-approval card) plus a dedicated /agents/new-to-ai page carry the AI-newcomer story. AI nav leads with the newcomer page; "Autonomy & governance" renamed "Approvals & control".
+
+**Verified:** tsc clean · 168/168 unit · 144/144 e2e. Homepage e2e now asserts the enterprise framing is ABSENT (ontology/OXP/RXP/agentic-OS regexes must not match) so it can't creep back; unit tests pin the retired Residents pillar and the new-to-ai lead position.

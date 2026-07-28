@@ -1,20 +1,22 @@
 import { html, raw, when, type Raw } from '../../lib/html.ts';
-import { notFound, type Router, type Res } from '../../lib/http.ts';
+import { notFound, redirect, type Router, type Res } from '../../lib/http.ts';
 import { mkHeader, mkFooter, mkDoc, mkSignupOpen, MK_NAV } from './chrome.ts';
 
-/** Dedicated marketing pages behind every nav-dropdown item — the Entrata
- * pattern (a real page per product), curated to what StayLeased actually
- * does. Groups: /platform (operator modules), /resident (resident products),
- * /agents (the AI layer), /for (audiences). Where an external rail is still
- * in rollout (card/ACH processing, screening bureau, ILS syndication,
- * carrier verification), the page says so with a status chip and an FAQ
- * answer instead of pretending — same honesty contract as
- * /setup/connections. Rent reporting was dropped from the nav entirely: it
- * is not in the product, so it gets no page. */
+/** Dedicated marketing pages behind every nav-dropdown item — a real page
+ * per product, curated to what StayLeased actually does and written for
+ * small operators (including ones who have never used AI). Groups:
+ * /platform (operator modules, incl. the resident portal as ONE item —
+ * we're not marketing a resident-experience pillar yet), /agents (the AI,
+ * led by a new-to-AI explainer), /for (audiences). Where an external rail
+ * is still in rollout (card/ACH processing, screening bureau, ILS
+ * syndication, carrier verification), the page says so with a status chip
+ * and an FAQ answer instead of pretending — same honesty contract as
+ * /setup/connections. Rent reporting was dropped entirely: not in the
+ * product, so no page. Old /resident/* URLs 301 to the portal page. */
 
 export interface MkPage {
   slug: string;
-  group: 'platform' | 'resident' | 'agents' | 'for';
+  group: 'platform' | 'agents' | 'for';
   label: string; // nav label
   title: string; // h1
   sub: string;
@@ -28,9 +30,8 @@ export interface MkPage {
 }
 
 export const MK_GROUPS: Record<MkPage['group'], { base: string; name: string; kicker: string; lead: string }> = {
-  platform: { base: '/platform', name: 'Platform', kicker: 'Operations Experience', lead: 'The whole operating desk — leasing, money, maintenance, and the books — in one login on one database.' },
-  resident: { base: '/resident', name: 'Residents', kicker: 'Resident Experience', lead: 'The resident-facing side of the same system: payments, requests, documents, and coverage that lower move-in costs.' },
-  agents: { base: '/agents', name: 'AI', kicker: 'The agentic layer', lead: 'Functional agents embedded in leasing, maintenance, payments, and renewals — proposing real actions into a human approval queue.' },
+  platform: { base: '/platform', name: 'Platform', kicker: 'Everything in one place', lead: 'Leasing, rent, maintenance, and real books in one login — including a portal your tenants will actually use.' },
+  agents: { base: '/agents', name: 'AI', kicker: 'Help that drafts, you approve', lead: 'AI that answers leads, chases rent, sorts maintenance, and drafts renewals — every message starting as a draft in your approval queue. New to AI? Start with the first page.' },
   for: { base: '/for', name: "Who it's for", kicker: 'Built for operators like you', lead: 'StayLeased is sized for the people who actually own and run most of America’s rentals — not 20,000-unit REITs.' },
 };
 
@@ -75,7 +76,7 @@ export const MK_PAGES: MkPage[] = [
     related: [
       { label: 'Payments AI', href: '/agents/payments' },
       { label: 'Accounting', href: '/platform/accounting' },
-      { label: 'Autopay & payments (residents)', href: '/resident/autopay' },
+      { label: 'Resident portal', href: '/platform/resident-portal' },
     ],
   },
   {
@@ -156,7 +157,7 @@ export const MK_PAGES: MkPage[] = [
     ],
     related: [
       { label: 'Maintenance AI', href: '/agents/maintenance' },
-      { label: 'Maintenance requests (residents)', href: '/resident/maintenance' },
+      { label: 'Resident portal', href: '/platform/resident-portal' },
       { label: 'Reports', href: '/platform/reports' },
     ],
   },
@@ -281,7 +282,7 @@ export const MK_PAGES: MkPage[] = [
     related: [
       { label: 'Leasing CRM', href: '/platform/leasing-crm' },
       { label: 'Leases & e-sign', href: '/platform/leases-esign' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Approvals & control', href: '/agents/governance' },
     ],
   },
   {
@@ -449,217 +450,92 @@ export const MK_PAGES: MkPage[] = [
       { label: 'Reports', href: '/platform/reports' },
     ],
   },
-
-  // ---------------- Residents ----------------
   {
-    slug: 'portal', group: 'resident', label: 'Resident portal',
-    title: 'The portal residents actually use.',
-    sub: 'Balance and autopay, maintenance with photos, documents, insurance, and renewal offers — everything a resident needs, with answers at 2am from an AI that knows their lease.',
+    slug: 'resident-portal', group: 'platform', label: 'Resident portal',
+    title: 'Your tenants get a portal. You get your evenings back.',
+    sub: 'Rent paid online instead of chased, repair requests with photos instead of voicemails, documents they can find themselves — the calls that eat your week, answered by a website.',
+    chip: { kind: 'soon', text: 'Portal, requests & ledgers live · card/ACH processing rail in rollout' },
     points: [
-      'Balance, ledger history, and one-tap payments',
-      'Maintenance requests with photos and live status',
-      'Lease documents, insurance, and renewal offers in one place',
+      'Tenants see their balance and pay online — with autopay and instant receipts',
+      'Repair requests come in with photos and get answered immediately, day or night',
+      'Lease documents, insurance status, and renewal offers — self-serve, not office-hours',
     ],
     stats: [
-      { b: 'Self-service that sticks', s: 'Residents answer their own “what’s my balance?”' },
-      { b: 'Fewer calls', s: 'Requests, updates, and documents without phoning the office' },
-      { b: 'Always-on answers', s: 'The AI responds instantly, inside your policies' },
+      { b: 'Fewer calls', s: '“What’s my balance?” and “any news on my sink?” answer themselves' },
+      { b: 'Faster rent', s: 'Paying takes seconds on a phone, so it happens on time' },
+      { b: 'Nothing to install', s: 'Fast mobile website — works on any phone, no app store' },
     ],
     features: [
-      { t: 'Money, clearly', b: 'Current balance, what it’s made of, payment history with receipts, and autopay controls — a ledger a human can read.' },
-      { t: 'Maintenance from the couch', b: 'Submit with photos and access notes, watch status change, rate the fix. The “is anyone coming?” call disappears.' },
-      { t: 'Documents on demand', b: 'The signed lease, addenda, and notices — downloadable anytime, no office-hours dependency.' },
-      { t: 'Insurance & deposit alternative', b: 'Upload proof of coverage or enroll in the property’s options; compliance status is visible instead of mysterious.' },
-      { t: 'Renewals in the portal', b: 'Offers appear with clear terms; accepting starts the renewal — no printed letter under the door.' },
-      { t: 'Requests become records', b: 'Everything a resident does in the portal threads into your system with history — no sticky notes, no lost voicemails.' },
+      { t: 'Money, self-serve', b: 'Balance, what it’s made of, payment history with receipts, and autopay controls. The awkward balance conversation becomes a screen they check themselves.' },
+      { t: 'Repair requests that behave', b: 'A photo of the leak, access notes, and live status — received, scheduled with a window, done. The “is anyone coming?” call disappears from your phone.' },
+      { t: 'Answers at 2am', b: 'The AI answers portal questions instantly from their actual lease — rent amount, due dates, policies — and walks them through safe first steps on maintenance. You read every exchange.' },
+      { t: 'Documents on demand', b: 'The signed lease, addenda, notices, and renewal offers, downloadable anytime. No more digging through email to resend a lease.' },
+      { t: 'Insurance & deposit alternative', b: 'Tenants upload proof of coverage or enroll in your programs; compliance status stays visible on both sides instead of surprising anyone.' },
+      { t: 'Everything lands in your system', b: 'Every payment, request, and message threads into the same records and books you run on — no separate tenant app to check.' },
     ],
     mock: {
       kpis: [['$0', 'Balance due'], ['Autopay', 'On · Aug 1'], ['1', 'Open request'], ['✓', 'Insurance current']],
       feed: [
-        ['Portal', 'payment received · receipt issued instantly'],
-        ['Requests', 'leak under sink · tech scheduled Tue 9–11'],
+        ['Portal', 'rent paid online · receipt issued instantly'],
+        ['Requests', 'leak under sink + photo · tech scheduled Tue 9–11'],
         ['Documents', 'renewal offer viewed · expires in 14 days'],
       ],
     },
     faq: [
-      { q: 'How do my existing residents get access?', a: 'Staff issue portal credentials from each resident’s record today (a self-serve invite-link flow is next on the roadmap). New residents get access as part of move-in.' },
-      { q: 'What can residents see?', a: 'Exactly their own lease world: their balance, their documents, their requests. Role-based permissions and org isolation keep everything else invisible.' },
-      { q: 'Is there an app to install?', a: 'The portal is a fast mobile web experience — nothing to install, works on any phone. That also means every resident link you send just works.' },
+      { q: 'How do my current tenants get access?', a: 'You issue portal credentials from each resident’s record today (a self-serve invite-link flow is next on the roadmap). New tenants get access as part of move-in.' },
+      { q: 'When can tenants pay by card or bank transfer through the portal?', a: 'The card/ACH processing rail is rolling out to early-access partners — waitlist on Setup → Connections. The portal, ledgers, receipts, and autopay scheduling are live now, so switching the money rail on later is a flip, not a migration.' },
+      { q: 'Do tenants have to use it?', a: 'No — you can keep taking payments and requests however you do now and record them. But most tenants prefer paying from their phone at 9pm to writing a check, which is exactly why rent shows up faster.' },
     ],
     related: [
-      { label: 'Autopay & payments', href: '/resident/autopay' },
-      { label: 'Maintenance requests', href: '/resident/maintenance' },
-      { label: 'Deposit alternative', href: '/resident/deposit-alternative' },
-    ],
-  },
-  {
-    slug: 'autopay', group: 'resident', label: 'Autopay & payments',
-    title: 'Rent that pays itself on the 1st.',
-    sub: 'Residents set autopay once and stop thinking about it. Every payment lands with a receipt, posts to a ledger both sides can read, and flows through real books underneath.',
-    chip: { kind: 'soon', text: 'Portal payments + ledgers live · card/ACH processing rail in rollout' },
-    points: [
-      'Autopay on the schedule the lease expects',
-      'Instant receipts and a running ledger — no “did you get my rent?”',
-      'Payment plans, when you allow them, structured and tracked',
-    ],
-    stats: [
-      { b: 'Predictable for you', s: 'Autopay turns the 1st into a non-event' },
-      { b: 'Clear for residents', s: 'Balance, history, receipts — zero mystery' },
-      { b: 'Booked correctly', s: 'Every payment is a balanced ledger entry instantly' },
-    ],
-    features: [
-      { t: 'Set-and-forget autopay', b: 'Residents enroll from the portal; payments post on schedule with receipts issued automatically and failures surfaced to both sides immediately.' },
-      { t: 'One-tap payments', b: 'A balance can be paid in seconds from a phone — the friction that quietly causes late rent, removed.' },
-      { t: 'Receipts & history', b: 'Every payment generates a receipt and a permanent history line. Disputes become lookups instead of arguments.' },
-      { t: 'Payment plans', b: 'When you allow one, the plan is structured — amounts, dates, and tracking — and the Payments AI monitors adherence politely.' },
-      { t: 'Straight into the books', b: 'Payments post through the same double-entry ledger as everything else, so collections reporting and owner statements are automatically right.' },
-      { t: 'Processing rail (rolling out)', b: 'Card/ACH money movement is in controlled rollout with early-access partners. Until it reaches your account, record payments you collect today — everything else above already works.' },
-    ],
-    mock: {
-      kpis: [['19', 'Autopay leases'], ['$28.4k', 'Posted this morning'], ['100%', 'Receipts issued'], ['1', 'Plan active']],
-      feed: [
-        ['Autopay', 'ran for Aug 1 · 19 payments posted'],
-        ['Receipts', 'receipt #2041 issued · Maya T.'],
-        ['Plans', 'payment plan installment 2 of 3 received on time'],
-      ],
-    },
-    faq: [
-      { q: 'When can residents pay by card or bank transfer through the portal?', a: 'The processing rail is rolling out to early-access partners — waitlist on Setup → Connections. The portal, ledgers, receipts, autopay scheduling, and books are all live now, so switching the money rail on is a flip, not a migration.' },
-      { q: 'What happens when a payment fails?', a: 'The failure is visible to staff and resident immediately, the balance stays accurate, and the Payments AI follows up inside your tone and compliance rails.' },
-      { q: 'Can a resident overpay or prepay?', a: 'Yes — credits sit on the ledger and apply against future charges automatically, with the history visible to everyone.' },
-    ],
-    related: [
-      { label: 'Rent collection (operators)', href: '/platform/rent-collection' },
-      { label: 'Resident portal', href: '/resident/portal' },
-      { label: 'Payments AI', href: '/agents/payments' },
-    ],
-  },
-  {
-    slug: 'maintenance', group: 'resident', label: 'Maintenance requests',
-    title: 'Report it at 11pm. See it fixed by Friday.',
-    sub: 'Photos in, triage instant, status visible the whole way — with troubleshooting help right away and a satisfaction rating at the end that your operator actually sees.',
-    points: [
-      'Submit with photos and access permission from any phone',
-      'Instant AI triage — emergencies escalate immediately',
-      'Live status: received → scheduled → done, with notes',
-    ],
-    stats: [
-      { b: 'No phone tag', s: 'Requests, questions, and updates all in the thread' },
-      { b: 'Safe first steps', s: 'Troubleshooting guidance the moment you submit' },
-      { b: 'Closed loop', s: 'Rate the fix; ratings feed operator quality tracking' },
-    ],
-    features: [
-      { t: 'Photo-first requests', b: 'A picture of the leak beats three paragraphs. Photos, location, and access notes ride with the request from submission to completion.' },
-      { t: 'Instant triage', b: 'The Maintenance AI categorizes and prioritizes on arrival — and recognizes emergencies (water, gas, no heat) for immediate escalation, day or night.' },
-      { t: 'Troubleshooting on the spot', b: 'Sometimes it’s the breaker or the shut-off valve. The AI walks through safe first steps immediately — often fixing it, always making it safer.' },
-      { t: 'Status you can see', b: 'Received, triaged, scheduled with a window, in progress, done — visible in the portal so nobody has to call to ask.' },
-      { t: 'A thread, not a ticket number', b: 'Follow-up questions, photos, and updates happen in one conversation attached to the request.' },
-      { t: 'Satisfaction ratings', b: 'A quick rating when work completes — surfaced to the operator so quality problems show up in data, not in move-outs.' },
-    ],
-    mock: {
-      kpis: [['2m', 'To triage'], ['Tue 9–11', 'Scheduled window'], ['1', 'Open request'], ['★ 4.7', 'Avg rating']],
-      feed: [
-        ['Request', 'leak under kitchen sink · photo attached'],
-        ['Maintenance AI', '“Shut the valve behind the cabinet — help is coming.”'],
-        ['Status', 'plumber scheduled · Tuesday 9–11 window confirmed'],
-      ],
-    },
-    faq: [
-      { q: 'What if it’s a real emergency?', a: 'Emergencies escalate to the on-call contact immediately, 24/7, with the AI giving safe first steps while help is on the way. Emergency categories are defined by your operator’s policy.' },
-      { q: 'Can I add something after submitting?', a: 'Yes — the request is a running conversation. Add photos, notes, or updated availability anytime; staff and vendors see it in the same thread.' },
-      { q: 'Who sees my photos and notes?', a: 'Your operator’s staff and the vendor assigned to your request — scoped by role, with everything logged.' },
-    ],
-    related: [
-      { label: 'Maintenance & turns (operators)', href: '/platform/maintenance' },
-      { label: 'Maintenance AI', href: '/agents/maintenance' },
-      { label: 'Resident portal', href: '/resident/portal' },
-    ],
-  },
-  {
-    slug: 'insurance', group: 'resident', label: 'Renters insurance',
-    title: 'Coverage every lease requires — tracked, verified, never awkward.',
-    sub: 'Residents bring their own policy or enroll in the property’s master program; compliance status stays current automatically, and lapses trigger the process your lease specifies instead of a surprise.',
-    chip: { kind: 'soon', text: 'Compliance workflow live · carrier verification rail in rollout' },
-    points: [
-      'Upload proof of third-party coverage in a minute',
-      'Master-policy enrollment for residents who’d rather not shop',
-      'Lapse detection with automatic, lease-driven follow-up',
-    ],
-    stats: [
-      { b: 'Compliance visible', s: 'Covered, lapsing, or lapsed — per lease, at a glance' },
-      { b: 'Two easy paths', s: 'Bring your own policy or join the master program' },
-      { b: 'No gap surprises', s: 'Expiring coverage surfaces weeks ahead, not after a loss' },
-    ],
-    features: [
-      { t: 'Third-party policy upload', b: 'Carrier, policy number, liability amount, and dates — submitted from the portal, checked against the lease’s required coverage.' },
-      { t: 'Master-policy option', b: 'Residents who don’t want to shop can enroll in the property’s program at lease-up or any time, with the fee riding the normal ledger.' },
-      { t: 'Live compliance status', b: 'Every active lease shows covered / lapsing / lapsed, computed from actual policy dates — the operator dashboard nobody has to maintain.' },
-      { t: 'Lapse workflow', b: 'Coverage about to end triggers notices; actual lapses follow your lease terms, including auto-enrollment in the master program where your lease provides for it.' },
-      { t: 'Verification rail (rolling out)', b: 'Automated carrier verification of uploaded policies is in rollout; staff review handles verification today with the same recorded outcome.' },
-      { t: 'Claims & incidents context', b: 'Incidents logged against units and leases keep coverage, losses, and follow-ups in one reviewable place.' },
-    ],
-    mock: {
-      kpis: [['96%', 'Leases covered'], ['3', 'Lapsing · 21 days'], ['12', 'Master enrolled'], ['1', 'Lapse workflow running']],
-      feed: [
-        ['Insurance', 'policy uploaded · meets $100k liability requirement'],
-        ['Compliance', 'lease 118 lapsing in 14 days · notice sent'],
-        ['Master policy', 'auto-enroll executed per lease terms · lease 205'],
-      ],
-    },
-    faq: [
-      { q: 'Do residents have to buy insurance through StayLeased?', a: 'No — bring any policy that meets the lease’s required coverage. The master program exists for residents who prefer one less errand.' },
-      { q: 'What happens if my policy lapses?', a: 'You’ll get notices ahead of expiration. If coverage actually lapses, what happens next is whatever your lease says — commonly auto-enrollment in the property program until you show new proof.' },
-      { q: 'Is my uploaded policy verified?', a: 'Uploads are checked against required coverage; automated carrier verification is rolling out, with staff review covering verification in the meantime. Either way the outcome is recorded on your lease.' },
-    ],
-    related: [
-      { label: 'Deposit alternative', href: '/resident/deposit-alternative' },
-      { label: 'Resident portal', href: '/resident/portal' },
-      { label: 'Leases & e-sign (operators)', href: '/platform/leases-esign' },
-    ],
-  },
-  {
-    slug: 'deposit-alternative', group: 'resident', label: 'Deposit alternative',
-    title: 'Move in for hundreds, not thousands.',
-    sub: 'Instead of a full security deposit locked up for a year, qualifying residents pay a small program fee — operators stay protected by the program’s coverage, and move-in stops being the barrier.',
-    points: [
-      'A fraction of the traditional deposit due at move-in',
-      'Operators keep real protection against damage and loss',
-      'Claims handled through a defined process, on the ledger',
-    ],
-    stats: [
-      { b: 'Lower move-in cost', s: 'The #1 blocker for good applicants, removed' },
-      { b: 'Faster leasing', s: 'Cheaper move-in widens the qualified pool' },
-      { b: 'Protection intact', s: 'Coverage stands behind the waived deposit' },
-    ],
-    features: [
-      { t: 'Enrollment at lease-up', b: 'Offered where the operator enables it: qualifying residents choose the alternative at signing and the lease records it — deposit line shows the program, not a five-figure hold.' },
-      { t: 'Clear resident terms', b: 'The fee is not insurance for the resident and doesn’t waive responsibility for damage — the portal says so plainly, because surprises are how programs like this get a bad name.' },
-      { t: 'Operator protection', b: 'Covered losses at move-out run through the program’s claim process, with outcomes posting to the ledger like any other accountable event.' },
-      { t: 'Ledger-native fees', b: 'Program fees bill and collect like rent — visible, receipted, and included in the same books and reports as everything else.' },
-      { t: 'Traditional deposits still supported', b: 'Every lease can still take a classic deposit, tracked as a proper liability with disposition at move-out. The alternative is an option, not a mandate.' },
-      { t: 'Move-out clarity', b: 'Damage beyond normal wear is documented at inspection; residents see what’s claimed and why, with the paper trail attached.' },
-    ],
-    mock: {
-      kpis: [['$1,050', 'Kept at move-in'], ['14', 'Enrolled leases'], ['2', 'Claims YTD'], ['100%', 'On-ledger']],
-      feed: [
-        ['Enrollment', 'new lease chose deposit alternative · Unit 118'],
-        ['Move-out', 'inspection documented · no claim needed'],
-        ['Claims', 'claim processed per program terms · posted to ledger'],
-      ],
-    },
-    faq: [
-      { q: 'Is the fee refundable like a deposit?', a: 'No — and the portal says this clearly at enrollment. It’s a program fee in exchange for a dramatically lower move-in cost. Residents who prefer a refundable deposit can pay the traditional one.' },
-      { q: 'Does this let residents off the hook for damage?', a: 'No. Residents remain responsible for damage beyond normal wear; the program changes who fronts the money at move-in, not who’s accountable at move-out.' },
-      { q: 'Why do operators offer this?', a: 'Vacancy costs more than deposits protect. Lower move-in cost widens the qualified applicant pool and shortens vacancy, while program coverage keeps the downside protected.' },
-    ],
-    related: [
-      { label: 'Renters insurance', href: '/resident/insurance' },
-      { label: 'Resident portal', href: '/resident/portal' },
-      { label: 'Leasing CRM (operators)', href: '/platform/leasing-crm' },
+      { label: 'Rent collection', href: '/platform/rent-collection' },
+      { label: 'Maintenance & turns', href: '/platform/maintenance' },
+      { label: 'New to AI? Start here', href: '/agents/new-to-ai' },
     ],
   },
 
   // ---------------- AI agents ----------------
+  {
+    slug: 'new-to-ai', group: 'agents', label: 'New to AI? Start here',
+    title: 'Never used AI before? Good. This was built for you.',
+    sub: 'No prompts to write, nothing to learn, no robot talking to your tenants behind your back. It reads what comes in, drafts what should go out, and puts every draft in a queue for you to approve — that’s the whole idea.',
+    points: [
+      'Nothing is sent to a tenant or prospect until you approve it — that’s the default',
+      'You read every word it writes, and you can edit before approving',
+      'One off switch stops all of it instantly, any time',
+    ],
+    stats: [
+      { b: 'It drafts, you decide', s: 'Think “assistant who prepares everything,” not “autopilot”' },
+      { b: 'Plain English only', s: 'If you can read email and click Approve, you know how to use it' },
+      { b: 'Your data, not the internet', s: 'It answers from your rents, your units, your policies — nothing made up' },
+    ],
+    features: [
+      { t: 'What it actually does', b: 'A lead emails at 9pm asking about a 2-bedroom: it drafts a reply with your real availability, price, and tour times. Rent is 5 days late: it drafts a polite reminder in your tone. A tenant reports a leak: it sorts urgent from routine and suggests the next step. That’s the work.' },
+      { t: 'What it never does', b: 'It never invents a price or an answer (it only uses your live data), never threatens or pressures anyone (blocked in code, not by promises), never signs, spends, or changes terms, and never acts outside limits you set.' },
+      { t: 'How you start', b: 'You don’t configure anything. Everything it writes lands in one queue as drafts. For the first couple of weeks you just read them and click Approve, Edit, or Reject — like reviewing a new employee’s emails.' },
+      { t: 'When you’re ready for more', b: 'Once you notice you’ve stopped editing its drafts, you can let it send certain things on its own — most owners start with after-hours lead replies, because that’s money lost while you sleep. Each step up is your choice, per property, reversible.' },
+      { t: 'If it’s ever wrong', b: 'You edit the draft or reject it — and everything it ever wrote or did sits in a permanent log you can review. You’re never wondering what it said to whom.' },
+      { t: 'The off switch', b: 'One click stops every AI feature platform-wide. You’ll probably never use it. It’s there anyway, because trust needs an exit.' },
+    ],
+    mock: {
+      kpis: [['3', 'Drafts waiting for you'], ['0', 'Sent without approval'], ['41s', 'Lead answered (draft)'], ['1', 'Off switch · always']],
+      feed: [
+        ['9:04pm', 'Zillow lead asks about the 2BR · reply drafted from real availability'],
+        ['9:05pm', 'draft queued: “Hi Sam — yes, the 2BR at $1,450 is available…”'],
+        ['You', 'read it over coffee, click Approve · sent'],
+      ],
+    },
+    faq: [
+      { q: 'I don’t want a robot talking to my tenants.', a: 'Then it won’t — that’s the default, not a setting you have to find. It drafts; you send. It only ever contacts anyone directly if you deliberately turn that on later, and you can turn it back off in one click.' },
+      { q: 'Do I need to learn “prompting” or take a course?', a: 'No. There’s nothing to prompt. The AI reacts to real events — a lead, a late balance, a repair request — and shows you its work. Your only job is Approve / Edit / Reject, which you already know how to do.' },
+      { q: 'How is this different from ChatGPT?', a: 'ChatGPT answers questions from the internet. This works inside your operation: it knows your actual units, prices, balances, and policies, acts only through drafts you approve, and logs everything. It’s an employee with rules, not a chat window.' },
+      { q: 'What does it cost to try?', a: 'Early access is free, and the live demo company is open right now — no signup, no sales call. Watch the AI work on a fake portfolio before it touches yours.' },
+    ],
+    related: [
+      { label: 'Leasing AI', href: '/agents/leasing' },
+      { label: 'Approvals & control', href: '/agents/governance' },
+      { label: 'Self-managing owners', href: '/for/self-managing-owners' },
+    ],
+  },
   {
     slug: 'leasing', group: 'agents', label: 'Leasing AI',
     title: 'The leasing agent who never sleeps, never guesses, never skips follow-up.',
@@ -698,7 +574,7 @@ export const MK_PAGES: MkPage[] = [
     related: [
       { label: 'Leasing CRM', href: '/platform/leasing-crm' },
       { label: 'Property sites & listings', href: '/platform/property-sites' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Approvals & control', href: '/agents/governance' },
     ],
   },
   {
@@ -738,8 +614,8 @@ export const MK_PAGES: MkPage[] = [
     ],
     related: [
       { label: 'Maintenance & turns', href: '/platform/maintenance' },
-      { label: 'Maintenance requests (residents)', href: '/resident/maintenance' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Resident portal', href: '/platform/resident-portal' },
+      { label: 'Approvals & control', href: '/agents/governance' },
     ],
   },
   {
@@ -779,8 +655,8 @@ export const MK_PAGES: MkPage[] = [
     ],
     related: [
       { label: 'Rent collection', href: '/platform/rent-collection' },
-      { label: 'Autopay & payments (residents)', href: '/resident/autopay' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Resident portal', href: '/platform/resident-portal' },
+      { label: 'Approvals & control', href: '/agents/governance' },
     ],
   },
   {
@@ -821,7 +697,7 @@ export const MK_PAGES: MkPage[] = [
     related: [
       { label: 'Renewals & pricing', href: '/platform/renewals-pricing' },
       { label: 'Leases & e-sign', href: '/platform/leases-esign' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Approvals & control', href: '/agents/governance' },
     ],
   },
   {
@@ -862,7 +738,7 @@ export const MK_PAGES: MkPage[] = [
     related: [
       { label: 'Leasing CRM', href: '/platform/leasing-crm' },
       { label: 'Ask StayLeased', href: '/agents/ask-stayleased' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Approvals & control', href: '/agents/governance' },
     ],
   },
   {
@@ -902,12 +778,12 @@ export const MK_PAGES: MkPage[] = [
     ],
     related: [
       { label: 'Reports', href: '/platform/reports' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Approvals & control', href: '/agents/governance' },
       { label: 'Leasing AI', href: '/agents/leasing' },
     ],
   },
   {
-    slug: 'governance', group: 'agents', label: 'Autonomy & governance',
+    slug: 'governance', group: 'agents', label: 'Approvals & control',
     title: 'Autonomy is earned, dialed, and audited — never assumed.',
     sub: 'Every agent runs inside the same framework: per-agent, per-property autonomy dials, human approval queues, deterministic compliance rails, a global kill switch, and an audit trail under every single action.',
     points: [
@@ -1028,7 +904,7 @@ export const MK_PAGES: MkPage[] = [
     related: [
       { label: 'Switching from Buildium / AppFolio', href: '/for/switching-from-buildium-appfolio' },
       { label: 'Accounting', href: '/platform/accounting' },
-      { label: 'Autonomy & governance', href: '/agents/governance' },
+      { label: 'Approvals & control', href: '/agents/governance' },
     ],
   },
   {
@@ -1344,6 +1220,11 @@ export function featureRoutes(r: Router): void {
       return p ? featurePage(p) : notFound();
     });
   }
+  // the Residents marketing pillar was retired (2026-07-28) — we're not
+  // selling a resident-experience platform yet; the portal is one Platform
+  // item. Old URLs land on the portal page.
+  r.get('/resident', () => redirect('/platform/resident-portal'));
+  r.get('/resident/:slug', () => redirect('/platform/resident-portal'));
   r.get('/legal/privacy', () => legalDoc('Privacy Policy', 'July 28, 2026', PRIVACY));
   r.get('/legal/terms', () => legalDoc('Terms of Service', 'July 28, 2026', TERMS));
 }

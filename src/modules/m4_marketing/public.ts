@@ -315,7 +315,7 @@ export function routes(r: Router): void {
 
   r.get('/robots.txt', (rq) => {
     const host = siteHost(rq);
-    const allow = ['/$', '/platform$', '/platform/', '/resident$', '/resident/', '/agents$', '/agents/', '/for$', '/for/', '/legal/', '/p/', '/company'];
+    const allow = ['/$', '/platform$', '/platform/', '/agents$', '/agents/', '/for$', '/for/', '/legal/', '/p/', '/company'];
     return textRes(`User-agent: *\n${allow.map((a) => `Allow: ${a}`).join('\n')}\nDisallow: /\nSitemap: ${host}/sitemap.xml\n`);
   });
 }
