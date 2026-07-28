@@ -31,6 +31,7 @@ import * as onboarding from '../modules/setup/onboarding.ts'; // working model: 
 import * as importHub from '../modules/setup/import.ts'; // working model: universal Import Hub
 import * as connections from '../modules/setup/connections.ts'; // working model: honest rails page
 import { homepageRoutes } from '../modules/m4_marketing/homepage.ts'; // platform marketing front door
+import { featureRoutes } from '../modules/m4_marketing/features.ts'; // dedicated marketing pages behind the nav dropdowns
 import '../modules/m8_receivables/service.ts'; // registers rent_posting job
 import '../modules/m8_receivables/payments.ts'; // registers settlement/late-fee/autopay/plan jobs
 
@@ -71,4 +72,5 @@ export function registerModules(r: Router): void {
   importHub.routes(r); // /setup/import universal importers
   connections.routes(r); // /setup/connections
   homepageRoutes(r); // marketing walkthrough capture
+  featureRoutes(r); // /platform, /resident, /agents, /for, /legal marketing pages
 }

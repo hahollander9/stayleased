@@ -195,3 +195,41 @@ this. `npm run check && npm run e2e` from a fresh clone is the health bar.
 - Gates: tsc clean · 152 unit · 132 e2e (new chat gate incl. busy guard +
   smalltalk audit) — suites run separately per the known db race
 - Ship: commit 710ae0b (+ this STATE entry); deploys to Render on push
+
+## Marketing site build-out: dedicated pages + un-finicky dropdowns (2026-07-28)
+
+- [x] chrome.ts: shared marketing chrome (nav catalog, header/footer, CSS,
+      menu JS) used by /, all feature pages, and legal pages — one source of
+      truth for the logged-out site
+- [x] Dropdown fix (the "finicky" report): pure-CSS :hover replaced with
+      JS hover-intent mirroring the app module bar — ::before bridge over
+      the 8px gap, 240ms close grace, first-click-confirms on hover-opened
+      menus, aria-expanded/haspopup, Escape + outside-click + focus-out
+      close, ArrowDown/Up menu navigation; click/touch/keyboard never
+      depend on hover; e2e exclusivity contract unchanged
+- [x] Mobile nav (was: nothing below 980px): burger → full-screen accordion
+      panel with all four groups + CTAs; body scroll lock;
+      Escape/link-tap/outside-tap close (panel sits OUTSIDE the header —
+      backdrop-filter creates a containing block that zero-heights fixed
+      children; that bug cost one e2e round)
+- [x] features.ts: 27 dedicated marketing pages behind every nav item —
+      /platform/* (10), /resident/* (5), /agents/* (7), /for/* (5) — plus
+      4 hub pages, from one MK_PAGES catalog + renderer (hero w/ product
+      mock, proof strip, feature grid, FAQ, related, CTA band). Honest
+      status chips + FAQ answers on pages whose rails are still simulated
+      (payments processing, screening bureau, ILS syndication, carrier
+      verification), matching /setup/connections
+- [x] Curation per business model: "Rent reporting" removed from nav,
+      homepage phones mock, and RXP copy — feature does not exist in the
+      product; deposit-alternative content (which does) replaces it
+- [x] /legal/privacy + /legal/terms (plain-English, early-access-honest),
+      linked from footer Company column
+- [x] SEO: robots.txt now allows /$ + marketing prefixes (was Disallow: /
+      on everything incl. the homepage); sitemap.xml lists all marketing
+      pages; URLs honor x-forwarded-proto (https on Render)
+- [x] Tests: tests/mkpages.test.ts (catalog↔nav drift guard, completeness,
+      honesty-chip presence, rent-reporting keep-out) + e2e/mkpages.test.ts
+      (all pages 200 w/ chrome, 404 on bad slug, every homepage link
+      resolves, hover-gap/grace/exclusivity, click-confirm + Escape,
+      mobile menu navigation, robots/sitemap)
+- Gates: tsc clean · 166 unit · 143 e2e, all green

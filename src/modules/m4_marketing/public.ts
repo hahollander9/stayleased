@@ -7,6 +7,7 @@ import { usd } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
 import { logo } from '../../ui/ui.ts';
 import { intakeLead, bookTour, tourSlots } from '../m3_crm/service.ts';
+import { MK_PAGES, MK_GROUPS } from './features.ts';
 
 /** M4 public marketing sites + prospect flows. Everything renders from LIVE
  * inventory/pricing (M2 now, M13 recommendations once accepted) — no stale
@@ -288,19 +289,33 @@ export function routes(r: Router): void {
   });
 
   // ---------- SEO plumbing ----------
+  // marketing pages are crawlable; the app (login-gated paths) stays disallowed
+  const siteHost = (rq: Rq): string => {
+    const proto = String(rq.raw.headers['x-forwarded-proto'] || '').split(',')[0]!.trim() || 'http';
+    return `${proto}://${String(rq.raw.headers.host || 'localhost:3000')}`;
+  };
+
   r.get('/sitemap.xml', (rq) => {
     const props = q<any>('SELECT slug FROM properties').filter((p) => {
       const full = q1<any>('SELECT * FROM properties WHERE slug=?', p.slug);
       return full && marketingOf(full).published;
     });
-    const host = `http://${String(rq.raw.headers.host || 'localhost:3000')}`;
-    const urls = ['/company', ...props.map((p) => `/p/${p.slug}`), ...props.map((p) => `/p/${p.slug}/inquire`)];
+    const host = siteHost(rq);
+    const marketing = [
+      '/',
+      ...(Object.values(MK_GROUPS) as { base: string }[]).map((g) => g.base),
+      ...MK_PAGES.map((p) => `${MK_GROUPS[p.group].base}/${p.slug}`),
+      '/legal/privacy',
+      '/legal/terms',
+    ];
+    const urls = [...marketing, '/company', ...props.map((p) => `/p/${p.slug}`), ...props.map((p) => `/p/${p.slug}/inquire`)];
     const xml = `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map((u) => `  <url><loc>${host}${u}</loc></url>`).join('\n')}\n</urlset>\n`;
     return textRes(xml, 200, 'application/xml; charset=utf-8');
   });
 
   r.get('/robots.txt', (rq) => {
-    const host = `http://${String(rq.raw.headers.host || 'localhost:3000')}`;
-    return textRes(`User-agent: *\nAllow: /p/\nAllow: /company\nDisallow: /\nSitemap: ${host}/sitemap.xml\n`);
+    const host = siteHost(rq);
+    const allow = ['/$', '/platform$', '/platform/', '/resident$', '/resident/', '/agents$', '/agents/', '/for$', '/for/', '/legal/', '/p/', '/company'];
+    return textRes(`User-agent: *\n${allow.map((a) => `Allow: ${a}`).join('\n')}\nDisallow: /\nSitemap: ${host}/sitemap.xml\n`);
   });
 }
