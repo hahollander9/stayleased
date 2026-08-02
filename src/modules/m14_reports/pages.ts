@@ -116,7 +116,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Report library',
       active: '/reports',
-      subtitle: `${defs.length} canonical reports — every §10 report with parameters, drill-through, totals and CSV/PDF export`,
+      subtitle: `${defs.length} reports — parameters, drill-through, totals, and CSV/PDF export on every one`,
       actions: html`${when(can(ctx, 'reports:build'), () => html`<a class="btn" href="/reports/builder">Custom report builder</a>`)}`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>

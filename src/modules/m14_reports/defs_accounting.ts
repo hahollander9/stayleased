@@ -49,7 +49,7 @@ registerReport({
         { key: 'credit', label: 'Credit', kind: 'money', total: true },
       ],
       rows,
-      note: `Through ${p.date}, ${p.basis} basis. Debits equal credits by construction — the §9 invariants test this continuously.`,
+      note: `Through ${p.date}, ${p.basis} basis. Debits equal credits by construction — the ledger enforces this on every posting.`,
     };
   },
 });

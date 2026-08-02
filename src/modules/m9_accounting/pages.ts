@@ -136,7 +136,7 @@ export function routes(r: Router): void {
       title: 'Financial integrity checks',
       active: '/gl',
       crumbs: [['General ledger', '/gl']],
-      subtitle: 'The §9 invariant suite, run live against this database. The same checks run in CI.',
+      subtitle: 'Accounting integrity checks, run live against your books — the same checks run before every release.',
       content: card(
         html`${results.length} invariants ${allOk ? html`<span class="badge ok">all passing</span>` : html`<span class="badge bad">FAILURES</span>`}`,
         tbl(
