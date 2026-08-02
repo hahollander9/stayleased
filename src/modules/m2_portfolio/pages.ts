@@ -20,7 +20,7 @@ import {
   unitStats, floorplanAvailability, propertySummaries, unitAmenities, effectiveMarketRent,
   UNIT_STATUSES, UNIT_STATUS_LABELS,
 } from './service.ts';
-import { mapRoutes } from './map.ts';
+import { mapRoutes, dashMapCard } from './map.ts';
 
 registerNav('', { href: '/', label: 'Dashboard', perm: 'dashboard:view' });
 registerNav('Property', { href: '/properties', label: 'Properties', perm: 'properties:view', match: ['/properties'] });
@@ -693,6 +693,7 @@ function portfolioDashboard(rq: Rq) {
         actions: html`<a class="btn btn-sm" href="/map">${raw('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20 3 17V4l6 3m0 13 6-3m-6 3V7m6 10 6 3V7l-6-3m0 13V4M9 7l6-3"/></svg>')} Map view</a>`,
       })}
       ${onboardingBanner(ctx)}
+      ${dashMapCard(ctx)}
       ${kpis([
         { label: 'Units', value: org.total },
         { label: 'Occupancy', value: `${org.occupancyPct}%`, tone: org.occupancyPct >= 93 ? 'ok' : 'warn', sub: `${org.occupied} occupied` },

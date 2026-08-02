@@ -41,7 +41,8 @@ const MAP_JS = `
 
   function pinHtml(p) {
     var cls = 'slpin' + (p.precise ? '' : ' approx');
-    return '<div class="' + cls + '"><span class="slpin-dot"></span><span class="slpin-tag">' + p.occ + '%</span></div>';
+    var scale = p.units >= 150 ? ' slpin-lg' : p.units >= 50 ? ' slpin-md' : '';
+    return '<div class="' + cls + scale + '"><span class="slpin-halo"></span><span class="slpin-dot"></span><span class="slpin-tag">' + p.occ + '%</span></div>';
   }
   function popupHtml(p) {
     return '<div class="slpop">' +
@@ -86,9 +87,64 @@ const MAP_JS = `
       document.querySelectorAll('[data-map-prop]').forEach(function (r) { r.classList.toggle('active', r === row); });
       var ll = m.getLatLng();
       if (reduce) { map.setView(ll, Math.max(map.getZoom(), 13)); m.openPopup(); }
-      else { map.flyTo(ll, Math.max(map.getZoom(), 13), { duration: 0.9 }); setTimeout(function () { m.openPopup(); }, 950); }
+      else { map.flyTo(ll, Math.max(map.getZoom(), 13), { duration: 1.1, easeLinearity: 0.18 }); setTimeout(function () { m.openPopup(); }, 1150); }
     });
   });
+})();
+`;
+
+/** Live mini-map card for the portfolio dashboard: real tiles, glowing pins,
+ * ambient pulse — pointer-events disabled so the whole card is one link into
+ * the full /map experience. */
+export function dashMapCard(ctx: Ctx): ReturnType<typeof html> {
+  const sums = propertySummaries(ctx);
+  if (!sums.length) return html``;
+  const items = sums.map((p) => {
+    const at = propertyCoords(p as any);
+    return {
+      id: p.id, name: p.name, units: p.stats.total, occ: p.stats.occupancyPct,
+      lat: at ? at.lat : null, lng: at ? at.lng : null, precise: at ? at.precise : false,
+    };
+  }).filter((i) => i.lat !== null);
+  if (!items.length) return html``;
+  return html`<div class="card dashmap-card">
+    <link rel="stylesheet" href="/assets/vendor/leaflet.css" />
+    <a class="dashmap" href="/map" aria-label="Open the portfolio map">
+      <div id="dashmap"></div>
+      <div class="dashmap-veil"></div>
+      <div class="dashmap-label">
+        <div class="dm-title">Portfolio map</div>
+        <div class="dm-sub">${items.length} propert${items.length === 1 ? 'y' : 'ies'} · open the full map</div>
+      </div>
+      <span class="dashmap-cta">Explore →</span>
+    </a>
+    <script type="application/json" id="dashmap-data">${raw(JSON.stringify(items).replaceAll('<', '\\u003c'))}</script>
+    <script src="/assets/vendor/leaflet.js"></script>
+    <script>${raw(DASHMAP_JS)}</script>
+  </div>`;
+}
+
+const DASHMAP_JS = `
+(function () {
+  'use strict';
+  function init() {
+    var el = document.getElementById('dashmap');
+    var dataEl = document.getElementById('dashmap-data');
+    if (!el || !dataEl || typeof L === 'undefined') return;
+    var props = [];
+    try { props = JSON.parse(dataEl.textContent || '[]'); } catch (e) { return; }
+    var map = L.map(el, { zoomControl: false, attributionControl: true, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map);
+    var bounds = [];
+    props.forEach(function (p) {
+      var icon = L.divIcon({ className: 'slpin-wrap', html: '<div class="slpin slpin-mini"><span class="slpin-halo"></span><span class="slpin-dot"></span><span class="slpin-tag">' + p.occ + '%</span></div>', iconSize: [0, 0], iconAnchor: [0, 0] });
+      L.marker([p.lat, p.lng], { icon: icon, interactive: false }).addTo(map);
+      bounds.push([p.lat, p.lng]);
+    });
+    if (bounds.length === 1) map.setView(bounds[0], 12);
+    else map.fitBounds(bounds, { padding: [46, 46], maxZoom: 12 });
+  }
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 })();
 `;
 
