@@ -23,6 +23,8 @@ export function buildRouter(): Router {
     '/assets/theme.css': ['src/ui/theme.css', 'text/css; charset=utf-8'],
     '/assets/app.js': ['src/ui/app.js', 'text/javascript; charset=utf-8'],
     '/assets/favicon.svg': ['src/ui/favicon.svg', 'image/svg+xml'],
+    '/assets/fonts/inter-var.woff2': ['src/ui/fonts/inter-var.woff2', 'font/woff2'],
+    '/assets/fonts/space-grotesk-var.woff2': ['src/ui/fonts/space-grotesk-var.woff2', 'font/woff2'],
   };
   for (const [route, [path, mime]] of Object.entries(assets)) {
     r.get(route, () => fileRes(readFileSync(join(ROOT, path)), mime, { inline: true, cache: true }));

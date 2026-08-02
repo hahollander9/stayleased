@@ -315,7 +315,7 @@ export function leasePdfRoutes(r: Router): void {
 function reviewLeases(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
   const drafts = j<LeaseDraft[]>(batch.staged, []);
   const prop = q1<{ name: string }>('SELECT name FROM properties WHERE id=?', batch.property_id);
-  const lowBadge = (d: LeaseDraft, k: string): Raw | '' => (d.confidence[k] === 'low' ? html` <span class="pill" style="background:#fef3c7;color:#92400e" title="Low confidence — please verify">check</span>` : '');
+  const lowBadge = (d: LeaseDraft, k: string): Raw | '' => (d.confidence[k] === 'low' ? html` <span class="pill" style="background:rgba(251,191,36,.14);color:#fcd34d" title="Low confidence — please verify">check</span>` : '');
   return shell(rq, {
     title: 'Review extracted leases',
     active: '/setup/import',

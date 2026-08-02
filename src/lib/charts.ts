@@ -3,11 +3,11 @@ import { html, raw, esc, type Raw } from './html.ts';
 /** Server-rendered SVG charts (environment fallback for Recharts, DECISIONS.md
  * #6). Consistent with the design system; zero client JS. */
 
-export const PALETTE = ['#4653e5', '#12a5a5', '#e8843a', '#8b5ce8', '#d24379', '#5a9e2f', '#c2a416', '#4a7ab8'];
+export const PALETTE = ['#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f472b6', '#22d3ee', '#f87171', '#93c5fd'];
 
 const TONE: Record<string, string> = {
-  ok: '#157f3d', warn: '#a95c08', bad: '#b3261e', info: '#1d5bd8', accent: '#4653e5',
-  muted: '#98a1ae', violet: '#6d28d9',
+  ok: '#34d399', warn: '#fbbf24', bad: '#f87171', info: '#60a5fa', accent: '#60a5fa',
+  muted: '#71809a', violet: '#a78bfa',
 };
 export function toneColor(t: string): string {
   return TONE[t] || PALETTE[0]!;
@@ -40,14 +40,14 @@ export function donut(slices: DonutSlice[], opts?: { size?: number; centerLabel?
     angle = a2;
   });
   const center = opts?.centerValue
-    ? `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="20" font-weight="700" fill="#1b2331">${esc(opts.centerValue)}</text><text x="${cx}" y="${cy + 15}" text-anchor="middle" font-size="9.5" fill="#66707f">${esc(opts.centerLabel || '')}</text>`
+    ? `<text x="${cx}" y="${cy - 2}" text-anchor="middle" font-size="20" font-weight="700" fill="var(--chart-ink, #1b2331)">${esc(opts.centerValue)}</text><text x="${cx}" y="${cy + 15}" text-anchor="middle" font-size="9.5" fill="var(--chart-axis, #66707f)">${esc(opts.centerLabel || '')}</text>`
     : '';
   const legend = slices
     .filter((s) => s.value > 0)
     .map((s, i) => `<span><span class="sw" style="background:${s.tone ? toneColor(s.tone) : PALETTE[i % PALETTE.length]}"></span>${esc(s.label)} · ${s.value}</span>`)
     .join('');
   return html`<div class="chart" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
-    ${raw(`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" role="img" aria-label="donut chart">${paths.join('')}${center}</svg>`)}
+    ${raw(`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="max-width:min(46vw,300px)" role="img" aria-label="donut chart">${paths.join('')}${center}</svg>`)}
     <div class="legend" style="flex-direction:column;display:flex;gap:5px">${raw(legend)}</div>
   </div>`;
 }
@@ -81,10 +81,10 @@ export function lines(labels: string[], series: Series[], opts?: { money?: boole
   const y = (v: number): number => padT + ih - ((v - min) / span) * ih;
   const gridLines = [0, 0.25, 0.5, 0.75, 1].map((f) => {
     const v = min + f * span;
-    return `<line x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="#eef0f3"/><text x="${padL - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="#98a1ae">${fmtTick(v, opts?.money)}</text>`;
+    return `<line x1="${padL}" x2="${W - padR}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}" stroke="var(--chart-grid, #eef0f3)"/><text x="${padL - 6}" y="${(y(v) + 3.5).toFixed(1)}" text-anchor="end" font-size="9.5" fill="var(--chart-axis, #98a1ae)">${fmtTick(v, opts?.money)}</text>`;
   }).join('');
   const step = Math.max(1, Math.ceil(labels.length / 10));
-  const xLabels = labels.map((l, i) => (i % step === 0 ? `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="#98a1ae">${esc(l)}</text>` : '')).join('');
+  const xLabels = labels.map((l, i) => (i % step === 0 ? `<text x="${x(i).toFixed(1)}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="var(--chart-axis, #98a1ae)">${esc(l)}</text>` : '')).join('');
   const paths = series.map((s, si) => {
     const color = s.tone ? toneColor(s.tone) : PALETTE[si % PALETTE.length]!;
     const d = s.points.map((v, i) => `${i === 0 ? 'M' : 'L'} ${x(i).toFixed(1)} ${y(v).toFixed(1)}`).join(' ');
@@ -114,12 +114,14 @@ export function sparkline(points: number[], opts?: { tone?: string; w?: number; 
 
 export function funnel(stages: { label: string; value: number }[]): Raw {
   const max = Math.max(...stages.map((s) => s.value), 1);
+  const shades = ['#60a5fa', '#4a86e8', '#3b6bc4', '#2c4f95', '#1d3461'];
   return html`<div class="chart">${stages.map((s, i) => {
     const pct = Math.max(2, (s.value / max) * 100);
     const conv = i > 0 && stages[i - 1]!.value > 0 ? Math.round((s.value / stages[i - 1]!.value) * 100) : null;
+    const fg = i === 0 ? '#0b1526' : '#eef2fa';
     return html`<div style="display:flex;align-items:center;gap:8px;margin:5px 0">
       <div style="width:110px;flex:none;font-size:12px;color:var(--ink-2)">${s.label}</div>
-      <div style="flex:1"><div style="width:${pct.toFixed(1)}%;background:${raw(PALETTE[i % PALETTE.length]!)};height:20px;border-radius:4px;display:flex;align-items:center;padding:0 7px;color:#fff;font-size:11.5px;font-weight:700;min-width:26px">${s.value}</div></div>
+      <div style="flex:1"><div style="width:${pct.toFixed(1)}%;background:${raw(shades[Math.min(i, shades.length - 1)]!)};height:20px;border-radius:5px;display:flex;align-items:center;padding:0 7px;color:${raw(fg)};font-size:11.5px;font-weight:700;min-width:26px">${s.value}</div></div>
       <div style="width:52px;flex:none;font-size:11px;color:var(--muted)">${conv !== null ? `${conv}%` : ''}</div>
     </div>`;
   })}</div>`;
@@ -132,11 +134,11 @@ export function funnel(stages: { label: string; value: number }[]): Raw {
  * every chart reads as one system. All charts scale to card width via
  * viewBox + width:100% (see .chart CSS). */
 
-const BLUE = '#2563eb';
-const BLUE_MID = '#7c9bf5';
-const BLUE_SOFT = '#c7d5fb';
-const GRID = '#eef0f3';
-const AXIS = '#98a1ae';
+const BLUE = '#60a5fa';
+const BLUE_MID = '#3b6bc4';
+const BLUE_SOFT = '#1d3461';
+const GRID = 'var(--chart-grid, #eef0f3)';
+const AXIS = 'var(--chart-axis, #98a1ae)';
 
 function niceCeil(v: number): number {
   if (v <= 0) return 1;
@@ -246,7 +248,7 @@ export function funnelChart(stages: { label: string; value: number }[], opts?: {
   const max = Math.max(...stages.map((s) => s.value), 1);
   const minW = 0.22, maxW = 0.94;
   const widthFor = (v: number): number => W * (minW + (maxW - minW) * (v / max));
-  const shades = [BLUE, '#4a7bef', BLUE_MID, '#a3b9f8', BLUE_SOFT];
+  const shades = [BLUE, '#4a86e8', BLUE_MID, '#2c4f95', BLUE_SOFT];
   let out = '';
   stages.forEach((s, i) => {
     const wTop = widthFor(s.value);
@@ -256,7 +258,7 @@ export function funnelChart(stages: { label: string; value: number }[], opts?: {
     const xTL = (W - wTop) / 2, xTR = xTL + wTop;
     const xBL = (W - wBot) / 2, xBR = xBL + wBot;
     const fill = shades[Math.min(i, shades.length - 1)];
-    const ink = i >= 3 ? '#1b2331' : '#ffffff';
+    const ink = i <= 0 ? '#0b1526' : '#eef2fa';
     const share = max ? Math.round((s.value / max) * 100) : 0;
     out += `<path class="ct" data-tip="${esc(s.label)} · ${s.value.toLocaleString('en-US')}${i > 0 ? ` (${share}% of top)` : ''}" d="M ${xTL.toFixed(1)} ${yTop} L ${xTR.toFixed(1)} ${yTop} L ${xBR.toFixed(1)} ${yTop + bandH} L ${xBL.toFixed(1)} ${yTop + bandH} Z" fill="${fill}"><title>${esc(s.label)}: ${s.value.toLocaleString('en-US')}</title></path>`;
     out += `<text x="${W / 2}" y="${yTop + bandH / 2 - 3}" text-anchor="middle" font-size="12" font-weight="600" fill="${ink}">${esc(s.label)}</text>`;
@@ -269,7 +271,7 @@ export function funnelChart(stages: { label: string; value: number }[], opts?: {
 export function splitBar(parts: { label: string; value: number }[], opts?: { kind?: 'num' | 'pct' | 'usd' }): Raw {
   const W = 640, H = 64, barH = 26;
   const total = parts.reduce((s, p) => s + p.value, 0) || 1;
-  const colors = [BLUE_SOFT, BLUE, BLUE_MID, '#a3b9f8'];
+  const colors = [BLUE, BLUE_MID, '#8caef0', BLUE_SOFT];
   let x = 0, segs = '', legend = '';
   parts.forEach((p, i) => {
     const w = (p.value / total) * W;
@@ -281,7 +283,7 @@ export function splitBar(parts: { label: string; value: number }[], opts?: { kin
   parts.forEach((p, i) => {
     legend += `<circle cx="${lx + 5}" cy="${H - 12}" r="4.5" fill="${colors[i % colors.length]}"/>`;
     const t = `${p.label} · ${tickLabel(p.value, opts?.kind || 'num')}`;
-    legend += `<text x="${lx + 14}" y="${H - 8}" font-size="11.5" fill="#3c4657">${esc(t)}</text>`;
+    legend += `<text x="${lx + 14}" y="${H - 8}" font-size="11.5" fill="var(--chart-axis, #3c4657)">${esc(t)}</text>`;
     lx += 14 + t.length * 6.4 + 18;
   });
   return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet"><rect x="0" y="6" width="${W}" height="${barH}" rx="4" fill="${GRID}"/>${segs}${legend}</svg>`);

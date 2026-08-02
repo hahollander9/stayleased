@@ -135,7 +135,7 @@ test('gate: onboarding checklist reflects the import', async () => {
   await page.goto(`${base}/welcome`, { waitUntil: 'networkidle' });
   const body = await page.content();
   // properties + residents steps auto-completed by the rent roll
-  const done = (body.match(/dcfce7/g) || []).length; // green check chips
+  const done = (body.match(/ob-step-done/g) || []).length; // green check chips
   assert.ok(done >= 3, `expected ≥3 completed steps, saw ${done}`);
   await page.close();
 });

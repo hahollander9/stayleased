@@ -85,7 +85,7 @@ function siteDoc(prop: any, mk: Marketing, title: string, body: Raw, extraHead: 
     <meta name="theme-color" content="${mk.theme}" />
     <link rel="stylesheet" href="/assets/theme.css" />
     <link rel="icon" href="/assets/favicon.svg" />
-    <style>.site .hero{background:linear-gradient(160deg,#242b47,${mk.theme})} .site .btn{background:${mk.theme};border-color:${mk.theme}} .site a{color:${mk.theme}}</style>
+    <style>.site .hero{background:radial-gradient(700px 320px at 50% -10%, rgba(96,165,250,.18), transparent 65%),linear-gradient(160deg,#0b1120,${mk.theme}66)} .site .btn{background:${mk.theme};border-color:${mk.theme}} .site a.btn, .site a.btn:hover{color:#fff} .site a{color:${mk.theme}}</style>
     ${extraHead}
   </head><body class="site">${body}</body></html>`.s}`;
   return htmlRes(page);

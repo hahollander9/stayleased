@@ -113,7 +113,7 @@ export function routes(r: Router): void {
           const offer = q1<any>(`SELECT * FROM renewal_offers WHERE lease_id=? AND status='sent' ORDER BY created_at DESC LIMIT 1`, lease.id);
           if (offer) {
             const options = j<any[]>(offer.options, []);
-            return html`<div class="card"><div class="card-body" style="background:linear-gradient(140deg,var(--accent-soft),#fff);border-radius:var(--radius)">
+            return html`<div class="card"><div class="card-body" style="background:linear-gradient(140deg,rgba(96,165,250,.16),rgba(139,92,246,.07));border-radius:var(--radius)">
               <h3 style="margin-bottom:6px">🏡 Your renewal offer is here</h3>
               <p class="small muted" style="margin:0 0 10px">Lease ends ${fmtDate(lease.end_date)} — lock in your next term (offer valid through ${fmtDate(offer.expires_date)}):</p>
               ${join(options.map((o: any) => html`<form method="post" action="/portal/renewal/${offer.id}/accept" style="display:inline-block;margin:0 6px 6px 0">

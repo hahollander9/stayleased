@@ -21,42 +21,42 @@ import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS, MK_NAV
  * shared with the /platform, /agents, /for, and /legal pages. */
 
 const STEPS: { n: string; name: string; tag: string; body: string }[] = [
-  { n: '1', name: 'Upload what you have', tag: 'Day one · ~1 hour', body: 'Your rent roll — a spreadsheet, or an export from Buildium or AppFolio. The system reads it, shows you what it understood, and you approve. Properties, units, tenants, leases, and balances build themselves. No implementation team, because there’s nothing to implement.' },
-  { n: '2', name: 'Watch it draft, click approve', tag: 'Week one', body: 'Leads get draft replies with your real prices. Late balances get draft reminders in your tone. Repair requests get sorted with a suggested next step. Everything waits in one queue for your OK — nothing reaches a tenant without it. Meanwhile every payment and bill posts itself into real books.' },
-  { n: '3', name: 'Hand off what you trust', tag: 'When you’re ready', body: 'When you notice you’ve stopped editing certain drafts, let those send themselves — most owners start with after-hours lead replies. Your call, per property, reversible any time.' },
+  { n: '1', name: 'Upload what you have', tag: 'Day one · ~1 hour', body: 'Drop in your rent roll — spreadsheet, Buildium, or AppFolio export. The system reads it and builds your whole portfolio. You just approve.' },
+  { n: '2', name: 'Watch it draft, click approve', tag: 'Week one', body: 'Leads, late rent, repair requests — everything gets a draft in your queue. Nothing reaches a tenant without your OK.' },
+  { n: '3', name: 'Hand off what you trust', tag: 'When you’re ready', body: 'Stopped editing certain drafts? Let those send themselves. Per property, reversible any time.' },
 ];
 
 const MODES: { l: string; name: string; body: string }[] = [
-  { l: '1', name: 'It drafts, you approve', body: 'The default. Every message and action it proposes waits in your queue. You read, edit if you want, and click approve — like reviewing a sharp new employee’s emails.' },
-  { l: '2', name: 'It handles the routine, asks about the rest', body: 'The stuff you approved a hundred times without edits goes out on its own — inside limits you set. Anything unusual, sensitive, or outside bounds still comes to you.' },
-  { l: '3', name: 'It runs the job, you watch the log', body: 'For work you fully trust it with — say, answering leads at 2am — it just does the job, and every word and action sits in a log you can read anytime.' },
+  { l: '1', name: 'It drafts, you approve', body: 'The default. Every message waits in your queue — read, edit, approve.' },
+  { l: '2', name: 'It handles the routine, asks about the rest', body: 'The routine goes out on its own, inside your limits. Anything unusual still comes to you.' },
+  { l: '3', name: 'It runs the job, you watch the log', body: 'For work you fully trust it with — like 2am leads — it just does the job, on the record.' },
 ];
 
 const AGENTS: { name: string; blurb: string }[] = [
-  { name: 'Leasing', blurb: 'Every inquiry answered in seconds from live availability and pricing. Tours booked, follow-ups run, after-hours covered.' },
-  { name: 'Maintenance', blurb: 'Requests triaged on arrival — category, priority, emergency escalation, and troubleshooting before a truck rolls.' },
-  { name: 'Payments', blurb: 'Delinquency outreach with tone that matches the balance and days late, payment plans inside your bounds, compliance hard-coded.' },
-  { name: 'Renewals', blurb: 'Personalized offers from resident history. Counters evaluated inside your matrix; anything beyond escalates to a human.' },
-  { name: 'Call analysis', blurb: 'Summaries, sentiment, intents, and coaching notes from every recorded call — always audited.' },
-  { name: 'Ask StayLeased', blurb: 'Staff questions answered from your own operating data through governed service APIs — never raw database access.' },
+  { name: 'Leasing', blurb: 'Every inquiry answered in seconds, tours booked, after-hours covered.' },
+  { name: 'Maintenance', blurb: 'Triage on arrival — priority, emergency escalation, troubleshooting.' },
+  { name: 'Payments', blurb: 'Polite, firm rent follow-up. Payment plans inside your bounds.' },
+  { name: 'Renewals', blurb: 'Personalized offers; counters evaluated inside your matrix.' },
+  { name: 'Call analysis', blurb: 'Summaries, sentiment, and coaching notes from every call.' },
+  { name: 'Ask StayLeased', blurb: 'Any question about your portfolio, answered from live data.' },
 ];
 
 const GOV_CARDS: { name: string; body: string }[] = [
-  { name: 'Your rules', body: 'Late fees, screening criteria, tour hours, how far the AI can go — set once, per company or per property, and everything follows them.' },
-  { name: 'Your voice', body: 'It writes the way you approve — your templates, your tone, your escalation paths. Firm when needed, never nasty; that part is enforced in code.' },
-  { name: 'On the record', body: 'Who did what, when, and why — every human and AI action lands in one log you can read. No wondering what got said to whom.' },
-  { name: 'Locked down', body: 'Every login sees only what their role allows. Your data is isolated, your books can’t be edited into fiction, and exports are always yours.' },
-  { name: 'You approve', body: 'Drafts wait for your OK by default. More autonomy is something you grant later — never something the software assumes.' },
+  { name: 'Your rules', body: 'Late fees, criteria, tour hours — set once, everything follows.' },
+  { name: 'Your voice', body: 'Your templates, your tone. Firm when needed, never nasty.' },
+  { name: 'On the record', body: 'Every human and AI action in one log you can read.' },
+  { name: 'Locked down', body: 'Role-based access, isolated data, exports always yours.' },
+  { name: 'You approve', body: 'Autonomy is granted by you — never assumed by software.' },
 ];
 
 const SOLUTIONS: { name: string; body: string }[] = [
-  { name: 'Self-managing owners', body: 'You are the leasing agent, the maintenance coordinator, and the bookkeeper — usually after your day job. The AI takes the night shift: leads answered at 2am, rent chased politely, requests triaged before you wake up.' },
-  { name: 'Small management companies', body: 'Run hundreds of doors on a two-person office. One system for every property, owner-ready financials by default, and agents that do the follow-up your team never has time for.' },
-  { name: 'Growing portfolios', body: 'Institutional-grade double-entry books, bank reconciliation, and real reporting — without hiring the back office. Add buildings without adding headcount.' },
+  { name: 'Self-managing owners', body: 'You’re the leasing agent, maintenance line, and bookkeeper. The AI takes the night shift.' },
+  { name: 'Small management companies', body: 'Hundreds of doors on a two-person office — with owner-ready financials by default.' },
+  { name: 'Growing portfolios', body: 'Institutional-grade books and reporting. Add buildings without adding headcount.' },
 ];
 
 function cube(n: number): string {
-  const hues = ['#4653e5', '#12a5a5', '#e8843a', '#8b5ce8', '#2563eb'];
+  const hues = ['#22d3ee', '#60a5fa', '#a78bfa', '#8b5cf6', '#3b82f6'];
   const c = hues[n % hues.length]!;
   return `<svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 29 10v12L16 29 3 22V10z" fill="${c}" opacity=".16"/><path d="M16 3 29 10 16 17 3 10z" fill="${c}" opacity=".55"/><path d="M16 17v12L3 22V10z" fill="${c}" opacity=".35"/><path d="M16 17v12l13-7V10z" fill="${c}"/></svg>`;
 }
@@ -75,14 +75,14 @@ ${mkHeader()}
 <section class="mk-hero" id="top">
   <div class="mk-wrap mk-hero-in">
     <div class="mk-hero-copy">
-      <div class="mk-kicker">For independent landlords & small management companies · 10–500 units</div>
+      <div class="mk-kicker">Independent landlords & small managers · 10–500 units</div>
       <h1>Autonomous property management</h1>
-      <p class="mk-sub">The property manager you can't afford to hire. It answers your leads, collects your rent, handles the maintenance calls, and keeps real books — built for people who do all of this themselves, without a corporate office.</p>
+      <p class="mk-sub">The property manager you can't afford to hire. It answers leads, collects rent, handles maintenance, and keeps real books — you just approve.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Explore the live demo</a>
         ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="#walkthrough">Book a walkthrough</a>`}
       </div>
-      <div class="mk-hero-note">Moving from Buildium, AppFolio, or a spreadsheet? Upload your rent roll and the system builds itself — one afternoon, no implementation team.</div>
+      <div class="mk-hero-note">Moving from Buildium, AppFolio, or a spreadsheet? Live in one afternoon.</div>
     </div>
     <div class="mk-hero-visual" aria-hidden="true">
       <div class="mk-frame">
@@ -104,10 +104,16 @@ ${mkHeader()}
   </div>
 </section>
 
+<div class="mk-marquee" aria-hidden="true">
+  <div class="mk-marquee-track">
+    ${raw(Array.from({ length: 2 }, () => MK_NAV[0]!.items.map(([l]) => `<span class="mk-mq-item">${l}</span>`).join('')).join(''))}
+  </div>
+</div>
+
 <section class="mk-band" id="how">
   <div class="mk-wrap">
     <h2 class="mk-h2">Live in an afternoon. Calmer by Friday.</h2>
-    <p class="mk-lead">No sales calls, no implementation project, no six-week onboarding. Here's the whole first week:</p>
+    <p class="mk-lead">No sales calls, no implementation project. Here's the whole first week:</p>
     <div class="mk-steps">
       ${STEPS.map((st) => html`<div class="mk-step">
         <span class="mk-step-n">${st.n}</span>
@@ -120,18 +126,18 @@ ${mkHeader()}
 <section class="mk-band mk-band-alt" id="platform">
   <div class="mk-wrap">
     <h2 class="mk-h2">Everything in one place.</h2>
-    <p class="mk-lead">One login runs the whole operation, and it all shares one set of records — a lead becomes a lease becomes rent in your books without you re-typing anything into a second tool.</p>
+    <p class="mk-lead">One login, one set of records. A lead becomes a lease becomes rent in your books — nothing re-typed.</p>
     <div class="mk-two">
       <a class="mk-plat" href="/platform">
         <div class="mk-plat-tag">For you</div>
         <h3>Run the operation</h3>
-        <p>Leads and tours, applications and leases, rent and late fees, repair requests and vendors, real double-entry books, and the reports your owners or CPA actually ask for.</p>
+        <p>Leasing, leases, rent, maintenance, vendors, real double-entry books, and the reports your CPA actually wants.</p>
         <span class="mk-more">See everything included →</span>
       </a>
       <a class="mk-plat" href="/platform/resident-portal">
         <div class="mk-plat-tag">For your tenants</div>
         <h3>A portal they'll actually use</h3>
-        <p>Pay rent online with autopay, send repair requests with photos, find their lease and documents — the calls that eat your week, answered by a website.</p>
+        <p>Autopay, repair requests with photos, leases and documents — the calls that eat your week, answered by a website.</p>
         <span class="mk-more">How the portal works →</span>
       </a>
     </div>
@@ -146,7 +152,7 @@ ${mkHeader()}
     <div class="mk-ask-copy">
       <div class="mk-kicker mk-kicker-ai">Ask StayLeased${aiLive ? ' · powered by Claude' : ''}</div>
       <h2 class="mk-h2">Ask anything. Get answers grounded in your data.</h2>
-      <p class="mk-lead">Ask StayLeased in plain English and get a straight answer — pulled live from your occupancy, ledger, work orders, and leases. No report builder, no exports, no waiting on the office.</p>
+      <p class="mk-lead">Plain English in, straight answers out — pulled live from your occupancy, ledger, work orders, and leases.</p>
       <ul class="mk-ask-points">
         <li>Grounded in your real numbers — it never makes figures up</li>
         <li>Answers about occupancy, collections, maintenance, and renewals</li>
@@ -176,7 +182,7 @@ ${mkHeader()}
     <div>
       <div class="mk-kicker">Never used AI before?</div>
       <h2 class="mk-h2">Perfect. There's nothing to learn.</h2>
-      <p class="mk-lead" style="margin-bottom:22px">No prompts to write, no course to take, no robot talking to your tenants behind your back. It reads what comes in, drafts what should go out, and waits for your OK.</p>
+      <p class="mk-lead" style="margin-bottom:22px">Nothing to learn, no prompts to write. It reads what comes in, drafts what should go out, and waits for your OK.</p>
       <ul class="mkp-points">
         <li>Nothing is sent to a tenant or prospect until you approve it — that's the default</li>
         <li>You read every word it writes, and you can edit before approving</li>
@@ -202,7 +208,7 @@ ${mkHeader()}
 <section class="mk-band" id="automation">
   <div class="mk-wrap">
     <h2 class="mk-h2">You choose how much it does.</h2>
-    <p class="mk-lead">Three speeds, set per property and per job — and you can change your mind any time. It earns autonomy the way an employee would: by showing its work.</p>
+    <p class="mk-lead">Three speeds, set per property and per job. It earns autonomy the way an employee would — by showing its work.</p>
     <div class="mk-levels">
       ${MODES.map((lv, i) => html`<div class="mk-level">
         <div class="mk-level-cube">${raw(cube(i))}</div>
@@ -215,7 +221,7 @@ ${mkHeader()}
 <section class="mk-band mk-band-alt" id="agents">
   <div class="mk-wrap">
     <h2 class="mk-h2">Meet the help.</h2>
-    <p class="mk-lead">Not a chatbot bolted on the side — help that lives inside your leasing, rent collection, maintenance, and renewals, drafting real work into your approval queue.</p>
+    <p class="mk-lead">Not a chatbot bolted on the side — help that lives inside the work, drafting into your approval queue.</p>
     <div class="mk-grid3">
       ${AGENTS.map((a) => html`<div class="mk-card"><h3>${a.name}</h3><p>${a.blurb}</p></div>`)}
     </div>
@@ -226,7 +232,7 @@ ${mkHeader()}
 <section class="mk-band mk-dark" id="governance">
   <div class="mk-wrap">
     <h2 class="mk-h2">You stay in control. Always.</h2>
-    <p class="mk-lead">The AI works inside your rules, and everything it does is on the record. In practice, that means:</p>
+    <p class="mk-lead">The AI works inside your rules, and everything is on the record.</p>
     <ul class="mk-checks">
       <li>Fair-housing guardrails on every prospect-facing reply — enforced in code</li>
       <li>Payment plans and concessions only inside limits you set</li>
@@ -244,29 +250,29 @@ ${mkHeader()}
 <section class="mk-band" id="solutions">
   <div class="mk-wrap">
     <h2 class="mk-h2">Built for operators like you.</h2>
-    <p class="mk-lead">Enterprise platforms are built for 20,000-unit REITs with implementation teams. StayLeased is built for the people who actually own and run most of America's rentals.</p>
+    <p class="mk-lead">Enterprise platforms are built for 20,000-unit REITs. This is built for the people who actually run America's rentals.</p>
     <div class="mk-grid3">
       ${SOLUTIONS.map((s2) => html`<div class="mk-card"><h3>${s2.name}</h3><p>${s2.body}</p></div>`)}
     </div>
-    <p class="muted" style="margin-top:18px;font-size:13.5px;color:#66707f">Student, affordable-program, or mixed units in your portfolio? They're supported — the platform handles by-the-bed leases and set-aside compliance when you need it.</p>
+    <p class="muted" style="margin-top:18px;font-size:13.5px;color:#8b98ad">Student, affordable-program, or mixed units? Supported — by-the-bed leases and set-aside compliance included.</p>
   </div>
 </section>
 
 <section class="mk-band mk-band-alt" id="pricing">
   <div class="mk-wrap">
     <h2 class="mk-h2">Simple, honest pricing.</h2>
-    <p class="mk-lead">No quote-only games, no implementation fees, no sales gauntlet. Early-access partners run free while we build with them — and when pricing lands, it will be a per-unit price you can read on this page, an order of magnitude below the enterprise platforms.</p>
+    <p class="mk-lead">No quote-only games, no implementation fees. Early-access partners run free — and future pricing will be a per-unit number you can read on this page.</p>
     <div class="mk-price-row">
       <div class="mk-price">
         <div class="mk-price-tag">Early access</div>
         <div class="mk-price-big">Free</div>
-        <p>Full platform. Import your portfolio, run your operation, keep your data — export any time. Invite code required.</p>
+        <p>Full platform. Import your portfolio, keep your data, export any time. Invite code required.</p>
         <a class="mk-btn mk-btn-solid" href="#walkthrough">Request an invite</a>
       </div>
       <div class="mk-price">
         <div class="mk-price-tag">What it replaces</div>
         <div class="mk-price-big">$300–800<span>/mo</span></div>
-        <p>Typical spend for a small portfolio on legacy software plus the hours you donate every week — the late-night rent chasing, the 2am maintenance calls, the spreadsheet bookkeeping.</p>
+        <p>Typical small-portfolio spend on legacy software — plus the late nights you donate to rent chasing and spreadsheet bookkeeping.</p>
       </div>
     </div>
   </div>
@@ -276,7 +282,7 @@ ${mkHeader()}
   <div class="mk-wrap mk-two-col">
     <div>
       <h2 class="mk-h2">See autonomous property management in action.</h2>
-      <p class="mk-lead">Explore the fully seeded demo company right now — every screen live, every agent mid-flight. Or tell us about your portfolio and we'll set you up to import it.</p>
+      <p class="mk-lead">Explore the fully seeded demo right now — every screen live, every agent mid-flight. Or tell us about your portfolio.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Open the live demo</a>
         ${when(signupOpen, () => html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>`)}

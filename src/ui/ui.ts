@@ -226,6 +226,8 @@ export interface ShellOpts {
   crumbs?: [string, string?][];
   subtitle?: Child;
   wide?: boolean;
+  /** page provides its own hero/h1 (e.g. dashboards) — skip the standard head */
+  bareHead?: boolean;
 }
 
 export function shell(r: Rq, opts: ShellOpts): Res {
@@ -298,14 +300,14 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     <div class="main">
       <main class="content ${opts.wide ? 'wide' : ''}">
         ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
-        <div class="page-head">
+        ${when(!opts.bareHead, () => html`<div class="page-head">
           <div class="titles">
             ${when(opts.crumbs?.length, () => html`<div class="crumbs">${join((opts.crumbs || []).map(([label, href]) => (href ? html`<a href="${href}">${label}</a>` : html`<span>${label}</span>`)), raw(' / ').s)}</div>`)}
             <h1>${opts.title}</h1>
             ${when(opts.subtitle, () => html`<div class="subtitle">${opts.subtitle}</div>`)}
           </div>
           ${when(opts.actions, () => html`<div class="actions">${opts.actions}</div>`)}
-        </div>
+        </div>`)}
         ${opts.content}
       </main>
     </div>
@@ -333,6 +335,8 @@ export function doc(title: string, body: Child, extraHead: Child = null): string
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${title} · StayLeased</title>
+        <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
+        <link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
         <link rel="stylesheet" href="/assets/theme.css?v=${ASSET_V}" />
         <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
         ${extraHead}

@@ -495,9 +495,14 @@ function propertyDashboard(rq: Rq, propertyId: string) {
   return shell(rq, {
     title: p.name,
     active: '/',
-    subtitle: `${p.city}, ${p.state} · property dashboard · business date ${fmtDate(ctx.businessDate)}`,
-    actions: html`<a class="btn btn-ghost" href="/properties/${p.id}">Property setup</a>`,
+    bareHead: true,
     content: html`
+      ${dashHero(ctx, {
+        kicker: `Property dashboard · ${fmtDate(ctx.businessDate)}`,
+        title: p.name,
+        sub: html`${p.city}, ${p.state} · ${stats.occupied}/${stats.rentable} rentable occupied · <a href="/properties/${p.id}">Property setup →</a>`,
+        occupancyPct: stats.occupancyPct,
+      })}
       ${kpis([
         { label: 'Occupancy', value: `${stats.occupancyPct}%`, sub: `${stats.occupied}/${stats.rentable} rentable`, tone: stats.occupancyPct >= 93 ? 'ok' : stats.occupancyPct >= 88 ? 'warn' : 'bad', href: `/units?property=${p.id}` },
         { label: 'Exposure', value: `${stats.exposurePct}%`, sub: `${stats.exposureCount} units vacant or leaving`, tone: stats.exposurePct <= 8 ? 'ok' : 'warn', href: `/units?property=${p.id}&status=vacant_ready` },
@@ -607,7 +612,7 @@ function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
     ${when(t, () => html`${card(`Rolling occupancy · last 12 months`, html`<div class="chart-head-val">${last(t!.occ)}%</div>${barChart(monthLabels, t!.occ, { kind: 'pct', highlightLast: true })}`)}
     <div class="grid cols-2 chart-pair">
       ${card('Collections rate', html`<div class="chart-head-val pos">${last(t!.coll)}%</div>${areaChart(monthLabels, t!.coll, { kind: 'pct' })}<div class="muted small" style="margin-top:6px">Cash applied this month ÷ amounts billed this month. Can top 100% when residents catch up prior balances.</div>`)}
-      ${card('Delinquency', html`<div class="chart-head-val neg">${usd(last(t!.deliq) * 100)}</div>${areaChart(monthLabels, t!.deliq, { kind: 'usd', color: '#b3261e' })}`)}
+      ${card('Delinquency', html`<div class="chart-head-val neg">${usd(last(t!.deliq) * 100)}</div>${areaChart(monthLabels, t!.deliq, { kind: 'usd', color: '#f87171' })}`)}
     </div>`)}
     <div class="grid cols-2 chart-pair">
       ${card('Leads by month', barChart(leadLabels, leadVals, { kind: 'num' }))}
@@ -621,17 +626,67 @@ function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
     ${when(commParts.length, () => card('Communication · last 30 days', splitBar(commParts)))}`;
 }
 
+/** The luminous dashboard hero: portfolio pulse + occupancy ring + live
+ * activity ticker. The shell's page-head stays in the DOM (title contract)
+ * but is hidden by CSS when a .dash-hero is present. */
+function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string | ReturnType<typeof html>; occupancyPct: number }): ReturnType<typeof html> {
+  const events = q<any>(
+    'SELECT user_name, action, entity, at FROM audit_events WHERE org_id=? ORDER BY at DESC LIMIT 40',
+    ctx.orgId,
+  );
+  const seen = new Set<string>();
+  const feed: any[] = [];
+  for (const e of events) {
+    const key = `${e.user_name}|${e.action}|${e.entity}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    feed.push(e);
+    if (feed.length === 3) break;
+  }
+  const pct = Math.max(0, Math.min(100, opts.occupancyPct));
+  const R = 46, C = 2 * Math.PI * R;
+  const ring = raw(`<svg width="108" height="108" viewBox="0 0 108 108" aria-hidden="true">
+    <defs><linearGradient id="dring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#22d3ee"/><stop offset="55%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#8b5cf6"/>
+    </linearGradient></defs>
+    <circle cx="54" cy="54" r="${R}" fill="none" stroke="rgba(154,170,196,.14)" stroke-width="9"/>
+    <circle cx="54" cy="54" r="${R}" fill="none" stroke="url(#dring)" stroke-width="9" stroke-linecap="round"
+      stroke-dasharray="${((pct / 100) * C).toFixed(1)} ${C.toFixed(1)}"/>
+  </svg>`);
+  return html`<div class="dash-hero">
+    <div class="dh-main">
+      <div class="dh-kicker">${opts.kicker}</div>
+      <h1 class="dh-title">${opts.title}</h1>
+      <div class="dh-sub">${opts.sub}</div>
+    </div>
+    <div class="dh-side">
+      <div class="dash-ring">${ring}<div class="dr-val"><div>${pct}%<small>occupied</small></div></div></div>
+      ${when(feed.length, () => html`<div class="dash-feed">
+        <div class="df-head"><i></i>Live activity</div>
+        ${feed.map((e) => html`<div class="df-row"><b>${e.user_name}</b><span>${String(e.action).replaceAll('_', ' ')} · ${String(e.entity).replaceAll('_', ' ')}</span><span class="df-when">${e.at.slice(11, 16)}</span></div>`)}
+      </div>`)}
+    </div>
+  </div>`;
+}
+
 function portfolioDashboard(rq: Rq) {
   const ctx = rq.ctx as Ctx;
   const sums = propertySummaries(ctx);
   const org = unitStats(ctx, null);
   const extra = dashboardExtras(ctx, null);
   const analytics = analyticsCards(ctx);
+  const orgName = q1<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId)?.name || 'Your portfolio';
   return shell(rq, {
     title: 'Portfolio',
     active: '/',
-    subtitle: `Roll-up across ${sums.length} propert${sums.length === 1 ? 'y' : 'ies'} · business date ${fmtDate(ctx.businessDate)}`,
+    bareHead: true,
     content: html`
+      ${dashHero(ctx, {
+        kicker: `${orgName} · ${fmtDate(ctx.businessDate)}`,
+        title: 'Portfolio',
+        sub: `${org.total} units across ${sums.length} propert${sums.length === 1 ? 'y' : 'ies'} · ${org.occupied} occupied · ${org.vacantReady} ready to lease`,
+        occupancyPct: org.occupancyPct,
+      })}
       ${onboardingBanner(ctx)}
       ${kpis([
         { label: 'Units', value: org.total },

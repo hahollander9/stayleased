@@ -146,7 +146,7 @@ export function routes(r: Router): void {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
             <div><b>${p.done} of ${p.total}</b> <span class="muted">steps complete</span></div>
             <div style="flex:1;min-width:160px;max-width:420px;background:var(--line,#e5e7eb);border-radius:99px;height:8px;overflow:hidden">
-              <div style="width:${pct}%;height:8px;background:#2563eb"></div>
+              <div style="width:${pct}%;height:8px;background:linear-gradient(90deg,#22d3ee,#3b82f6,#8b5cf6)"></div>
             </div>
             ${when(p.required_done, () => html`<form method="post" action="/welcome/dismiss"><button class="btn btn-ghost">Finish setup — go to dashboard</button></form>`)}
           </div>
@@ -155,7 +155,7 @@ export function routes(r: Router): void {
         ${steps.map((s, i) => html`
           <div class="card" style="margin-bottom:10px;${s.done ? 'opacity:.72' : ''}">
             <div style="display:flex;gap:14px;align-items:flex-start">
-              <div style="flex:none;width:30px;height:30px;border-radius:99px;display:flex;align-items:center;justify-content:center;${s.done ? 'background:#dcfce7;color:#15803d' : 'background:#eff6ff;color:#2563eb;font-weight:700'}">
+              <div class="${s.done ? 'ob-step-done' : 'ob-step-todo'}" style="flex:none;width:30px;height:30px;border-radius:99px;display:flex;align-items:center;justify-content:center;${s.done ? 'background:rgba(52,211,153,.15);color:#6ee7b7' : 'background:rgba(96,165,250,.14);color:#9cc3ff;font-weight:700'}">
                 ${s.done ? CHECK : String(i + 1)}
               </div>
               <div style="flex:1">
