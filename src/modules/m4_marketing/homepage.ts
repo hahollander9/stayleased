@@ -94,6 +94,7 @@ ${mkHeader()}
           <div><b>1.8h</b><i>Lead response</i></div>
         </div>
         <div class="mk-frame-chart">${raw(Array.from({ length: 12 }, (_, i) => `<i style="height:${[52, 58, 49, 63, 70, 66, 74, 71, 79, 83, 78, 90][i]}%"></i>`).join(''))}</div>
+        <div class="mk-frame-aihead"><span>AI at work</span><i>3 drafts awaiting approval</i></div>
         <div class="mk-frame-feed">
           <div><em>Leasing AI</em> replied to a Zillow lead · 41s</div>
           <div><em>Payments AI</em> drafted 6 friendly reminders · queued for approval</div>
@@ -109,6 +110,17 @@ ${mkHeader()}
     ${raw(Array.from({ length: 2 }, () => MK_NAV[0]!.items.map(([l]) => `<span class="mk-mq-item">${l}</span>`).join('')).join(''))}
   </div>
 </div>
+
+<section class="mk-band mk-band-alt" id="agents">
+  <div class="mk-wrap">
+    <h2 class="mk-h2">Purpose-built agents for every workflow.</h2>
+    <p class="mk-lead">Not a chatbot attached to the side of your software — intelligence that works inside leasing, collections, maintenance, and renewals, drafting into your approval queue.</p>
+    <div class="mk-grid3">
+      ${AGENTS.map((a) => html`<div class="mk-card"><h3>${a.name}</h3><p>${a.blurb}</p></div>`)}
+    </div>
+    <div class="mk-inline-cta"><a class="mk-btn mk-btn-solid" href="/login">Watch the agents work in the demo</a></div>
+  </div>
+</section>
 
 <section class="mk-band" id="how">
   <div class="mk-wrap">
@@ -218,16 +230,6 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="agents">
-  <div class="mk-wrap">
-    <h2 class="mk-h2">Purpose-built agents for every workflow.</h2>
-    <p class="mk-lead">Not a chatbot attached to the side of your software — intelligence that works inside leasing, collections, maintenance, and renewals, drafting into your approval queue.</p>
-    <div class="mk-grid3">
-      ${AGENTS.map((a) => html`<div class="mk-card"><h3>${a.name}</h3><p>${a.blurb}</p></div>`)}
-    </div>
-    <div class="mk-inline-cta"><a class="mk-btn mk-btn-solid" href="/login">Watch the agents work in the demo</a></div>
-  </div>
-</section>
 
 <section class="mk-band mk-dark" id="governance">
   <div class="mk-wrap">
@@ -254,7 +256,6 @@ ${mkHeader()}
     <div class="mk-grid3">
       ${SOLUTIONS.map((s2) => html`<div class="mk-card"><h3>${s2.name}</h3><p>${s2.body}</p></div>`)}
     </div>
-    <p class="muted" style="margin-top:18px;font-size:13.5px;color:#8b98ad">Student, affordable-program, and mixed portfolios are supported, including by-the-bed leases and set-aside compliance.</p>
   </div>
 </section>
 

@@ -145,7 +145,7 @@ export function routes(r: Router): void {
       // PDF rent rolls: the AI reads the whole table — no template involved
       if (kind !== 'rent_roll') return redirect(`/setup/import?tab=${tabFor(kind)}`, 'PDF reading is available on the rent-roll lane.', 'err');
       if (!llmStatus().live) {
-        return redirect('/setup/import?tab=rentroll', 'Reading PDF rent rolls needs the live AI (set ANTHROPIC_API_KEY on the server) — or export the report as Excel/CSV.', 'err');
+        return redirect('/setup/import?tab=rentroll', 'Reading PDF rent rolls requires the live AI, which is offline in this environment — export the report as Excel/CSV instead.', 'err');
       }
       const table = await aiReadPdfTable(up.data, kind);
       if (!table) return redirect('/setup/import?tab=rentroll', 'The AI couldn\'t find a unit table in that PDF. If it\'s a lease agreement, use the Lease PDFs lane; otherwise try the Excel/CSV export.', 'err');
@@ -337,7 +337,7 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
     ['rentroll', 'Rent roll (everything)', html`
       ${card('Upload your rent roll — the whole portfolio in one file', html`
         <p class="muted" style="margin-top:0">${KINDS[0]!.blurb} Works with exports from ${hjoin(PRESETS.map((p) => html`<b>${p.name}</b>`), raw(', ').s)} or any spreadsheet.
-        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span>` : html` <span class="muted small">(AI reading off — synonym auto-mapping only; add ANTHROPIC_API_KEY for whole-document reading incl. PDFs)</span>`}</p>
+        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span>` : html` <span class="muted small">(Automatic AI document reading is offline here — columns are matched by name; PDFs need the live AI)</span>`}</p>
         ${uploader('rent_roll')}
         <div class="callout info" style="margin-top:10px">No file handy? <a href="/setup/import/template?kind=rent_roll">Download the Excel template</a> — or try the sample to see the flow.</div>
       `)}

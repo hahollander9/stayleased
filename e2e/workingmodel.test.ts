@@ -179,7 +179,7 @@ test('gate: live org fences — no simulator, honest connections, no sim leads',
 
   // the AI connection test runs a real round-trip and reports honestly
   await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Test connection")')]);
-  assert.match(await page.content(), /demo brain answered|Live round-trip confirmed/i);
+  assert.match(await page.content(), /demonstration intelligence answered|Live round-trip confirmed/i);
 
   // the what-to-upload guide is on the onboarding page
   await page.goto(`${base}/welcome`, { waitUntil: 'networkidle' });

@@ -899,7 +899,7 @@ export const MK_PAGES: MkPage[] = [
     faq: [
       { q: 'Can different staff have different access?', a: 'Yes — role-based permissions with property-level scoping: a leasing agent for two buildings sees those two buildings’ leasing world, your accountant sees financials, vendors see assigned work orders.' },
       { q: 'How do owner reports work?', a: 'Owner-ready financial packages generate per property on your schedule from the live books. A read-only owner login is on the roadmap; scheduled packages are how operators run it today.' },
-      { q: 'We manage some student housing — supported?', a: 'Yes. By-the-bed leasing and program compliance (student/affordable) activate adaptively when your portfolio has them — the nav stays clean for everyone else.' },
+      { q: 'Can we manage properties for multiple owners in one account?', a: 'Yes. Each property carries its own books, policies, and reporting, so one login runs every owner’s portfolio while statements and financial packages stay cleanly separated per property.' },
     ],
     related: [
       { label: 'Switching from Buildium / AppFolio', href: '/for/switching-from-buildium-appfolio' },
@@ -919,7 +919,7 @@ export const MK_PAGES: MkPage[] = [
     stats: [
       { b: 'Scale the system, not staff', s: 'The next 50 doors ride the same rails as the first 50' },
       { b: 'Lender-ready books', s: 'Real financial statements when refinancing asks' },
-      { b: 'Verticals when needed', s: 'Student and affordable modes appear only if your portfolio has them' },
+      { b: 'One portfolio view', s: 'Every property on one dashboard, one map, one set of controls' },
     ],
     features: [
       { t: 'Accounting that survives diligence', b: 'Double-entry, dual-basis books with bank reconciliation and period locks — what lenders, partners, and buyers expect to see when you grow.' },
@@ -927,7 +927,6 @@ export const MK_PAGES: MkPage[] = [
       { t: 'Acquisition-day onboarding', b: 'New building closes Friday; rent roll imports Friday afternoon. Opening balances, billing start dates, and leases land clean without a parallel-run month.' },
       { t: 'Governance that scales', b: 'Org defaults with per-property overrides mean the 40-unit building and the 120-unit building each run appropriate policies — and dials — without duplicating setup.' },
       { t: 'Reporting across the stack', b: 'The 50-report catalog, custom builder, and dashboards work portfolio-wide and per-property, scheduled to the people who need them.' },
-      { t: 'Adaptive verticals', b: 'Mixed portfolio? By-the-bed student leasing and affordable set-aside compliance switch on for the properties that need them, invisible elsewhere.' },
     ],
     mock: {
       kpis: [['3 → 9', 'Properties · 2yr'], ['0', 'Back-office hires'], ['Jun', 'Closed on the 6th'], ['12', 'Scheduled reports']],

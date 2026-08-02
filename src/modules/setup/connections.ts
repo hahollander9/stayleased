@@ -32,7 +32,7 @@ function rails(ctx: Ctx): Rail[] {
       key: 'ai', name: 'AI brain (Anthropic Claude)',
       desc: ai.live
         ? `Live — model ${ai.model}. Powers lease-PDF reading, import mapping assist, and every AI agent.`
-        : 'Running the deterministic demo brain. Set ANTHROPIC_API_KEY on the server to go live — document extraction, agent replies and mapping assist switch to real AI.',
+        : 'Running the built-in demonstration intelligence. When the live AI connection is enabled on the server, document extraction, agent replies, and mapping assistance switch to live AI.',
       status: ai.live ? 'live' : 'simulated', href: '/ai',
     },
     {
@@ -109,7 +109,7 @@ function platformStatusCard(ctx: Ctx): Raw {
         : html`${statusBadge('pending', 'Image-local')} <span class="muted small">The database lives inside the app image and resets on redeploy — fine for a demo, not for customers. Point STAYLEASED_DB at a mounted disk (e.g. /data/stayleased.db).</span>`],
       ['AI brain', ai.live
         ? html`${statusBadge('ok', 'Live')} <span class="muted small">${ai.model} · ${ai.spentToday.toLocaleString('en-US')} of ${ai.dailyCap.toLocaleString('en-US')} daily output tokens used. Document reading, mapping assist and agents are real.</span>`
-        : html`${statusBadge('pending', 'Demo brain')} <span class="muted small">Deterministic MockLlm. Set ANTHROPIC_API_KEY to flip everything AI to live Claude.</span>`],
+        : html`${statusBadge('pending', 'Demo brain')} <span class="muted small">Demonstration mode. Enable the live AI connection on the server to switch every AI feature to live Claude.</span>`],
       ['Self-serve signup', signupOpen
         ? html`${statusBadge('ok', 'Open (invite code)')} <span class="muted small">/signup accepts new companies with your invite code.</span>`
         : html`${statusBadge('pending', 'Closed')} <span class="muted small">Set STAYLEASED_SIGNUP_CODE to open invite-code signup.</span>`],
@@ -176,7 +176,7 @@ export function routes(r: Router): void {
     audit(ctx, 'org', ctx.orgId, 'ai_connection_test', null, { live: res.live, ms });
     return redirect('/setup/connections', res.live
       ? `Live round-trip confirmed: ${llmStatus().model} answered in ${ms}ms. Document reading and agents use this same connection.`
-      : `The demo brain answered (no ANTHROPIC_API_KEY configured, or the call fell back). Deterministic replies still work everywhere — set the key on the server for live AI.`,
+      : `The demonstration intelligence answered — the live AI connection is not configured, or the call fell back. Enable it on the server for live AI.`,
       res.live || ctx.orgKind !== 'live' ? undefined : 'err');
   });
 

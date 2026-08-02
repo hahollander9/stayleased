@@ -41,8 +41,7 @@ registerSearch((ctx, query) => {
 });
 
 const PROPERTY_TYPES: [string, string][] = [
-  ['multifamily', 'Multifamily'], ['student', 'Student housing'], ['affordable', 'Affordable'],
-  ['military', 'Military'], ['commercial', 'Commercial'], ['manufactured', 'Manufactured housing'],
+  ['multifamily', 'Multifamily'], ['military', 'Military'], ['commercial', 'Commercial'], ['manufactured', 'Manufactured housing'],
 ];
 
 export function routes(r: Router): void {
@@ -632,16 +631,31 @@ function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
 /** The luminous dashboard hero: portfolio pulse + occupancy ring + live
  * activity ticker. The shell's page-head stays in the DOM (title contract)
  * but is hidden by CSS when a .dash-hero is present. */
-/** "AI at work" — the agents' recent output and what awaits approval, front
- * and center on the dashboard. Reads ai_actions directly (no cross-module
- * import); links into the AI Activity approval queue. */
+/** "AI at work" — one row per business domain showing what the AI is doing
+ * or proposing there: Leasing, Residents, Financials, Operations, Property
+ * marketing, and Communications. Pending work (awaiting approval) outranks
+ * completed work within each domain; Ask StayLeased staff Q&A is excluded —
+ * this panel is about actions in the business, not lookups. */
+const AI_DOMAINS: { key: string; label: string; agents: string[]; href: string }[] = [
+  { key: 'leasing', label: 'Leasing', agents: ['leasing'], href: '/ai?agent=leasing' },
+  { key: 'residents', label: 'Residents', agents: ['renewals'], href: '/ai?agent=renewals' },
+  { key: 'financials', label: 'Financials', agents: ['payments'], href: '/ai?agent=payments' },
+  { key: 'operations', label: 'Operations', agents: ['maintenance'], href: '/ai?agent=maintenance' },
+  { key: 'property', label: 'Property', agents: ['content'], href: '/ai?agent=content' },
+  { key: 'comms', label: 'Communications', agents: ['call_analysis'], href: '/ai?agent=call_analysis' },
+];
 function aiWorkPanel(ctx: Ctx): ReturnType<typeof html> {
   if (!ctx.perms.has('ai:view')) return html``;
-  const pending = val<number>(`SELECT COUNT(*) FROM ai_actions WHERE org_id=? AND status='proposed'`, ctx.orgId) || 0;
+  const pending = val<number>(`SELECT COUNT(*) FROM ai_actions WHERE org_id=? AND status='proposed' AND agent!='ask'`, ctx.orgId) || 0;
   const rows = q<any>(
-    `SELECT agent, title, status, autonomy, created_at FROM ai_actions WHERE org_id=? ORDER BY created_at DESC LIMIT 7`,
+    `SELECT agent, title, status, created_at FROM ai_actions WHERE org_id=? AND agent!='ask' ORDER BY created_at DESC LIMIT 120`,
     ctx.orgId,
   );
+  const forDomain = (agents: string[]): { latest: any | null; pending: number } => {
+    const mine = rows.filter((r) => agents.includes(r.agent));
+    const open = mine.filter((r) => r.status === 'proposed');
+    return { latest: open[0] || mine[0] || null, pending: open.length };
+  };
   const statusLabel = (r: any): ReturnType<typeof html> => {
     if (r.status === 'proposed') return html`<span class="badge warn">awaiting approval</span>`;
     if (r.status === 'auto_executed') return html`<span class="badge info">ran autonomously</span>`;
@@ -651,19 +665,20 @@ function aiWorkPanel(ctx: Ctx): ReturnType<typeof html> {
   };
   return html`<div class="card ai-panel">
     <div class="card-head">
-      <h2>AI at work</h2>
+      <h2>AI at work — across the business</h2>
       ${when(pending > 0, () => html`<span class="badge warn">${pending} awaiting your approval</span>`)}
       <a class="btn btn-sm" href="/ai">${pending > 0 ? 'Review queue' : 'AI activity'}</a>
     </div>
     <div class="card-body flush">
-      ${rows.length
-        ? html`<ul class="ai-feed">${rows.map((r) => html`<li>
-            <span class="af-agent">${AGENT_LABEL[r.agent] || 'AI'}</span>
-            <span class="af-title">${r.title}</span>
-            ${statusLabel(r)}
-            <span class="af-when">${String(r.created_at).slice(11, 16)}</span>
-          </li>`)}</ul>`
-        : emptyState('No AI activity yet', 'Agent drafts and actions will appear here as work arrives.')}
+      <ul class="ai-feed">${AI_DOMAINS.map((d) => {
+        const { latest, pending: p } = forDomain(d.agents);
+        return html`<li>
+          <a class="af-domain" href="${d.href}">${d.label}${when(p > 0, () => html`<i class="af-count">${p}</i>`)}</a>
+          ${latest
+            ? html`<span class="af-title" title="${latest.title}">${latest.title}</span>${statusLabel(latest)}<span class="af-when">${String(latest.created_at).slice(11, 16)}</span>`
+            : html`<span class="af-title af-quiet">Monitoring — no action needed right now</span><span class="badge ok">clear</span>`}
+        </li>`;
+      })}</ul>
     </div>
   </div>`;
 }
@@ -710,7 +725,7 @@ function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string |
   const R = 46, C = 2 * Math.PI * R;
   const ring = raw(`<svg width="108" height="108" viewBox="0 0 108 108" aria-hidden="true">
     <defs><linearGradient id="dring" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#22d3ee"/><stop offset="55%" stop-color="#3b82f6"/><stop offset="100%" stop-color="#8b5cf6"/>
+      <stop offset="0%" stop-color="#38bdf8"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#4f46e5"/>
     </linearGradient></defs>
     <circle cx="54" cy="54" r="${R}" fill="none" stroke="rgba(154,170,196,.14)" stroke-width="9"/>
     <circle cx="54" cy="54" r="${R}" fill="none" stroke="url(#dring)" stroke-width="9" stroke-linecap="round"

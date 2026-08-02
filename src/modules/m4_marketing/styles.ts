@@ -23,8 +23,8 @@ export const MARKETING_CSS = `
   --line: rgba(154, 170, 196, .15); --line-2: rgba(154, 170, 196, .08);
   --bg: #05070d; --bg2: rgba(255, 255, 255, .025);
   --card: #0d1322; --card-up: linear-gradient(180deg, rgba(255,255,255,.035), rgba(255,255,255,0) 55%);
-  --grad: linear-gradient(135deg, #3b82f6 0%, #7c5cff 100%);
-  --grad-wide: linear-gradient(90deg, #22d3ee, #3b82f6 45%, #8b5cf6);
+  --grad: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+  --grad-wide: linear-gradient(90deg, #38bdf8, #2563eb 50%, #4f46e5);
   --display: 'Space Grotesk', 'InterVar', ui-sans-serif, system-ui, sans-serif;
   --ease: cubic-bezier(.16,1,.3,1);
 }
@@ -174,9 +174,9 @@ body.mk-mm-open { overflow: hidden; }
 /* buttons */
 .mk-btn { position: relative; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-weight: 700; font-size: 14.5px; border-radius: 11px; padding: 10px 17px; border: 0; cursor: pointer; overflow: hidden; transition: transform .18s var(--ease), box-shadow .18s var(--ease), background .18s ease, border-color .18s ease, color .18s ease; }
 .mk-btn-lg { padding: 13px 24px; font-size: 15.5px; border-radius: 13px; }
-.mk-btn-solid { background: var(--grad); color: #fff; box-shadow: 0 6px 24px rgba(59,130,246,.4), inset 0 1px 0 rgba(255,255,255,.2); }
+.mk-btn-solid { background: var(--grad); color: #fff; box-shadow: 0 5px 18px rgba(37,99,235,.3), inset 0 1px 0 rgba(255,255,255,.18); }
 .mk-btn-solid::after { content: ''; position: absolute; top: 0; left: -60%; width: 40%; height: 100%; background: linear-gradient(100deg, transparent, rgba(255,255,255,.35), transparent); transform: skewX(-20deg); transition: left .55s var(--ease); }
-.mk-btn-solid:hover { transform: translateY(-2px); box-shadow: 0 14px 38px rgba(99,102,241,.55), inset 0 1px 0 rgba(255,255,255,.2); filter: brightness(1.08); }
+.mk-btn-solid:hover { transform: translateY(-2px); box-shadow: 0 12px 30px rgba(79,70,229,.4), inset 0 1px 0 rgba(255,255,255,.18); filter: brightness(1.08); }
 .mk-btn-solid:hover::after { left: 120%; }
 .mk-btn-solid:active { transform: translateY(0); }
 .mk-btn-line { border: 1.5px solid rgba(154,170,196,.3); color: var(--ink); background: rgba(255,255,255,.03); }
@@ -189,9 +189,9 @@ body.mk-mm-open { overflow: hidden; }
 .mk-hero::before {
   content: ''; position: absolute; inset: -30% -10% auto -10%; height: 820px; pointer-events: none;
   background:
-    radial-gradient(760px 420px at 72% 18%, rgba(59,130,246,.28), transparent 62%),
-    radial-gradient(560px 360px at 14% 4%, rgba(124,92,255,.2), transparent 60%),
-    radial-gradient(500px 320px at 92% 60%, rgba(34,211,238,.12), transparent 60%);
+    radial-gradient(760px 420px at 72% 18%, rgba(37,99,235,.22), transparent 62%),
+    radial-gradient(560px 360px at 14% 4%, rgba(79,70,229,.15), transparent 60%),
+    radial-gradient(500px 320px at 92% 60%, rgba(56,189,248,.08), transparent 60%);
   animation: mkDrift 16s ease-in-out infinite alternate;
 }
 .mk-hero::after {
@@ -205,7 +205,7 @@ body.mk-mm-open { overflow: hidden; }
 .mk-kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 11.5px; font-weight: 700; letter-spacing: 1.4px; text-transform: uppercase; color: var(--sky-ink); background: rgba(96,165,250,.1); border: 1px solid rgba(96,165,250,.28); padding: 6px 13px; border-radius: 99px; margin-bottom: 20px; animation: mkKicker 3.2s ease-in-out infinite; }
 .mk-hero h1 {
   font-size: clamp(40px, 5.4vw, 66px); line-height: 1.02; letter-spacing: -.03em; font-weight: 700;
-  background: linear-gradient(96deg, #fff 30%, #b7cdf6 62%, #a78bfa 95%);
+  background: linear-gradient(96deg, #fff 32%, #c7d8f8 68%, #93b4f0 100%);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .mk-sub { font-size: 18.5px; color: var(--ink2); margin: 20px 0 28px; max-width: 30em; }
@@ -234,6 +234,11 @@ body.mk-mm-open { overflow: hidden; }
 .mk-frame-chart i { flex: 1; background: linear-gradient(180deg, #60a5fa, #3b82f6 60%, #2b57b8); border-radius: 5px 5px 2px 2px; min-height: 12%; transform: scaleY(0); transform-origin: bottom; transition: transform .7s var(--ease); box-shadow: 0 0 14px rgba(59,130,246,.25); }
 .mk-frame-chart i.grown { transform: scaleY(1); }
 .mk-frame-chart i:last-child { background: linear-gradient(180deg, #22d3ee, #3b82f6); box-shadow: 0 0 20px rgba(34,211,238,.45); }
+.mk-frame-aihead { display: flex; align-items: center; justify-content: space-between; padding: 9px 16px; border-top: 1px solid var(--line-2); background: rgba(37,99,235,.06); }
+.mk-frame-aihead span { font-size: 10.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--sky-ink); }
+.mk-frame-aihead span::before { content: '✦ '; }
+.mk-frame-aihead i { font-style: normal; font-size: 11px; font-weight: 700; color: #fcd34d; background: rgba(251,191,36,.1); border: 1px solid rgba(251,191,36,.3); border-radius: 99px; padding: 2px 9px; }
+[data-theme="light"] .mk-frame-aihead i { color: #b45309; background: rgba(180,83,9,.08); border-color: rgba(180,83,9,.3); }
 .mk-frame-feed { border-top: 1px solid var(--line-2); padding: 11px 16px 14px; display: grid; gap: 7px; font-size: 12.5px; color: var(--ink2); background: rgba(255,255,255,.015); }
 .mk-frame-feed div { position: relative; padding-left: 14px; }
 .mk-frame-feed div::before { content: ''; position: absolute; left: 0; top: 7px; width: 6px; height: 6px; border-radius: 99px; background: #34d399; box-shadow: 0 0 0 0 rgba(52,211,153,.5); animation: mkPing 2.4s ease-out infinite; }
@@ -447,7 +452,7 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 .mkp-crumb { font-size: 12.5px; font-weight: 700; color: var(--mut); margin-bottom: 14px; }
 .mkp-crumb a { color: var(--sky-ink); }
 .mkp-crumb a:hover { text-decoration: underline; }
-.mkp-hero h1 { font-size: clamp(32px, 4vw, 50px); line-height: 1.05; letter-spacing: -.025em; font-weight: 700; background: linear-gradient(96deg, #fff 35%, #b7cdf6 75%, #a78bfa); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.mkp-hero h1 { font-size: clamp(32px, 4vw, 50px); line-height: 1.05; letter-spacing: -.025em; font-weight: 700; background: linear-gradient(96deg, #fff 36%, #c7d8f8 74%, #93b4f0); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .mkp-sub { font-size: 17.5px; color: var(--ink2); margin: 16px 0 22px; max-width: 36em; }
 .mkp-points { list-style: none; padding: 0; margin: 0 0 26px; display: grid; gap: 9px; }
 .mkp-points li { position: relative; padding-left: 27px; font-size: 15px; color: var(--ink2); }

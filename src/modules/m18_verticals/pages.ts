@@ -26,15 +26,18 @@ import { registerLeaseAction } from '../people/pages.ts';
 // Adaptive nav: vertical screens only appear when the portfolio actually has
 // that vertical — a conventional 40–60 unit operator never sees them. The
 // /verticals mode manager is configuration, so it lives in the Setup gear.
+// Product decision (Henry, 2026-08-02): student housing and affordable are
+// out of scope for the product surface. Routes stay functional for existing
+// data, but nothing links to them — the nav entries are withheld entirely.
 registerNav('Property', {
   href: '/student', label: 'Student housing', perm: 'leases:view', match: ['/student'],
-  show: (ctx) => !!q1(`SELECT 1 FROM properties WHERE org_id=? AND type='student' LIMIT 1`, ctx.orgId),
+  show: () => false,
 });
 registerNav('Property', {
   href: '/affordable', label: 'Affordable', perm: 'leases:view', match: ['/affordable'],
-  show: (ctx) => !!q1(`SELECT 1 FROM units WHERE org_id=? AND program IS NOT NULL AND program!='' LIMIT 1`, ctx.orgId),
+  show: () => false,
 });
-registerNav('Admin', { href: '/verticals', label: 'Vertical modes', perm: 'admin:settings', match: ['/verticals'] });
+registerNav('Admin', { href: '/verticals', label: 'Vertical modes', perm: 'admin:settings', match: ['/verticals'], show: () => false });
 
 // PCS break action on every active lease detail (military households live everywhere)
 registerLeaseAction((ctx, lease) => {

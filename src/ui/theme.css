@@ -42,8 +42,8 @@
   --brand-dark: #2f6ded;
   --brand-ink: #9cc3ff;
   --brand-soft: rgba(96, 165, 250, .13);
-  --grad: linear-gradient(135deg, #3b82f6 0%, #7c5cff 100%);
-  --grad-wide: linear-gradient(90deg, #22d3ee, #3b82f6 45%, #8b5cf6);
+  --grad: linear-gradient(135deg, #2563eb 0%, #4f46e5 100%);
+  --grad-wide: linear-gradient(90deg, #38bdf8, #2563eb 50%, #4f46e5);
   --sidebar: #0a0f1b;
   --sidebar-ink: #c3cddf;
   --sidebar-active: rgba(96, 165, 250, .14);
@@ -69,7 +69,7 @@
    the handful of hard-coded dark surfaces.
    ============================================================ */
 [data-theme="light"] {
-  --bg: #eef1f7;
+  --bg: #f4f6fa;
   --surface: #ffffff;
   --surface-2: #f6f8fc;
   --ink: #0e1524;
@@ -198,9 +198,9 @@ body {
   font: 14px/1.5 var(--font);
   font-feature-settings: "cv02", "cv03", "cv04";
   background:
-    radial-gradient(1100px 520px at 82% -10%, rgba(59, 130, 246, .13), transparent 60%),
-    radial-gradient(900px 480px at -10% 6%, rgba(124, 92, 255, .10), transparent 55%),
-    radial-gradient(700px 500px at 55% 115%, rgba(34, 211, 238, .06), transparent 60%),
+    radial-gradient(1100px 520px at 82% -10%, rgba(37, 99, 235, .10), transparent 60%),
+    radial-gradient(900px 480px at -10% 6%, rgba(79, 70, 229, .07), transparent 55%),
+    radial-gradient(700px 500px at 55% 115%, rgba(56, 189, 248, .04), transparent 60%),
     var(--bg);
   background-attachment: fixed;
   -webkit-font-smoothing: antialiased;
@@ -311,10 +311,10 @@ small, .small { font-size: 12px; }
   display: inline-flex; align-items: center; gap: 7px; border: 0;
   background: var(--grad); color: #fff; border-radius: 99px; padding: 7px 14px;
   font-size: 12.5px; font-weight: 700; text-decoration: none; white-space: nowrap;
-  box-shadow: 0 4px 18px rgba(59, 130, 246, .45);
+  box-shadow: 0 4px 14px rgba(37, 99, 235, .32);
   transition: transform .15s ease, box-shadow .15s ease, filter .15s ease;
 }
-.askbtn:hover { color: #fff; text-decoration: none; transform: translateY(-1px); box-shadow: 0 8px 26px rgba(99, 102, 241, .55); filter: brightness(1.08); }
+.askbtn:hover { color: #fff; text-decoration: none; transform: translateY(-1px); box-shadow: 0 8px 20px rgba(79, 70, 229, .4); filter: brightness(1.08); }
 .askbtn svg { flex: none; }
 .icon-btn {
   width: 33px; height: 33px; border-radius: 9px; background: rgba(255, 255, 255, .03);
@@ -476,10 +476,10 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
   display: inline-flex; align-items: center; gap: 6px; padding: 8px 14px; border-radius: var(--radius-sm);
   background: var(--grad); color: #fff; border: 1px solid transparent; font: 600 13px var(--font);
   cursor: pointer; text-decoration: none; white-space: nowrap;
-  box-shadow: 0 4px 16px rgba(59, 130, 246, .3);
+  box-shadow: 0 3px 12px rgba(37, 99, 235, .24);
   transition: transform .16s ease, box-shadow .16s ease, filter .16s ease;
 }
-.btn:hover { text-decoration: none; transform: translateY(-1px); box-shadow: 0 8px 24px rgba(99, 102, 241, .45); filter: brightness(1.07); }
+.btn:hover { text-decoration: none; transform: translateY(-1px); box-shadow: 0 7px 18px rgba(79, 70, 229, .34); filter: brightness(1.07); }
 .btn:active { transform: translateY(0); }
 .btn-ghost { background: rgba(255, 255, 255, .04); color: var(--ink-2); border-color: var(--line); box-shadow: none; }
 .btn-ghost:hover { background: rgba(255, 255, 255, .07); border-color: rgba(154, 170, 196, .35); color: var(--ink); box-shadow: none; filter: none; }
@@ -509,6 +509,29 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
 .form-grid .full { grid-column: 1 / -1; }
 .check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; }
 .check input { margin-top: 2px; }
+
+/* bare form controls (outside .field wrappers) pick up the same styling,
+   so utility inputs on setup/import screens look designed, not default */
+.content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="submit"]),
+.content select, .content textarea {
+  border: 1px solid var(--line); border-radius: var(--radius-sm); padding: 8px 10px;
+  font: 13.5px var(--font); color: var(--ink); background: rgba(7, 10, 19, .6);
+}
+html[data-theme="light"] .content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="submit"]),
+html[data-theme="light"] .content select, html[data-theme="light"] .content textarea { background: #fff; }
+.content select option { background: var(--surface); }
+.content input:focus, .content select:focus, .content textarea:focus {
+  outline: none; border-color: var(--accent-strong); box-shadow: 0 0 0 3px rgba(96, 165, 250, .18);
+}
+input[type="file"] { color: var(--muted); font: 12.5px var(--font); }
+input[type="file"]::file-selector-button {
+  margin-right: 10px; padding: 7px 13px; border-radius: var(--radius-sm); cursor: pointer;
+  background: rgba(255, 255, 255, .05); color: var(--ink); border: 1px solid var(--line);
+  font: 600 12.5px var(--font); transition: background .15s ease, border-color .15s ease;
+}
+input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255, .09); border-color: rgba(154, 170, 196, .4); }
+[data-theme="light"] input[type="file"]::file-selector-button { background: rgba(13, 25, 48, .05); }
+[data-theme="light"] input[type="file"]::file-selector-button:hover { background: rgba(13, 25, 48, .09); }
 
 .toolbar {
   display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; margin-bottom: 12px;
@@ -737,7 +760,7 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
 .dash-hero .dh-kicker { font-size: 11px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: var(--accent-ink); margin-bottom: 6px; }
 .dash-hero .dh-title {
   font-size: clamp(24px, 3vw, 32px); line-height: 1.08; letter-spacing: -.02em; margin: 0;
-  background: linear-gradient(92deg, #fff 25%, #b7cdf6 60%, #a78bfa 95%);
+  background: linear-gradient(92deg, #fff 30%, #c7d8f8 65%, #93b4f0 100%);
   -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent;
 }
 .dash-hero .dh-sub { color: var(--muted); font-size: 13px; margin-top: 7px; }
@@ -810,6 +833,9 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
 .leaflet-popup-tip { background: rgba(13, 19, 34, .97) !important; border: 1px solid var(--line); box-shadow: none !important; }
 .leaflet-popup-content { margin: 14px 16px; }
 .leaflet-container a.leaflet-popup-close-button { color: var(--muted); }
+.leaflet-container a.btn { color: #fff !important; text-decoration: none !important; }
+.leaflet-container a.btn.btn-ghost { color: var(--ink) !important; background: rgba(255, 255, 255, .1); border-color: rgba(154, 170, 196, .45); }
+[data-theme="light"] .leaflet-container a.btn.btn-ghost { color: #1d3054 !important; background: rgba(13, 25, 48, .05); }
 .slpop-name { font-family: var(--display); font-weight: 700; font-size: 15px; color: #fff; }
 .slpop-sub { font-size: 11.5px; color: var(--muted); margin: 2px 0 10px; }
 .slpop-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 12px; }
@@ -928,6 +954,21 @@ svg.chart path.ct { transform-box: fill-box; transform-origin: 50% 50%; animatio
   font-weight: 700; color: var(--accent-ink); white-space: nowrap; min-width: 96px;
 }
 .ai-feed .af-agent::before { content: '✦'; font-size: 10px; opacity: .8; }
+.ai-feed .af-domain {
+  flex: none; display: inline-flex; align-items: center; gap: 7px; min-width: 128px;
+  font-weight: 700; font-size: 11px; letter-spacing: .07em; text-transform: uppercase;
+  color: var(--accent-ink); text-decoration: none;
+}
+.ai-feed .af-domain:hover { text-decoration: none; color: var(--accent); }
+.ai-feed .af-domain::before { content: '✦'; font-size: 10px; opacity: .8; }
+.ai-feed .af-count {
+  font-style: normal; display: inline-flex; align-items: center; justify-content: center;
+  min-width: 17px; height: 17px; padding: 0 5px; border-radius: 99px;
+  background: var(--warn-soft); color: var(--warn); border: 1px solid rgba(251, 191, 36, .3);
+  font-size: 10px; font-weight: 800; letter-spacing: 0;
+}
+[data-theme="light"] .ai-feed .af-count { border-color: rgba(180, 83, 9, .3); }
+.ai-feed .af-quiet { color: var(--faint); font-style: italic; }
 .ai-feed .af-title { flex: 1; min-width: 0; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-feed .af-when { flex: none; color: var(--faint); font-size: 11px; }
 .ai-feed li { animation: dfin .5s cubic-bezier(.16, 1, .3, 1) both; }
