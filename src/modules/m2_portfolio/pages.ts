@@ -580,8 +580,7 @@ function orgTrends(ctx: Ctx): { labels: string[]; occ: number[]; deliq: number[]
 
 /** Entrata-BI-style analytics: real charts in chart cards (Rolling Occupancy
  * bars, gradient area trends, lead funnel, monthly lead bars, comm split). */
-function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
-  const t = orgTrends(ctx);
+function analyticsCards(ctx: Ctx, t: ReturnType<typeof orgTrends>): ReturnType<typeof html> {
   const last = <T>(a: T[]): T => a[a.length - 1]!;
   const monthLabels = (t?.labels || []).map((l) => {
     const m = parseInt(l, 10);
@@ -695,6 +694,22 @@ function kpiBands(items: Kpi[]): ReturnType<typeof html> {
   return html`${band('Needs attention', 'kb-attn', attention)}${band('Performance', '', performance)}${band('Leasing pipeline', '', pipeline)}`;
 }
 
+/** Micro-sparklines inside KPI tiles — the metrics with a 12-month history
+ * carry their own trend line next to the headline number. */
+function withSparks(items: Kpi[], t: ReturnType<typeof orgTrends>): Kpi[] {
+  if (!t) return items;
+  const SPARK: Record<string, { points: number[]; tone: string }> = {
+    'Occupancy': { points: t.occ, tone: 'ok' },
+    'Collection rate': { points: t.coll, tone: 'ok' },
+    'Delinquent': { points: t.deliq, tone: 'bad' },
+  };
+  return items.map((k) => {
+    const s = SPARK[String(k.label)];
+    if (!s || s.points.length < 3) return k;
+    return { ...k, sub: html`${k.sub || ''}${sparkline(s.points, { tone: s.tone, w: 72, h: 20 })}` };
+  });
+}
+
 const AGENT_LABEL: Record<string, string> = {
   leasing: 'Leasing AI', maintenance: 'Maintenance AI', payments: 'Payments AI', renewals: 'Renewals AI',
   call_analysis: 'Call analysis', content: 'Content AI', ask: 'Ask StayLeased',
@@ -753,7 +768,8 @@ function portfolioDashboard(rq: Rq) {
   const sums = propertySummaries(ctx);
   const org = unitStats(ctx, null);
   const extra = dashboardExtras(ctx, null);
-  const analytics = analyticsCards(ctx);
+  const trends = orgTrends(ctx);
+  const analytics = analyticsCards(ctx, trends);
   const orgName = q1<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId)?.name || 'Your portfolio';
   return shell(rq, {
     title: 'Portfolio',
@@ -765,7 +781,7 @@ function portfolioDashboard(rq: Rq) {
         title: 'Portfolio',
         sub: `${org.total} units across ${sums.length} propert${sums.length === 1 ? 'y' : 'ies'} · ${org.occupied} occupied · ${org.vacantReady} ready to lease`,
         occupancyPct: org.occupancyPct,
-        actions: html`<a class="btn btn-sm" href="/map">${raw('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20 3 17V4l6 3m0 13 6-3m-6 3V7m6 10 6 3V7l-6-3m0 13V4M9 7l6-3"/></svg>')} Map view</a>`,
+        actions: html`<a class="btn btn-sm" href="/map">${raw('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20 3 17V4l6 3m0 13 6-3m-6 3V7m6 10 6 3V7l-6-3m0 13V4M9 7l6-3"/></svg>')} Map view</a><a class="btn btn-sm btn-ghost" href="/leads">Log a lead</a><a class="btn btn-sm btn-ghost" href="/workorders">New work order</a><a class="btn btn-sm btn-ghost" href="/reports">Reports</a>`,
       })}
       ${onboardingBanner(ctx)}
       ${(() => {
@@ -773,14 +789,14 @@ function portfolioDashboard(rq: Rq) {
         const mapCard = dashMapCard(ctx);
         return ai.s ? html`<div class="dash-duo">${ai}${mapCard}</div>` : mapCard;
       })()}
-      ${kpiBands([
+      ${kpiBands(withSparks([
         { label: 'Units', value: org.total },
         { label: 'Occupancy', value: `${org.occupancyPct}%`, tone: org.occupancyPct >= 93 ? 'ok' : 'warn', sub: `${org.occupied} occupied` },
         { label: 'Exposure', value: `${org.exposurePct}%`, sub: `${org.exposureCount} units` },
         { label: 'Vacant ready', value: org.vacantReady, href: '/units?status=vacant_ready' },
         { label: 'Avg market rent', value: usd(org.avgMarketRentCents) },
         ...extra.kpis,
-      ])}
+      ], trends))}
       ${analytics}
       ${card('Property comparison', tbl(
         [{ label: 'Property' }, { label: 'Type' }, { label: 'Units', num: true }, { label: 'Occupancy', num: true }, { label: 'Notice', num: true }, { label: 'Vacant ready', num: true }, { label: 'Exposure', num: true }, { label: 'Avg rent', num: true }],

@@ -24,6 +24,7 @@ import * as m16 from '../modules/m16_procurement/pages.ts';
 import * as m15 from '../modules/m15_comms/pages.ts'; // also registers mass_comms job + send hook
 import * as m13 from '../modules/m13_pricing/pages.ts'; // also registers pricing_engine job
 import * as m14 from '../modules/m14_reports/pages.ts'; // also registers metric_snapshots + report_delivery jobs
+import * as hubs from '../modules/m14_reports/hubs.ts'; // module overview hubs (Overview leads every tab)
 import * as m17 from '../modules/m17_ai/pages.ts'; // also registers ai_call_analysis job + agent event hooks
 import * as m18 from '../modules/m18_verticals/pages.ts'; // also registers affordable_recerts job + PCS lease action
 import * as setup from '../modules/setup/pages.ts'; // M2.5: setup hub, property wizard, CSV Migration Center
@@ -64,7 +65,8 @@ export function registerModules(r: Router): void {
   m15.routes(r); // Phase 13: inbox/threads, mass comms, templates, automations
   m15.portalRoutes(r); // Phase 13: portal communication preferences
   m13.routes(r); // Phase 14: pricing queue, comps, term rates, renewal batch, analytics
-  m14.routes(r); // Phase 15: report library, custom builder, saved/scheduled, dashboards
+  m14.routes(r);
+  hubs.routes(r); // Phase 15: report library, custom builder, saved/scheduled, dashboards
   m17.routes(r); // Phase 16: AI activity/approvals, agents, call analysis, Ask StayLeased, Essentials
   m18.routes(r); // Phase 17: student board, affordable compliance, military/CAM toolkits
   setup.routes(r); // M2.5: setup hub, property wizard, CSV Migration Center

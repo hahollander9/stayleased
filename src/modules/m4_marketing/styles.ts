@@ -538,7 +538,14 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 }
 @media (max-width: 620px) { .mk-grid3, .mk-grid5, .mk-form-grid { grid-template-columns: 1fr; } .mk-foot-grid { grid-template-columns: 1fr 1fr; } }
 
+/* Cross-page transitions — marketing pages crossfade into each other (and
+ * into the app) instead of hard-cutting. */
+@view-transition { navigation: auto; }
+::view-transition-old(root) { animation-duration: .16s; }
+::view-transition-new(root) { animation-duration: .2s; }
+
 @media (prefers-reduced-motion: reduce) {
+  @view-transition { navigation: none; }
   body.mk { scroll-behavior: auto; }
   .mk-reveal, .mk-stag { opacity: 1 !important; transform: none !important; filter: none !important; transition: none; }
   .mk-h2::after { transform: scaleX(1); transition: none; }

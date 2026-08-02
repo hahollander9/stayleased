@@ -72,10 +72,18 @@ const SECTION_ORDER = [
 ];
 const navSections = new Map<string, NavItem[]>();
 
-export function registerNav(section: string, item: NavItem): void {
+export function registerNav(section: string, item: NavItem, opts?: { first?: boolean }): void {
   const list = navSections.get(section) || [];
-  if (!list.some((i) => i.href === item.href)) list.push(item);
+  if (!list.some((i) => i.href === item.href)) {
+    if (opts?.first) list.unshift(item);
+    else list.push(item);
+  }
   navSections.set(section, list);
+}
+
+/** Pages of one module tab (permission-filtered), for module overview hubs. */
+export function tabNavItems(ctx: Ctx, tabLabel: string): NavItem[] {
+  return tabItems(ctx).get(tabLabel) || [];
 }
 
 // ---------- top module bar (Entrata-style) ----------

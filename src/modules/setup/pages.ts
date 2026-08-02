@@ -13,9 +13,11 @@ import { shell, card, kpis, tbl, field, input, select, moneyInput, statusBadge, 
  * onboarding wizard, and a CSV Migration Center for bulk-importing a
  * portfolio (properties, floorplans, units) when moving off another system. */
 
+// Student housing and affordable are intentionally not offered (2026-08-02
+// product decision) — StayLeased targets conventional rental portfolios.
 const PROPERTY_TYPES: [string, string][] = [
-  ['multifamily', 'Multifamily'], ['student', 'Student housing'], ['affordable', 'Affordable'],
-  ['military', 'Military'], ['commercial', 'Commercial'], ['manufactured', 'Manufactured housing'],
+  ['multifamily', 'Multifamily'], ['military', 'Military'],
+  ['commercial', 'Commercial'], ['manufactured', 'Manufactured housing'],
 ];
 const TIMEZONES: [string, string][] = [
   ['America/New_York', 'Eastern (New York)'], ['America/Chicago', 'Central (Chicago)'],
