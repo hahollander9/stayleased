@@ -20,6 +20,7 @@ import {
   unitStats, floorplanAvailability, propertySummaries, unitAmenities, effectiveMarketRent,
   UNIT_STATUSES, UNIT_STATUS_LABELS,
 } from './service.ts';
+import { mapRoutes } from './map.ts';
 
 registerNav('', { href: '/', label: 'Dashboard', perm: 'dashboard:view' });
 registerNav('Property', { href: '/properties', label: 'Properties', perm: 'properties:view', match: ['/properties'] });
@@ -45,6 +46,7 @@ const PROPERTY_TYPES: [string, string][] = [
 ];
 
 export function routes(r: Router): void {
+  mapRoutes(r);
   // ---------- dashboards ----------
   // The root is two front doors: logged-out visitors get the marketing
   // homepage (Entrata-style); signed-in users get their dashboard/portal.
@@ -502,6 +504,7 @@ function propertyDashboard(rq: Rq, propertyId: string) {
         title: p.name,
         sub: html`${p.city}, ${p.state} · ${stats.occupied}/${stats.rentable} rentable occupied · <a href="/properties/${p.id}">Property setup →</a>`,
         occupancyPct: stats.occupancyPct,
+        actions: html`<a class="btn btn-ghost btn-sm" href="/map">Portfolio map</a>`,
       })}
       ${kpis([
         { label: 'Occupancy', value: `${stats.occupancyPct}%`, sub: `${stats.occupied}/${stats.rentable} rentable`, tone: stats.occupancyPct >= 93 ? 'ok' : stats.occupancyPct >= 88 ? 'warn' : 'bad', href: `/units?property=${p.id}` },
@@ -629,7 +632,7 @@ function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
 /** The luminous dashboard hero: portfolio pulse + occupancy ring + live
  * activity ticker. The shell's page-head stays in the DOM (title contract)
  * but is hidden by CSS when a .dash-hero is present. */
-function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string | ReturnType<typeof html>; occupancyPct: number }): ReturnType<typeof html> {
+function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string | ReturnType<typeof html>; occupancyPct: number; actions?: ReturnType<typeof html> }): ReturnType<typeof html> {
   const events = q<any>(
     'SELECT user_name, action, entity, at FROM audit_events WHERE org_id=? ORDER BY at DESC LIMIT 40',
     ctx.orgId,
@@ -658,6 +661,7 @@ function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string |
       <div class="dh-kicker">${opts.kicker}</div>
       <h1 class="dh-title">${opts.title}</h1>
       <div class="dh-sub">${opts.sub}</div>
+      ${when(opts.actions, () => html`<div class="dh-actions">${opts.actions}</div>`)}
     </div>
     <div class="dh-side">
       <div class="dash-ring">${ring}<div class="dr-val"><div>${pct}%<small>occupied</small></div></div></div>
@@ -686,6 +690,7 @@ function portfolioDashboard(rq: Rq) {
         title: 'Portfolio',
         sub: `${org.total} units across ${sums.length} propert${sums.length === 1 ? 'y' : 'ies'} · ${org.occupied} occupied · ${org.vacantReady} ready to lease`,
         occupancyPct: org.occupancyPct,
+        actions: html`<a class="btn btn-sm" href="/map">${raw('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20 3 17V4l6 3m0 13 6-3m-6 3V7m6 10 6 3V7l-6-3m0 13V4M9 7l6-3"/></svg>')} Map view</a>`,
       })}
       ${onboardingBanner(ctx)}
       ${kpis([

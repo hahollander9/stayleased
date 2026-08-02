@@ -145,7 +145,7 @@ export function routes(r: Router): void {
         <li>Renewals AI never commits below the approved matrix band — out-of-band counters always escalate to the PM.</li>
         <li>Maintenance AI can never <i>downgrade</i> an emergency — keyword escalation is unconditional.</li>
         <li>Leasing AI hands off whenever a prospect asks for a human, even on autonomous.</li>
-        <li>Ask StayLeased reads through service APIs only — the model never writes SQL.</li>
+        <li>Ask StayLeased is read-only and works within the same permissions as every screen.</li>
       </ul>`)}`;
   }
 
@@ -326,7 +326,7 @@ export function routes(r: Router): void {
             <div class="aichat-orb" aria-hidden="true">${raw('<svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.9 2.6 2.6.9-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9z"/></svg>')}</div>
             <div class="aichat-hero-text">
               <h2>Ask StayLeased</h2>
-              <p>Plain-English questions over your own portfolio — answered through the same service APIs the screens use, never raw SQL. Every answer is audited.</p>
+              <p>Plain-English questions about your portfolio, answered from your live operating records. Every answer is recorded in the audit log.</p>
             </div>
             <span class="aichat-brain ${st.live ? 'live' : ''}"><i></i>${st.live ? `Live · ${st.model}` : 'Demo brain'}</span>
           </div>

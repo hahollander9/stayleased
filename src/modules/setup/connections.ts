@@ -41,7 +41,7 @@ function rails(ctx: Ctx): Rail[] {
       status: 'live', href: '/setup/import',
     },
     {
-      key: 'api', name: 'API & webhooks',
+      key: 'api', name: 'Integrations',
       desc: 'Org-scoped API keys and webhook endpoints for your own integrations.',
       status: 'live', href: '/admin/api',
     },

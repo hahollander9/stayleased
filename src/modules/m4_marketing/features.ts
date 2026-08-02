@@ -32,7 +32,7 @@ export interface MkPage {
 export const MK_GROUPS: Record<MkPage['group'], { base: string; name: string; kicker: string; lead: string }> = {
   platform: { base: '/platform', name: 'Platform', kicker: 'Everything in one place', lead: 'Leasing, rent, maintenance, and real books in one login — including a portal your tenants will actually use.' },
   agents: { base: '/agents', name: 'AI', kicker: 'Help that drafts, you approve', lead: 'AI that answers leads, chases rent, sorts maintenance, and drafts renewals — every message starting as a draft in your approval queue. New to AI? Start with the first page.' },
-  for: { base: '/for', name: "Who it's for", kicker: 'Built for operators like you', lead: 'StayLeased is sized for the people who actually own and run most of America’s rentals — not 20,000-unit REITs.' },
+  for: { base: '/for', name: "Who it's for", kicker: 'Built for independent operators', lead: 'StayLeased is designed for the owners and managers who operate most of America’s rental housing — not 20,000-unit institutions.' },
 };
 
 export const MK_PAGES: MkPage[] = [
@@ -288,7 +288,7 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'property-sites', group: 'platform', label: 'Property sites & listings',
     title: 'A leasing website per property — with pricing that’s never stale.',
-    sub: 'Every property gets its own site with live availability, real pricing, photo galleries, amenities, and tour booking — rendered from the same database your team operates in, so it’s never out of date.',
+    sub: 'Every property gets its own site with live availability, real pricing, photo galleries, amenities, and tour booking — kept current from the same records your team operates in, so it is never out of date.',
     chip: { kind: 'soon', text: 'Property sites + ILS lead-email intake live · listing syndication feed on the waitlist' },
     points: [
       'Live floorplan availability and starting-at pricing, straight from the system',
@@ -371,7 +371,7 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'reports', group: 'platform', label: 'Reports',
     title: 'Fifty answers, zero exports.',
-    sub: 'A 50-report catalog across leasing, receivables, financials, facilities, and utilities — plus a custom report builder and scheduled runs — all reading the same live database your operation writes.',
+    sub: 'A 50-report catalog across leasing, receivables, financials, facilities, and utilities — plus a custom report builder and scheduled runs — all reading the same live records your operation maintains.',
     points: [
       'Occupancy, exposure, delinquency, P&L, GL detail, work-order aging, and more',
       'Custom builder for the report only you need',
@@ -379,7 +379,7 @@ export const MK_PAGES: MkPage[] = [
     ],
     stats: [
       { b: '50-report catalog', s: 'Curated reports across every module, ready on day one' },
-      { b: 'Live numbers', s: 'Reports read the operating database — no sync, no stale copy' },
+      { b: 'Live numbers', s: 'Reports read your live operating records — no sync, no stale copy' },
       { b: 'Owner-ready', s: 'Financial packages your owners and CPA can take as-is' },
     ],
     features: [
@@ -399,7 +399,7 @@ export const MK_PAGES: MkPage[] = [
       ],
     },
     faq: [
-      { q: 'Are these reports real-time?', a: 'They read the live operating database at run time. A payment posted a minute ago is in the report you run now — there’s no overnight sync because there’s nothing to sync.' },
+      { q: 'Are these reports real-time?', a: 'They read your live operating records at run time. A payment posted a minute ago appears in the report you run now — there is no overnight sync because there is nothing to sync.' },
       { q: 'Can owners get their own package?', a: 'Generate owner-ready financial packages per property on a schedule. A dedicated read-only owner login is on the roadmap; today most operators send the scheduled package.' },
       { q: 'What if the report I need doesn’t exist?', a: 'Build it: choose the dataset and columns, filter and group, save and schedule. If it’s a common ask, tell us — the catalog grows from operator requests.' },
     ],
@@ -551,7 +551,7 @@ export const MK_PAGES: MkPage[] = [
       { b: 'You set the dial', s: 'Draft-for-approval to fully autonomous, per property' },
     ],
     features: [
-      { t: 'Grounded answers only', b: 'Availability, pricing, pet policy, tour hours — pulled from the operating database at answer time. If the data doesn’t exist, the AI says so and escalates instead of improvising.' },
+      { t: 'Grounded answers only', b: 'Availability, pricing, pet policy, tour hours — pulled from your live operating records at answer time. If the information does not exist, the AI says so and escalates rather than improvising.' },
       { t: 'Tour booking', b: 'Offers real slots from the property’s tour calendar and books them, confirmation threaded to the guest card.' },
       { t: 'Follow-up cadence', b: 'No response? The cadence continues politely until answer or opt-out. The most profitable boring work in leasing, done every time.' },
       { t: 'Fair-housing guardrails', b: 'A deterministic screen (not a vibe) checks every outbound message, with approved neutral rewrites for risky territory. Compliance is enforced in code, then audited.' },
@@ -744,10 +744,10 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'ask-stayleased', group: 'agents', label: 'Ask StayLeased',
     title: 'Ask your portfolio a question. Get an answer, not a report request.',
-    sub: '“How’s collections this month?” “Who’s at risk of non-renewal?” Ask in plain English and get answers grounded in your live occupancy, ledgers, work orders, and leases — through governed APIs, never raw database access.',
+    sub: '“How’s collections this month?” “Who’s at risk of non-renewal?” Ask in plain English and get answers grounded in your live occupancy, ledgers, work orders, and leases — always within your permissions.',
     points: [
       'Answers computed from your live operating data at ask time',
-      'Governed service APIs — the AI sees what your role can see',
+      'Governed access — the AI sees only what your role can see',
       'Powered by Claude when live; honest about being in demo mode when not',
     ],
     stats: [
@@ -757,7 +757,7 @@ export const MK_PAGES: MkPage[] = [
     ],
     features: [
       { t: 'Plain-English operations questions', b: 'Occupancy, collections, delinquency, expirations, maintenance load, leasing funnel — asked the way you’d ask a colleague, answered with the current numbers.' },
-      { t: 'Governed data access', b: 'The assistant reads through the same permissioned service layer as the UI. No raw SQL, no cross-org leakage, nothing your role couldn’t already see.' },
+      { t: 'Governed data access', b: 'The assistant reads through the same permission system as every screen. It sees nothing your role could not already see, and never another company’s records.' },
       { t: 'Shows its arithmetic', b: 'Answers cite the figures they’re built from, so “94.2% occupancy” comes with where that number lives.' },
       { t: 'Conversation memory', b: '“And how does that compare to June?” works — context carries across the exchange.' },
       { t: 'Live or honest', b: 'With an Anthropic key configured, answers run on Claude and say so. Without one, the demo brain answers and says that instead. No pretending.' },
@@ -772,7 +772,7 @@ export const MK_PAGES: MkPage[] = [
       ],
     },
     faq: [
-      { q: 'Can it change anything in my data?', a: 'No — Ask StayLeased is read-only through governed APIs. Agents that take actions (leasing replies, reminders) run in a separate framework with approval queues and dials.' },
+      { q: 'Can it change anything in my data?', a: 'No — Ask StayLeased is read-only. Agents that take actions (leasing replies, reminders) run separately, with approval queues and per-property controls.' },
       { q: 'What powers it?', a: 'Anthropic’s Claude when a key is configured (the live site runs live). The grounding pipeline — your data in, cited answer out — is the same either way, and the UI always tells you which brain answered.' },
       { q: 'Can my leasing agent ask about another property?', a: 'Only within their permissions. The assistant inherits role-based access — it’s a faster way to see what you’re allowed to see, not a side door.' },
     ],
@@ -878,7 +878,7 @@ export const MK_PAGES: MkPage[] = [
     stats: [
       { b: 'Doors per person, up', s: 'Agents absorb the follow-up load that eats staff hours' },
       { b: 'Owner trust, up', s: 'Financial packages that arrive on schedule, tied to real books' },
-      { b: 'Tool sprawl, gone', s: 'CRM + PM + accounting + comms in one database' },
+      { b: 'Tool sprawl, gone', s: 'Leasing, operations, accounting, and messaging in one system' },
     ],
     features: [
       { t: 'Portfolio-wide operations', b: 'A dashboard across every property — occupancy, delinquency, leasing funnel, maintenance load — with drill-down to any unit in two clicks.' },
@@ -964,7 +964,7 @@ export const MK_PAGES: MkPage[] = [
     ],
     features: [
       { t: 'Export-shaped import', b: 'The Migration Center detects Buildium/AppFolio/Yardi/RentManager/TenantCloud export shapes and applies the right mapping preset — you’re not massaging columns in Excel first.' },
-      { t: 'AI reading with human review', b: 'The AI plans the read of the whole grid and proposes the mapping; validators check everything; you review and approve before a single row is written. The model never writes to your database.' },
+      { t: 'AI reading with human review', b: 'The AI reads the whole sheet and proposes the mapping; automated checks verify everything; you review and approve before a single record is created. The AI never writes directly to your records.' },
       { t: 'One file → whole portfolio', b: 'A rent roll builds properties, buildings, units, floorplans, leases, residents, and balances in one transactional apply.' },
       { t: 'Conversion accounting done right', b: 'Prior balances arrive as opening balances (not fake history), deposits land on both bases correctly, and each lease’s billing start date guarantees no month gets billed twice.' },
       { t: 'Vendors, balances, and lease PDFs too', b: 'Separate lanes import vendor lists and outstanding balances — and lease-PDF extraction reads document stacks when the spreadsheet is thin.' },
@@ -1005,7 +1005,7 @@ export const MK_PAGES: MkPage[] = [
     ],
     features: [
       { t: 'Bring the sheet you have', b: 'Column names don’t matter — “Tenant/Renter/Occupant”, “Rent/Monthly/Amount” — synonym mapping plus AI reading figure out your format and show you the interpretation for approval.' },
-      { t: 'Whole-grid AI reading', b: 'The AI plans a read of the entire sheet, handles merged headers and notes columns, and proposes structured data. Validators + your review stand between the model and the database, always.' },
+      { t: 'Whole-grid AI reading', b: 'The AI reads the entire sheet, handles merged headers and notes columns, and proposes structured data. Automated checks and your review stand between the AI and your records, always.' },
       { t: 'From rows to an operation', b: 'Approved rows become properties, units, residents, leases, and balances — then billing runs, portals open, and agents start working the same day.' },
       { t: 'Balances that reconcile', b: 'Who-owes-what from the sheet becomes opening balances on real ledgers, so collections start from truth instead of memory.' },
       { t: 'Your data stays yours', b: 'Everything exports back out clean at any time. The moat is being useful, not holding your data hostage.' },
@@ -1092,7 +1092,7 @@ ${mkHeader()}
 
 <section class="mk-band">
   <div class="mk-wrap mk-reveal">
-    <h2 class="mk-h2">Questions operators actually ask</h2>
+    <h2 class="mk-h2">Common questions from operators</h2>
     <div class="mkp-faq" style="margin-top:26px">
       ${p.faq.map((f, i) => html`<details ${i === 0 ? 'open' : ''}><summary>${f.q}</summary><div class="mkp-a">${f.a}</div></details>`)}
     </div>

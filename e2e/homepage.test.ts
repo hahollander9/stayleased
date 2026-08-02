@@ -29,14 +29,14 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   const body = await page.content();
   assert.match(body, /Autonomous property management/);
   assert.match(body, /Property management software that does the work/i);
-  assert.match(body, /Live in an afternoon\. Calmer by Friday\./);
+  assert.match(body, /Operational in an afternoon\./);
   assert.match(body, /Everything in one place\./);
   assert.match(body, /Never used AI before\?/);
-  assert.match(body, /You choose how much it does\./);
-  assert.match(body, /Meet the help\./);
+  assert.match(body, /You set the level of autonomy\./);
+  assert.match(body, /Purpose-built agents for every workflow\./);
   assert.match(body, /You stay in control\. Always\./);
-  assert.match(body, /Built for operators like you/);
-  assert.match(body, /Simple, honest pricing/);
+  assert.match(body, /Built for independent operators/);
+  assert.match(body, /Straightforward pricing/);
   assert.match(body, /Self-managing owners/);
   assert.match(body, /Equal Housing Opportunity/);
   // small-operator language: the retired enterprise framing must stay gone

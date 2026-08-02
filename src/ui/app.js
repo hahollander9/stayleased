@@ -247,6 +247,66 @@
     if (clear) clear.addEventListener('click', function () { ctx.clearRect(0, 0, canvas.width, canvas.height); drew = false; end(); });
   });
 
+  // ---------- dashboard motion: value count-up + occupancy ring draw ----------
+  // Runs only where a .dash-hero exists; respects prefers-reduced-motion.
+  (function () {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !document.querySelector('.dash-hero')) return;
+
+    function countUp(el, dur) {
+      var txt = (el.textContent || '').trim();
+      var m = /^([^0-9]*)([\d.,]+)(.*)$/.exec(txt);
+      if (!m) return;
+      var prefix = m[1], num = m[2].replace(/,/g, ''), suffix = m[3];
+      var target = parseFloat(num);
+      if (isNaN(target)) return;
+      var dec = (num.split('.')[1] || '').length;
+      var grouped = m[2].indexOf(',') !== -1;
+      var t0 = null;
+      function fmt(v) {
+        var s = dec ? v.toFixed(dec) : String(Math.round(v));
+        if (grouped || (!dec && v >= 10000)) s = Number(s).toLocaleString('en-US', { minimumFractionDigits: dec, maximumFractionDigits: dec });
+        return prefix + s + suffix;
+      }
+      function step(ts) {
+        if (t0 === null) t0 = ts;
+        var p = Math.min(1, (ts - t0) / dur);
+        var e = 1 - Math.pow(1 - p, 3);
+        el.textContent = fmt(target * e);
+        if (p < 1) requestAnimationFrame(step); else el.textContent = txt;
+      }
+      requestAnimationFrame(step);
+    }
+    document.querySelectorAll('.kpi .k-value, .chart-head-val, .dash-ring .dr-val > div').forEach(function (el) {
+      // count only the leading number node for the ring (keep the label intact)
+      if (el.closest('.dash-ring')) {
+        var node = el.childNodes[0];
+        if (node && node.nodeType === 3) {
+          var span = document.createElement('span');
+          span.textContent = node.textContent;
+          el.replaceChild(span, node);
+          countUp(span, 900);
+        }
+        return;
+      }
+      countUp(el, 900);
+    });
+
+    // ring: redraw from zero to its target arc
+    document.querySelectorAll('.dash-ring svg circle[stroke-dasharray]').forEach(function (c) {
+      var target = c.getAttribute('stroke-dasharray') || '';
+      var parts = target.split(' ');
+      if (parts.length !== 2) return;
+      var arc = parseFloat(parts[0]), circ = parseFloat(parts[1]);
+      if (isNaN(arc) || isNaN(circ) || arc === circ) return; // skip the track circle
+      c.setAttribute('stroke-dasharray', '0 ' + circ);
+      c.style.transition = 'stroke-dasharray 1.1s cubic-bezier(.16,1,.3,1)';
+      requestAnimationFrame(function () {
+        requestAnimationFrame(function () { c.setAttribute('stroke-dasharray', arc + ' ' + circ); });
+      });
+    });
+  })();
+
   // drag & drop lanes (dispatch board / turns)
   document.querySelectorAll('[data-dnd-lane]').forEach(function (lane) {
     lane.addEventListener('dragover', function (e) { e.preventDefault(); });

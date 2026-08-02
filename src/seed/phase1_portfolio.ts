@@ -27,7 +27,7 @@ export function seedPortfolio(s: SeedCtx): SeedProperty[] {
     // ---------- Summit Ridge Apartments — Denver, garden-style ----------
     const sr = mkProperty({
       name: 'Summit Ridge Apartments', slug: 'summit-ridge', type: 'multifamily',
-      address1: '4200 Larkspur Way', city: 'Denver', state: 'CO', zip: '80210',
+      address1: '4200 Larkspur Way', city: 'Denver', state: 'CO', zip: '80210', lat: 39.6712, lng: -104.9406,
       timezone: 'America/Denver', phone: '(303) 555-0142', email: 'hello@summitridgeliving.demo', year_built: 1998,
     });
     out.push({ id: sr, name: 'Summit Ridge Apartments', slug: 'summit-ridge', type: 'multifamily' });
@@ -65,7 +65,7 @@ export function seedPortfolio(s: SeedCtx): SeedProperty[] {
     // ---------- The Foundry Lofts — Austin, mid-rise ----------
     const fl = mkProperty({
       name: 'The Foundry Lofts', slug: 'foundry-lofts', type: 'multifamily',
-      address1: '901 Ironwood Ave', city: 'Austin', state: 'TX', zip: '78702',
+      address1: '901 Ironwood Ave', city: 'Austin', state: 'TX', zip: '78702', lat: 30.2641, lng: -97.7157,
       timezone: 'America/Chicago', phone: '(512) 555-0177', email: 'leasing@foundrylofts.demo', year_built: 2019,
     });
     out.push({ id: fl, name: 'The Foundry Lofts', slug: 'foundry-lofts', type: 'multifamily' });
@@ -96,7 +96,7 @@ export function seedPortfolio(s: SeedCtx): SeedProperty[] {
     // ---------- Cardinal Commons — Columbus, student ----------
     const cc = mkProperty({
       name: 'Cardinal Commons', slug: 'cardinal-commons', type: 'student',
-      address1: '77 Rowan St', city: 'Columbus', state: 'OH', zip: '43201',
+      address1: '77 Rowan St', city: 'Columbus', state: 'OH', zip: '43201', lat: 40.0021, lng: -83.0126,
       timezone: 'America/New_York', phone: '(614) 555-0119', email: 'live@cardinalcommons.demo', year_built: 2015,
     });
     out.push({ id: cc, name: 'Cardinal Commons', slug: 'cardinal-commons', type: 'student' });

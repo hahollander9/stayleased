@@ -220,6 +220,8 @@ CREATE TABLE IF NOT EXISTS properties (
   phone TEXT,
   email TEXT,
   year_built INTEGER,
+  lat REAL, -- map location (portfolio map); city-centroid fallback when NULL
+  lng REAL,
   fiscal_year_start_month INTEGER NOT NULL DEFAULT 1,
   operating_bank_account_id TEXT,
   deposit_bank_account_id TEXT,

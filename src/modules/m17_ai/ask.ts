@@ -243,7 +243,7 @@ function smallTalk(question: string): string | null {
     return `Hi! I'm Ask StayLeased — I answer questions straight from your portfolio data. ${CAPABILITIES}`;
   }
   if (/what can you (do|answer)|help me|how do (you|i) (work|use)|^help[\s!.?]*$/.test(s)) {
-    return `I read your live portfolio through the same service APIs the screens use — never raw SQL — and answer in plain English. ${CAPABILITIES}`;
+    return `I read your live portfolio within the same permissions as every screen, and answer in plain English. ${CAPABILITIES}`;
   }
   if (/thank|thanks|ty[\s!.]*$/.test(s)) return `Anytime. Ask away whenever something comes up.`;
   return null;

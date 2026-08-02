@@ -28,7 +28,7 @@ registerNav('Admin', { href: '/admin/staff', label: 'Staff & roles', perm: 'admi
 registerNav('Admin', { href: '/admin/settings', label: 'Settings', perm: 'admin:settings' });
 registerNav('Admin', { href: '/admin/audit', label: 'Audit log', perm: 'admin:audit' });
 registerNav('Admin', { href: '/admin/jobs', label: 'Scheduled jobs', perm: 'admin:jobs' });
-registerNav('Admin', { href: '/admin/api', label: 'API & webhooks', perm: 'admin:api' });
+registerNav('Admin', { href: '/admin/api', label: 'Integrations', perm: 'admin:api' });
 registerNav('Developer', { href: '/dev/sim', label: 'Simulator console', perm: 'dev:console', demoOnly: true });
 registerNav('Developer', { href: '/dev/messages', label: 'Message console', perm: 'dev:console' });
 
@@ -505,7 +505,7 @@ export function routes(r: Router): void {
     const deliveries = q<any>('SELECT * FROM webhook_deliveries WHERE org_id=? ORDER BY created_at DESC LIMIT 20', ctx.orgId);
     const fresh = rq.query.get('fresh');
     return shell(rq, {
-      title: 'API & webhooks',
+      title: 'Integrations',
       active: '/admin/api',
       actions: html`<a class="btn btn-ghost" href="/developers" target="_blank">API reference ↗</a>`,
       content: html`

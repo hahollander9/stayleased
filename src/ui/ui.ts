@@ -228,6 +228,8 @@ export interface ShellOpts {
   wide?: boolean;
   /** page provides its own hero/h1 (e.g. dashboards) — skip the standard head */
   bareHead?: boolean;
+  /** extra tags for <head> (stylesheets/scripts a page needs) */
+  head?: Child;
 }
 
 export function shell(r: Rq, opts: ShellOpts): Res {
@@ -324,7 +326,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     </div>
   </div>`;
 
-  return htmlRes(doc(opts.title, body));
+  return htmlRes(doc(opts.title, body, opts.head ?? null));
 }
 
 export function doc(title: string, body: Child, extraHead: Child = null): string {

@@ -25,6 +25,8 @@ export function buildRouter(): Router {
     '/assets/favicon.svg': ['src/ui/favicon.svg', 'image/svg+xml'],
     '/assets/fonts/inter-var.woff2': ['src/ui/fonts/inter-var.woff2', 'font/woff2'],
     '/assets/fonts/space-grotesk-var.woff2': ['src/ui/fonts/space-grotesk-var.woff2', 'font/woff2'],
+    '/assets/vendor/leaflet.js': ['src/ui/vendor/leaflet.js', 'text/javascript; charset=utf-8'],
+    '/assets/vendor/leaflet.css': ['src/ui/vendor/leaflet.css', 'text/css; charset=utf-8'],
   };
   for (const [route, [path, mime]] of Object.entries(assets)) {
     r.get(route, () => fileRes(readFileSync(join(ROOT, path)), mime, { inline: true, cache: true }));

@@ -165,7 +165,7 @@ test('gate: feature page renders chip, stats, features, FAQ, related, and CTA', 
   const body = await page.content();
   assert.match(body, /mkp-chip/, 'status chip present (honest rail state)');
   assert.match(body, /What you get/, 'features section');
-  assert.match(body, /Questions operators actually ask/, 'FAQ section');
+  assert.match(body, /Common questions from operators/, 'FAQ section');
   assert.match(body, /Works together with/, 'related section');
   // FAQ interaction: second entry opens
   const second = page.locator('.mkp-faq details').nth(1);
