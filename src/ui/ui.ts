@@ -283,6 +283,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         ${ctx.orgKind === 'demo'
           ? html`<a class="bizdate" href="/dev/sim" title="Simulated business date — open Simulator Console"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</a>`
           : html`<span class="bizdate" title="Business date"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</span>`}
+        <button class="icon-btn" data-theme-toggle aria-label="Toggle light or dark theme" title="Light / dark theme">${raw('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.3 4.3l1.8 1.8M17.9 17.9l1.8 1.8M2.5 12H5M19 12h2.5M4.3 19.7l1.8-1.8M17.9 6.1l1.8-1.8"/></svg>')}</button>
         ${setupMenu(ctx, opts.active)}
         <div class="usermenu">
           <button class="avatar" data-toggle="#usermenu-pop" aria-label="Account menu">${initials(ctx.userName)}</button>
@@ -337,6 +338,7 @@ export function doc(title: string, body: Child, extraHead: Child = null): string
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${title} · StayLeased</title>
+        ${raw('<script>(function(){try{var m=document.cookie.match(/(?:^|; )sl_theme=(light|dark)/);document.documentElement.setAttribute("data-theme",(m&&m[1])||"dark");}catch(e){}})();</script>')}
         <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
         <link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
         <link rel="stylesheet" href="/assets/theme.css?v=${ASSET_V}" />

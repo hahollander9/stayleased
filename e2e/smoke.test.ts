@@ -75,7 +75,7 @@ test('phase 1: portfolio roll-up, property dashboard, unit board filters', async
   // switch into a property → property dashboard
   await page.selectOption('.prop-switch select', { label: 'Summit Ridge Apartments' });
   await page.locator('h1', { hasText: 'Summit Ridge' }).waitFor({ timeout: 15000 });
-  assert.match((await page.textContent('.kpis')) || '', /Occupancy/);
+  assert.match((await page.textContent('.content')) || '', /Occupancy/); // KPIs are grouped into bands; occupancy sits in the Performance band
   // unit board filters
   await page.goto(`${base}/units?view=list&beds=2`);
   const table = (await page.textContent('.content')) || '';

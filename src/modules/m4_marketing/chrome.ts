@@ -91,6 +91,7 @@ export function mkHeader(): Raw {
       <a class="mk-item-link" href="/#how">How it works</a>
     </nav>
     <div class="mk-nav-cta">
+      <button class="mk-theme" data-theme-toggle type="button" aria-label="Toggle light or dark theme" title="Light / dark theme">${raw('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.3 4.3l1.8 1.8M17.9 17.9l1.8 1.8M2.5 12H5M19 12h2.5M4.3 19.7l1.8-1.8M17.9 6.1l1.8-1.8"/></svg>')}</button>
       <a class="mk-btn mk-btn-ghost" href="/login">Sign in</a>
       ${primaryCta}
     </div>
@@ -148,6 +149,7 @@ export function mkDoc(title: string, description: string, body: Raw): Res {
 <meta property="og:description" content="${description}" />
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
+${raw('<script>(function(){try{var m=document.cookie.match(/(?:^|; )sl_theme=(light|dark)/);document.documentElement.setAttribute("data-theme",(m&&m[1])||"dark");}catch(e){}})();</script>')}
 <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
 <style>${raw(MARKETING_CSS)}</style>
@@ -262,6 +264,17 @@ const CHROME_JS = `
       if (mm.classList.contains('open') && !mm.contains(e.target) && e.target !== burger && !burger.contains(e.target)) setMM(false);
     });
   }
+
+  // ---------- light / dark theme toggle ----------
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-theme-toggle]');
+    if (!b) return;
+    var el = document.documentElement;
+    var next = el.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    el.setAttribute('data-theme', next);
+    document.cookie = 'sl_theme=' + next + ';path=/;max-age=31536000;SameSite=Lax';
+    document.dispatchEvent(new CustomEvent('sl-theme', { detail: next }));
+  });
 
   // ---------- condensed nav on scroll (shared) ----------
   var nav = document.querySelector('.mk-nav');

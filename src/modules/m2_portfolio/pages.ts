@@ -12,7 +12,7 @@ import { audit } from '../../lib/audit.ts';
 import { v } from '../../lib/validate.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
-  registerNav, registerSearch, emptyState, historyPanel, checkbox, moneyInput,
+  registerNav, registerSearch, emptyState, historyPanel, checkbox, moneyInput, type Kpi,
 } from '../../ui/ui.ts';
 import { donut, bars, sparkline, barChart, areaChart, funnelChart, splitBar } from '../../lib/charts.ts';
 import { funnelStats } from '../m3_crm/service.ts';
@@ -506,7 +506,7 @@ function propertyDashboard(rq: Rq, propertyId: string) {
         occupancyPct: stats.occupancyPct,
         actions: html`<a class="btn btn-ghost btn-sm" href="/map">Portfolio map</a>`,
       })}
-      ${kpis([
+      ${kpiBands([
         { label: 'Occupancy', value: `${stats.occupancyPct}%`, sub: `${stats.occupied}/${stats.rentable} rentable`, tone: stats.occupancyPct >= 93 ? 'ok' : stats.occupancyPct >= 88 ? 'warn' : 'bad', href: `/units?property=${p.id}` },
         { label: 'Exposure', value: `${stats.exposurePct}%`, sub: `${stats.exposureCount} units vacant or leaving`, tone: stats.exposurePct <= 8 ? 'ok' : 'warn', href: `/units?property=${p.id}&status=vacant_ready` },
         { label: 'Vacant ready', value: stats.vacantReady, href: `/units?property=${p.id}&status=vacant_ready` },
@@ -632,19 +632,79 @@ function analyticsCards(ctx: Ctx): ReturnType<typeof html> {
 /** The luminous dashboard hero: portfolio pulse + occupancy ring + live
  * activity ticker. The shell's page-head stays in the DOM (title contract)
  * but is hidden by CSS when a .dash-hero is present. */
-function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string | ReturnType<typeof html>; occupancyPct: number; actions?: ReturnType<typeof html> }): ReturnType<typeof html> {
-  const events = q<any>(
-    'SELECT user_name, action, entity, at FROM audit_events WHERE org_id=? ORDER BY at DESC LIMIT 40',
+/** "AI at work" — the agents' recent output and what awaits approval, front
+ * and center on the dashboard. Reads ai_actions directly (no cross-module
+ * import); links into the AI Activity approval queue. */
+function aiWorkPanel(ctx: Ctx): ReturnType<typeof html> {
+  if (!ctx.perms.has('ai:view')) return html``;
+  const pending = val<number>(`SELECT COUNT(*) FROM ai_actions WHERE org_id=? AND status='proposed'`, ctx.orgId) || 0;
+  const rows = q<any>(
+    `SELECT agent, title, status, autonomy, created_at FROM ai_actions WHERE org_id=? ORDER BY created_at DESC LIMIT 7`,
     ctx.orgId,
   );
-  const seen = new Set<string>();
-  const feed: any[] = [];
-  for (const e of events) {
-    const key = `${e.user_name}|${e.action}|${e.entity}`;
-    if (seen.has(key)) continue;
-    seen.add(key);
-    feed.push(e);
-    if (feed.length === 3) break;
+  const statusLabel = (r: any): ReturnType<typeof html> => {
+    if (r.status === 'proposed') return html`<span class="badge warn">awaiting approval</span>`;
+    if (r.status === 'auto_executed') return html`<span class="badge info">ran autonomously</span>`;
+    if (r.status === 'executed' || r.status === 'approved') return html`<span class="badge ok">approved &amp; sent</span>`;
+    if (r.status === 'rejected') return html`<span class="badge">rejected</span>`;
+    return html`<span class="badge">${String(r.status).replaceAll('_', ' ')}</span>`;
+  };
+  return html`<div class="card ai-panel">
+    <div class="card-head">
+      <h2>AI at work</h2>
+      ${when(pending > 0, () => html`<span class="badge warn">${pending} awaiting your approval</span>`)}
+      <a class="btn btn-sm" href="/ai">${pending > 0 ? 'Review queue' : 'AI activity'}</a>
+    </div>
+    <div class="card-body flush">
+      ${rows.length
+        ? html`<ul class="ai-feed">${rows.map((r) => html`<li>
+            <span class="af-agent">${AGENT_LABEL[r.agent] || 'AI'}</span>
+            <span class="af-title">${r.title}</span>
+            ${statusLabel(r)}
+            <span class="af-when">${String(r.created_at).slice(11, 16)}</span>
+          </li>`)}</ul>`
+        : emptyState('No AI activity yet', 'Agent drafts and actions will appear here as work arrives.')}
+    </div>
+  </div>`;
+}
+
+/** KPI tiles grouped by how urgently they need the operator's eyes. */
+const KPI_ATTENTION = new Set(['Delinquent', 'Overdue follow-ups', 'Open work orders', 'Expiring ≤90d', 'Applications pending', 'On notice']);
+const KPI_PIPELINE = new Set(['Units', 'Vacant ready', 'Leads (7d)']);
+function kpiBands(items: Kpi[]): ReturnType<typeof html> {
+  const attention = items.filter((k) => KPI_ATTENTION.has(String(k.label)));
+  const pipeline = items.filter((k) => KPI_PIPELINE.has(String(k.label)));
+  const performance = items.filter((k) => !KPI_ATTENTION.has(String(k.label)) && !KPI_PIPELINE.has(String(k.label)));
+  const band = (title: string, cls: string, list: Kpi[]): ReturnType<typeof html> =>
+    when(list.length, () => html`<section class="kpi-band ${cls}"><div class="kb-head">${title}</div>${kpis(list)}</section>`) as ReturnType<typeof html>;
+  return html`${band('Needs attention', 'kb-attn', attention)}${band('Performance', '', performance)}${band('Leasing pipeline', '', pipeline)}`;
+}
+
+const AGENT_LABEL: Record<string, string> = {
+  leasing: 'Leasing AI', maintenance: 'Maintenance AI', payments: 'Payments AI', renewals: 'Renewals AI',
+  call_analysis: 'Call analysis', content: 'Content AI', ask: 'Ask StayLeased',
+};
+
+function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string | ReturnType<typeof html>; occupancyPct: number; actions?: ReturnType<typeof html> }): ReturnType<typeof html> {
+  // AI activity leads the hero feed; general audit events fill any remainder.
+  const ai = q<any>(
+    `SELECT agent, title, created_at AS at FROM ai_actions WHERE org_id=? ORDER BY created_at DESC LIMIT 3`,
+    ctx.orgId,
+  ).map((a) => ({ user_name: AGENT_LABEL[a.agent] || 'AI', action: a.title, entity: '', at: a.at }));
+  const feed: any[] = [...ai];
+  if (feed.length < 3) {
+    const events = q<any>(
+      'SELECT user_name, action, entity, at FROM audit_events WHERE org_id=? ORDER BY at DESC LIMIT 40',
+      ctx.orgId,
+    );
+    const seen = new Set<string>();
+    for (const e of events) {
+      const key = `${e.user_name}|${e.action}|${e.entity}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      feed.push(e);
+      if (feed.length === 3) break;
+    }
   }
   const pct = Math.max(0, Math.min(100, opts.occupancyPct));
   const R = 46, C = 2 * Math.PI * R;
@@ -667,7 +727,7 @@ function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string |
       <div class="dash-ring">${ring}<div class="dr-val"><div>${pct}%<small>occupied</small></div></div></div>
       ${when(feed.length, () => html`<div class="dash-feed">
         <div class="df-head"><i></i>Live activity</div>
-        ${feed.map((e) => html`<div class="df-row"><b>${e.user_name}</b><span>${String(e.action).replaceAll('_', ' ')} · ${String(e.entity).replaceAll('_', ' ')}</span><span class="df-when">${e.at.slice(11, 16)}</span></div>`)}
+        ${feed.map((e) => html`<div class="df-row"><b>${e.user_name}</b><span>${String(e.action).replaceAll('_', ' ')}${e.entity ? ` · ${String(e.entity).replaceAll('_', ' ')}` : ''}</span><span class="df-when">${e.at.slice(11, 16)}</span></div>`)}
       </div>`)}
     </div>
   </div>`;
@@ -693,8 +753,12 @@ function portfolioDashboard(rq: Rq) {
         actions: html`<a class="btn btn-sm" href="/map">${raw('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20 3 17V4l6 3m0 13 6-3m-6 3V7m6 10 6 3V7l-6-3m0 13V4M9 7l6-3"/></svg>')} Map view</a>`,
       })}
       ${onboardingBanner(ctx)}
-      ${dashMapCard(ctx)}
-      ${kpis([
+      ${(() => {
+        const ai = aiWorkPanel(ctx);
+        const mapCard = dashMapCard(ctx);
+        return ai.s ? html`<div class="dash-duo">${ai}${mapCard}</div>` : mapCard;
+      })()}
+      ${kpiBands([
         { label: 'Units', value: org.total },
         { label: 'Occupancy', value: `${org.occupancyPct}%`, tone: org.occupancyPct >= 93 ? 'ok' : 'warn', sub: `${org.occupied} occupied` },
         { label: 'Exposure', value: `${org.exposurePct}%`, sub: `${org.exposureCount} units` },

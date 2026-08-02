@@ -141,6 +141,17 @@
     });
   });
 
+  // ---------- light / dark theme toggle ----------
+  document.addEventListener('click', function (e) {
+    var b = e.target.closest('[data-theme-toggle]');
+    if (!b) return;
+    var el = document.documentElement;
+    var next = el.getAttribute('data-theme') === 'light' ? 'dark' : 'light';
+    el.setAttribute('data-theme', next);
+    document.cookie = 'sl_theme=' + next + ';path=/;max-age=31536000;SameSite=Lax';
+    document.dispatchEvent(new CustomEvent('sl-theme', { detail: next }));
+  });
+
   // ---------- command palette ----------
   var palette = document.getElementById('palette');
   var pInput = document.getElementById('palette-input');
@@ -305,6 +316,29 @@
         requestAnimationFrame(function () { c.setAttribute('stroke-dasharray', arc + ' ' + circ); });
       });
     });
+  })();
+
+  // ---------- scroll-reveal for below-the-fold content ----------
+  // Top-level content blocks that start below the fold fade-and-rise into
+  // place as they scroll into view. Applied only where motion is welcome.
+  (function () {
+    var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if (reduce || !('IntersectionObserver' in window)) return;
+    var content = document.querySelector('.content');
+    if (!content) return;
+    var els = [].slice.call(content.children).filter(function (el) {
+      var t = el.className || '';
+      if (typeof t !== 'string') return false;
+      if (!/(^| )(card|kpi-band|grid|dash-duo|chart-pair)( |$)/.test(t)) return false;
+      return el.getBoundingClientRect().top > window.innerHeight * 0.95;
+    });
+    if (!els.length) return;
+    var io = new IntersectionObserver(function (es) {
+      es.forEach(function (en) {
+        if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); }
+      });
+    }, { threshold: 0.06, rootMargin: '0px 0px -5% 0px' });
+    els.forEach(function (el) { el.classList.add('scrollrev'); io.observe(el); });
   })();
 
   // drag & drop lanes (dispatch board / turns)

@@ -34,10 +34,15 @@ const MAP_JS = `
 
   var map = L.map(el, { zoomControl: false, attributionControl: true, scrollWheelZoom: true });
   L.control.zoom({ position: 'bottomright' }).addTo(map);
-  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+  function tileUrl() {
+    var light = document.documentElement.getAttribute('data-theme') === 'light';
+    return 'https://{s}.basemaps.cartocdn.com/' + (light ? 'light_all' : 'dark_all') + '/{z}/{x}/{y}{r}.png';
+  }
+  var tiles = L.tileLayer(tileUrl(), {
     subdomains: 'abcd', maxZoom: 19,
     attribution: '&copy; OpenStreetMap contributors &copy; CARTO'
   }).addTo(map);
+  document.addEventListener('sl-theme', function () { tiles.setUrl(tileUrl()); });
 
   function pinHtml(p) {
     var cls = 'slpin' + (p.precise ? '' : ' approx');
@@ -134,7 +139,12 @@ const DASHMAP_JS = `
     var props = [];
     try { props = JSON.parse(dataEl.textContent || '[]'); } catch (e) { return; }
     var map = L.map(el, { zoomControl: false, attributionControl: true, dragging: false, scrollWheelZoom: false, doubleClickZoom: false, boxZoom: false, keyboard: false, touchZoom: false });
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { subdomains: 'abcd', maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map);
+    function tileUrl() {
+      var light = document.documentElement.getAttribute('data-theme') === 'light';
+      return 'https://{s}.basemaps.cartocdn.com/' + (light ? 'light_all' : 'dark_all') + '/{z}/{x}/{y}{r}.png';
+    }
+    var tiles = L.tileLayer(tileUrl(), { subdomains: 'abcd', maxZoom: 19, attribution: '&copy; OpenStreetMap &copy; CARTO' }).addTo(map);
+    document.addEventListener('sl-theme', function () { tiles.setUrl(tileUrl()); });
     var bounds = [];
     props.forEach(function (p) {
       var icon = L.divIcon({ className: 'slpin-wrap', html: '<div class="slpin slpin-mini"><span class="slpin-halo"></span><span class="slpin-dot"></span><span class="slpin-tag">' + p.occ + '%</span></div>', iconSize: [0, 0], iconAnchor: [0, 0] });
