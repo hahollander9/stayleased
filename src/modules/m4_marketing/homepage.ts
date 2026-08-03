@@ -76,35 +76,24 @@ ${mkHeader()}
 <section class="mk-hero" id="top">
   <div class="mk-wrap mk-hero-in">
     <div class="mk-hero-copy">
-      <div class="mk-kicker">Independent landlords & small managers · 10–500 units</div>
-      <h1>Autonomous property management</h1>
-      <p class="mk-sub">The property manager you could never afford to hire. It answers your leads, collects your rent, coordinates maintenance, and maintains accurate books — with every action awaiting your approval.</p>
+      <div class="mk-kicker">Autonomous property management · Independent landlords &amp; small managers, 10–500 units</div>
+      <h1>The property manager you could never afford <em>to hire.</em></h1>
+      <p class="mk-sub">It answers your leads, collects your rent, coordinates maintenance, and maintains accurate books — with every action awaiting your approval.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Explore the live demo</a>
         ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="#walkthrough">Book a walkthrough</a>`}
       </div>
-      <div class="mk-hero-note">Migrating from Buildium, AppFolio, or spreadsheets — most portfolios import in a single afternoon.</div>
-    </div>
-    <div class="mk-hero-visual" aria-hidden="true">
-      <div class="mk-frame">
-        <div class="mk-frame-bar"><span></span><span></span><span></span></div>
-        <div class="mk-frame-kpis">
-          <div><b>94.2%</b><i>Occupancy</i></div>
-          <div><b>$412k</b><i>Collected MTD</i></div>
-          <div><b>37</b><i>AI actions today</i></div>
-          <div><b>1.8h</b><i>Lead response</i></div>
-        </div>
-        <div class="mk-frame-chart">${raw(Array.from({ length: 12 }, (_, i) => `<i style="height:${[52, 58, 49, 63, 70, 66, 74, 71, 79, 83, 78, 90][i]}%"></i>`).join(''))}</div>
-        <div class="mk-frame-aihead"><span>AI at work</span><i>3 drafts awaiting approval</i></div>
-        <div class="mk-frame-feed">
-          <div><em>Leasing AI</em> replied to a Zillow lead · 41s</div>
-          <div><em>Payments AI</em> drafted 6 friendly reminders · queued for approval</div>
-          <div><em>Maintenance AI</em> escalated a water leak · Unit 204</div>
-        </div>
-      </div>
+      <div class="mk-hero-note"><b>An afternoon,</b> not an implementation project — most portfolios import from Buildium, AppFolio, or spreadsheets in a single sitting. <b>Every AI draft</b> waits for your approval. <b>Real books,</b> true double-entry.</div>
     </div>
   </div>
 </section>
+
+<div class="mk-shotband">
+  <div class="mk-wrap">
+    <div class="mk-shot"><img src="/assets/mk/dashboard-light.png" alt="The StayLeased portfolio dashboard" width="2280" height="1425" loading="eager" /></div>
+    <div class="mk-shot-cap"><span>The portfolio dashboard — live demonstration data, not a mockup</span><span>stayleased.com</span></div>
+  </div>
+</div>
 
 <div class="mk-marquee" aria-hidden="true">
   <div class="mk-marquee-track">
@@ -578,6 +567,8 @@ ${mkFooter()}
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
 ${raw(`<script>${THEME_BOOT_JS}</script>`)}
+<link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="/assets/fonts/fraunces-var.woff2" as="font" type="font/woff2" crossorigin />
 <style>${raw(MARKETING_CSS)}</style>
 </head><body class="mk">${body}${mkChromeScript()}</body></html>`.s}`);
 }
