@@ -139,7 +139,26 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="how">
+<section class="mk-band mk-band-alt" id="why">
+  <div class="mk-wrap">
+    <h2 class="mk-h2">A different architecture.</h2>
+    <p class="mk-lead">Legacy platforms provide the system of record and leave the work to the operator. AI point solutions automate a single function and require a management platform underneath. StayLeased is both layers in one system.</p>
+    <div class="mk-compare">
+      <table>
+        <thead><tr><th></th><th>Legacy platforms</th><th>AI point solutions</th><th class="mkc-us">StayLeased</th></tr></thead>
+        <tbody>
+          <tr><td>Complete system of record — accounting, leasing, maintenance</td><td>✓</td><td>—</td><td class="mkc-us">✓</td></tr>
+          <tr><td>Autonomous agents that perform the daily work</td><td>—</td><td>Single function</td><td class="mkc-us">Every function</td></tr>
+          <tr><td>Approval-first governance with a complete audit trail</td><td>—</td><td>—</td><td class="mkc-us">✓</td></tr>
+          <tr><td>Designed and priced for portfolios under 100 units</td><td>Per-unit minimums</td><td>Enterprise contracts</td><td class="mkc-us">✓</td></tr>
+          <tr><td>Implementation</td><td>Weeks</td><td>Integration project</td><td class="mkc-us">One afternoon</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section class="mk-band" id="how">
   <div class="mk-wrap">
     <h2 class="mk-h2">Operational in an afternoon.</h2>
     <p class="mk-lead">Implementation is a data import, not a project.</p>

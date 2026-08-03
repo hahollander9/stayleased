@@ -201,6 +201,19 @@ body.mk-mm-open { overflow: hidden; }
 .mk-more { display: inline-block; margin-top: 16px; font-weight: 570; color: var(--ink); font-size: 14px; text-decoration: underline; text-underline-offset: 4px; text-decoration-color: var(--faint); transition: text-decoration-color .16s ease, color .16s ease; }
 .mk-plat:hover .mk-more, .mk-more:hover { text-decoration-color: var(--accent); color: var(--accent); }
 
+/* architecture comparison — formal table, no competitor named */
+.mk-compare { border: 1px solid var(--line); border-radius: 8px; overflow-x: auto; background: var(--card); }
+.mk-compare table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 720px; }
+.mk-compare th, .mk-compare td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--line-2); }
+.mk-compare tbody tr:last-child td { border-bottom: 0; }
+.mk-compare thead th { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); border-bottom: 1px solid var(--line); }
+.mk-compare td:first-child { color: var(--ink); font-weight: 550; max-width: 340px; }
+.mk-compare td:not(:first-child), .mk-compare th:not(:first-child) { text-align: center; width: 17%; }
+.mk-compare td:not(:first-child) { color: var(--mut); }
+.mk-compare .mkc-us { color: var(--ink); font-weight: 620; background: rgba(29,78,216,.045); }
+html[data-theme="dark"] .mk-compare .mkc-us { background: rgba(143,175,247,.07); }
+.mk-compare thead th.mkc-us { color: var(--accent); }
+
 /* first-week steps — numbered editorial rows */
 .mk-steps { max-width: 880px; border-top: 1px solid var(--line); }
 .mk-step { display: flex; gap: 26px; padding: 26px 4px; border-bottom: 1px solid var(--line); transition: background .18s ease; }
