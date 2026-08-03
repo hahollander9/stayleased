@@ -23,11 +23,11 @@ export const MARKETING_CSS = `
 }
 
 :root {
-  --paper: #FBFAF7; --paper-2: #F5F3EC; --card: #FFFFFF;
-  --ink: #14120E; --ink2: #494639; --mut: #7A7668; --faint: #A9A597;
-  --line: #E3E0D5; --line-2: #ECEAE1;
+  --paper: #FFFFFF; --paper-2: #FFFFFF; --card: #FFFFFF;
+  --ink: #16181D; --ink2: #454A54; --mut: #737884; --faint: #A6AAB4;
+  --line: #E6E7EA; --line-2: #EEEFF2;
   --accent: #1D4ED8; --accent-2: #1E40AF;
-  --btn-bg: #14120E; --btn-ink: #FBFAF7;
+  --btn-bg: #16181D; --btn-ink: #FFFFFF;
   --display: 'Fraunces', Georgia, 'Times New Roman', serif;
   --ease: cubic-bezier(.16,1,.3,1);
   /* legacy token aliases (components reference these) */
@@ -38,11 +38,11 @@ html { color-scheme: light; }
 
 /* ---------- dark-ink variant (html[data-theme="dark"]) ---------- */
 html[data-theme="dark"] { color-scheme: dark;
-  --paper: #141310; --paper-2: #191813; --card: #1C1B16;
-  --ink: #F2EFE6; --ink2: #C9C5B6; --mut: #918D7E; --faint: #6C685C;
-  --line: #2C2A23; --line-2: #24221C;
-  --accent: #91B0F5; --accent-2: #A8C0F7;
-  --btn-bg: #F2EFE6; --btn-ink: #14120E;
+  --paper: #131418; --paper-2: #131418; --card: #1A1C21;
+  --ink: #EDEEF2; --ink2: #C2C5CD; --mut: #8B8F9A; --faint: #62666F;
+  --line: #292C33; --line-2: #22242A;
+  --accent: #8FAFF7; --accent-2: #A8C0F7;
+  --btn-bg: #EDEEF2; --btn-ink: #16181D;
 }
 
 /* theme toggle button (marketing nav) */
@@ -240,23 +240,20 @@ body.mk-mm-open { overflow: hidden; }
 .mk-card .mk-more { margin-top: 12px; }
 .mk-inline-cta { margin-top: 30px; }
 
-/* governance — the one ink band on the page */
-.mk-dark { position: relative; background: #14120E; color: #F2EFE6; border-top: 1px solid #14120E; }
-html[data-theme="dark"] .mk-dark { background: #0D0C09; border-top-color: var(--line); }
+/* governance — same paper as every other section, plain ruled checklist */
+.mk-dark { position: relative; background: var(--paper); color: var(--ink); }
 .mk-dark .mk-wrap { position: relative; }
-.mk-dark .mk-h2 { color: #FBFAF7; }
-.mk-dark .mk-lead { color: #C9C5B6; }
-.mk-dark .mk-kicker { color: #918D7E; }
-.mk-checks { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 10px 30px; list-style: none; padding: 0; margin: 0 0 38px; max-width: 800px; }
-.mk-checks li { padding-left: 26px; position: relative; font-size: 15px; color: #C9C5B6; }
-.mk-checks li::before { content: '—'; position: absolute; left: 0; top: 0; color: #91B0F5; font-weight: 600; }
-.mk-checks li:hover { color: #FBFAF7; }
-.mk-grid5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; background: rgba(242,239,230,.14); border: 1px solid rgba(242,239,230,.14); }
-.mk-gov { padding: 18px; background: #14120E; transition: background .2s ease; }
-html[data-theme="dark"] .mk-gov { background: #0D0C09; }
-.mk-gov:hover { background: #1C1A14; }
-.mk-gov h4 { font-size: 14px; margin-bottom: 6px; color: #FBFAF7; font-weight: 640; }
-.mk-gov p { font-size: 12.5px; color: #918D7E; }
+.mk-dark .mk-h2 { color: var(--ink); }
+.mk-dark .mk-lead { color: var(--ink2); }
+.mk-dark .mk-kicker { color: var(--mut); }
+.mk-checks { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 12px 40px; list-style: none; padding: 0; margin: 0; max-width: 860px; }
+.mk-checks li { padding-left: 24px; position: relative; font-size: 15px; color: var(--ink2); }
+.mk-checks li::before { content: '—'; position: absolute; left: 0; top: 0; color: var(--accent); font-weight: 600; }
+.mk-checks li:hover { color: var(--ink); }
+.mk-grid5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
+.mk-gov { padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
+.mk-gov h4 { font-size: 14px; margin-bottom: 6px; color: var(--ink); font-weight: 640; }
+.mk-gov p { font-size: 12.5px; color: var(--mut); }
 
 /* pricing */
 .mk-price-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 880px; }
@@ -371,8 +368,7 @@ html[data-theme="dark"] .mk-gov { background: #0D0C09; }
 .mk-askbox-av { width: 34px; height: 34px; border-radius: 50%; background: var(--btn-bg); color: var(--btn-ink); font-size: 12px; font-weight: 700; display: flex; align-items: center; justify-content: center; }
 .mk-askbox-id b { font-size: 14px; display: block; color: var(--ink); }
 .mk-askbox-id span { font-size: 11.5px; color: var(--mut); }
-.mk-live { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #1A7F4F; border: 1px solid rgba(26,127,79,.35); border-radius: 3px; padding: 3px 8px; }
-html[data-theme="dark"] .mk-live { color: #6FCF9A; border-color: rgba(111,207,154,.35); }
+.mk-live { display: inline-flex; align-items: center; gap: 6px; font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); border: 1px solid var(--line); border-radius: 3px; padding: 3px 8px; }
 .mk-live i { width: 6px; height: 6px; border-radius: 99px; background: currentColor; animation: mkPulse 1.8s ease-in-out infinite; }
 .mk-ask-msgs, .mk-chat-msgs { flex: 1; padding: 16px; display: flex; flex-direction: column; gap: 10px; overflow-y: auto; }
 .mk-ask-msgs { min-height: 210px; max-height: 300px; }
@@ -424,12 +420,10 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 .mkp-points { list-style: none; padding: 0; margin: 0 0 28px; display: grid; gap: 9px; }
 .mkp-points li { position: relative; padding-left: 24px; font-size: 15px; color: var(--ink2); }
 .mkp-points li::before { content: '—'; position: absolute; left: 0; top: 0; color: var(--accent); font-weight: 600; }
-.mkp-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; border-radius: 3px; padding: 4px 10px; margin: 0 0 20px; border: 1px solid; }
+.mkp-chip { display: inline-flex; align-items: center; gap: 7px; font-size: 11.5px; font-weight: 650; letter-spacing: .08em; text-transform: uppercase; border-radius: 3px; padding: 4px 10px; margin: 0 0 20px; border: 1px solid var(--line); }
 .mkp-chip::before { content: ''; width: 6px; height: 6px; border-radius: 99px; background: currentColor; }
-.mkp-chip.live { color: #1A7F4F; border-color: rgba(26,127,79,.4); }
-.mkp-chip.soon { color: #9A6A00; border-color: rgba(154,106,0,.4); }
-html[data-theme="dark"] .mkp-chip.live { color: #6FCF9A; border-color: rgba(111,207,154,.4); }
-html[data-theme="dark"] .mkp-chip.soon { color: #E3B341; border-color: rgba(227,179,65,.4); }
+.mkp-chip.live { color: var(--accent); }
+.mkp-chip.soon { color: var(--mut); }
 .mkp-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0; margin: 38px 0 0; border-top: 1px solid var(--line); }
 .mkp-stat { padding: 18px 20px 4px 0; transition: none; }
 .mkp-stat + .mkp-stat { border-left: 1px solid var(--line); padding-left: 20px; }
@@ -445,14 +439,10 @@ html[data-theme="dark"] .mkp-chip.soon { color: #E3B341; border-color: rgba(227,
 .mkp-related { display: flex; flex-wrap: wrap; gap: 10px; }
 .mkp-related a { display: inline-flex; align-items: center; gap: 7px; border: 1px solid var(--line); border-radius: 4px; padding: 8px 15px; font-size: 13.5px; font-weight: 550; color: var(--ink2); transition: border-color .16s ease, color .16s ease; }
 .mkp-related a:hover { border-color: var(--ink); color: var(--ink); }
-.mkp-cta { position: relative; background: #14120E; color: #FBFAF7; text-align: center; padding: 76px 0; border-top: 1px solid #14120E; }
-html[data-theme="dark"] .mkp-cta { background: #0D0C09; border-top-color: var(--line); }
+.mkp-cta { position: relative; background: var(--paper); color: var(--ink); text-align: center; padding: 76px 0; border-top: 1px solid var(--line); }
 .mkp-cta h2 { font-size: clamp(28px, 3.4vw, 40px); letter-spacing: -.015em; font-weight: 500; margin-bottom: 10px; }
-.mkp-cta p { color: #C9C5B6; margin-bottom: 26px; }
+.mkp-cta p { color: var(--ink2); margin-bottom: 26px; }
 .mkp-cta .mk-cta-row { justify-content: center; }
-.mkp-cta .mk-btn-solid { background: #FBFAF7; color: #14120E; }
-.mkp-cta .mk-btn-line { background: transparent; color: #FBFAF7; border-color: rgba(251,250,247,.4); }
-.mkp-cta .mk-btn-line:hover { border-color: #FBFAF7; }
 .mkp-hub-lead { padding-top: 56px; }
 .mkp-prose { max-width: 760px; padding: 56px 40px 76px; margin: 0 auto; }
 .mkp-prose h1 { font-size: clamp(30px, 3.6vw, 44px); letter-spacing: -.015em; margin-bottom: 6px; color: var(--ink); font-weight: 500; }

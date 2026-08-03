@@ -31,7 +31,7 @@ export interface MkPage {
 
 export const MK_GROUPS: Record<MkPage['group'], { base: string; name: string; kicker: string; lead: string }> = {
   platform: { base: '/platform', name: 'Platform', kicker: 'Everything in one place', lead: 'Leasing, rent, maintenance, and real books in one login — including a portal your tenants will actually use.' },
-  agents: { base: '/agents', name: 'AI', kicker: 'Help that drafts, you approve', lead: 'AI that answers leads, chases rent, sorts maintenance, and drafts renewals — every message starting as a draft in your approval queue. New to AI? Start with the first page.' },
+  agents: { base: '/agents', name: 'AI', kicker: 'Help that drafts, you approve', lead: 'AI that answers leads, follows up on rent, sorts maintenance, and drafts renewals — every message starting as a draft in your approval queue. New to AI? Start with the first page.' },
   for: { base: '/for', name: "Who it's for", kicker: 'Built for independent operators', lead: 'StayLeased is designed for the owners and managers who operate most of America’s rental housing — not 20,000-unit institutions.' },
 };
 
@@ -40,7 +40,7 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'rent-collection', group: 'platform', label: 'Rent collection',
     title: 'Rent collection that runs itself — and books itself.',
-    sub: 'Monthly charges post on schedule, late fees follow your policy to the letter, autopay keeps the money predictable, and the Payments AI chases every remaining balance with a tone you approve.',
+    sub: 'Monthly charges post on schedule, late fees follow your policy to the letter, autopay keeps the money predictable, and the Payments AI follows up on every remaining balance with a tone you approve.',
     chip: { kind: 'soon', text: 'Payment recording + books fully live · card/ACH processing rail in rollout' },
     points: [
       'Rent, prorations, and recurring charges billed automatically on your schedule',
@@ -54,7 +54,7 @@ export const MK_PAGES: MkPage[] = [
     ],
     features: [
       { t: 'Automatic monthly billing', b: 'Charges generate from the lease — rent, pet fees, parking, utilities — with prorations handled on move-in, move-out, and mid-month changes.' },
-      { t: 'Late-fee policy engine', b: 'Grace periods, flat or percentage fees, and caps set at the org or property level. The system applies them consistently; you stop having the awkward conversation.' },
+      { t: 'Late-fee policy engine', b: 'Grace periods, flat or percentage fees, and caps set at the org or property level. The system applies them consistently, every month, without exceptions slipping through.' },
       { t: 'Autopay & resident payments', b: 'Residents set up autopay or pay a balance in the portal in seconds, with instant receipts and a running ledger they can actually read.' },
       { t: 'AI follow-up on every balance', b: 'The Payments AI drafts reminders matched to balance size and days late, inside compliance rails, queued for your approval — or fully autonomous where you dial it up.' },
       { t: 'Deposits done right', b: 'Security deposits tracked as liabilities the way an accountant expects, with dispositions and deposit-alternative support at move-out.' },
@@ -329,7 +329,7 @@ export const MK_PAGES: MkPage[] = [
   },
   {
     slug: 'renewals-pricing', group: 'platform', label: 'Renewals & pricing',
-    title: 'Stop leaving rent on the table. Stop losing residents over $40.',
+    title: 'Price with evidence. Renew with confidence.',
     sub: 'Under-market units get flagged with evidence, renewal offers generate inside bounds you set, and the Renewals AI personalizes and negotiates within your matrix — escalating to you the moment anything falls outside it.',
     points: [
       'Under-market flags comparing in-place rent to current pricing',
@@ -426,7 +426,7 @@ export const MK_PAGES: MkPage[] = [
     features: [
       { t: 'Utility expense capture', b: 'Enter or import the property’s utility bills — water, sewer, trash, gas, electric — with period and amount, coded to the right GL account.' },
       { t: 'Allocation methods', b: 'Divide by occupied units, all units, square footage, occupant count, or custom ratios per property — whichever your leases specify.' },
-      { t: 'Automatic charge posting', b: 'Allocated amounts post to each resident ledger as labeled utility charges in the next billing cycle — collected with rent, chased by the same Payments AI.' },
+      { t: 'Automatic charge posting', b: 'Allocated amounts post to each resident ledger as labeled utility charges in the next billing cycle — collected with rent, followed up by the same Payments AI.' },
       { t: 'Common-area & vacancy handling', b: 'Common-area deductions and vacant-unit shares stay with the property so your recovery numbers stay honest.' },
       { t: 'Lease-term aware', b: 'Move-ins and move-outs prorate; a resident who left mid-period pays their share, not the next resident’s.' },
       { t: 'Recovery reporting', b: 'Billed vs. recovered by property and period — the number that tells you whether your utility program is working.' },
@@ -453,7 +453,7 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'resident-portal', group: 'platform', label: 'Resident portal',
     title: 'Your tenants get a portal. You get your evenings back.',
-    sub: 'Rent paid online instead of chased, repair requests with photos instead of voicemails, documents they can find themselves — the calls that eat your week, answered by a website.',
+    sub: 'Rent paid online with autopay, repair requests with photos, documents residents find themselves — routine questions answered by the portal.',
     chip: { kind: 'soon', text: 'Portal, requests & ledgers live · card/ACH processing rail in rollout' },
     points: [
       'Tenants see their balance and pay online — with autopay and instant receipts',
@@ -466,7 +466,7 @@ export const MK_PAGES: MkPage[] = [
       { b: 'Nothing to install', s: 'Fast mobile website — works on any phone, no app store' },
     ],
     features: [
-      { t: 'Money, self-serve', b: 'Balance, what it’s made of, payment history with receipts, and autopay controls. The awkward balance conversation becomes a screen they check themselves.' },
+      { t: 'Money, self-serve', b: 'Balance, what it’s made of, payment history with receipts, and autopay controls. Balance questions become a screen residents check themselves.' },
       { t: 'Repair requests that behave', b: 'A photo of the leak, access notes, and live status — received, scheduled with a window, done. The “is anyone coming?” call disappears from your phone.' },
       { t: 'Answers at 2am', b: 'The AI answers portal questions instantly from their actual lease — rent amount, due dates, policies — and walks them through safe first steps on maintenance. You read every exchange.' },
       { t: 'Documents on demand', b: 'The signed lease, addenda, notices, and renewal offers, downloadable anytime. No more digging through email to resend a lease.' },
@@ -497,7 +497,7 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'new-to-ai', group: 'agents', label: 'New to AI? Start here',
     title: 'Never used AI before? Good. This was built for you.',
-    sub: 'No prompts to write, nothing to learn, no robot talking to your tenants behind your back. It reads what comes in, drafts what should go out, and puts every draft in a queue for you to approve — that’s the whole idea.',
+    sub: 'No prompts to write, nothing to learn, and nothing sent without your say-so. It reads what comes in, drafts what should go out, and puts every draft in a queue for you to approve — that’s the whole idea.',
     points: [
       'Nothing is sent to a tenant or prospect until you approve it — that’s the default',
       'You read every word it writes, and you can edit before approving',
@@ -546,7 +546,7 @@ export const MK_PAGES: MkPage[] = [
       'Deterministic fair-housing guardrail on every prospect-facing message',
     ],
     stats: [
-      { b: 'Seconds, not hours', s: 'The lead that used to wait until after your day job answers itself' },
+      { b: 'Seconds, not hours', s: 'Every lead gets an immediate, professional reply' },
       { b: 'After-hours covered', s: '2am inquiries get 2am answers' },
       { b: 'You set the dial', s: 'Draft-for-approval to fully autonomous, per property' },
     ],
@@ -827,25 +827,25 @@ export const MK_PAGES: MkPage[] = [
   // ---------------- Who it's for ----------------
   {
     slug: 'self-managing-owners', group: 'for', label: 'Self-managing owners',
-    title: 'Your 10–100 doors, without the 11pm admin shift.',
-    sub: 'You’re the leasing agent, maintenance coordinator, and bookkeeper — usually after your actual job. StayLeased is the employee you couldn’t justify hiring: it takes the night shift, and you keep the decisions.',
+    title: 'Your portfolio, professionally run — around the clock.',
+    sub: 'StayLeased gives your properties a full-time operating staff: leasing, rent collection, maintenance coordination, and real books — with you making every decision that matters.',
     points: [
-      'Leads answered at 2am from live availability — while you sleep',
-      'Rent chased politely on schedule; books that keep themselves',
-      'Requests triaged before you wake up, emergencies excepted',
+      'Leads answered in seconds from live availability, day and night',
+      'Rent collected on schedule; books that keep themselves',
+      'Requests triaged on arrival, with true emergencies escalated instantly',
     ],
     stats: [
-      { b: 'The night shift, covered', s: 'Leasing, reminders, and triage run around the clock' },
-      { b: 'One login', s: 'CRM, leases, money, maintenance, books — no tool sprawl' },
+      { b: 'Around-the-clock coverage', s: 'Leasing, reminders, and triage never close' },
+      { b: 'One login', s: 'CRM, leases, money, maintenance, and books together' },
       { b: 'Import in an afternoon', s: 'Your rent roll builds the system for you' },
     ],
     features: [
-      { t: 'Stop losing leads to your day job', b: 'Prospects inquire when they inquire. The Leasing AI answers in seconds with real availability and books tours into your actual windows — the 48-hour silence that loses tenants is over.' },
-      { t: 'Rent collection without the awkward texts', b: 'Billing runs itself, late fees follow policy, and the Payments AI sends the reminder you’ve been putting off — in a tone you approved.' },
-      { t: 'Maintenance that doesn’t own your evenings', b: 'Requests come with photos, get triaged instantly, and reach you as a decision (“approve plumber Thursday?”) instead of a project.' },
-      { t: 'Books your CPA will finally like', b: 'Every rent payment and repair bill posts double-entry automatically. Tax season becomes an export, not an excavation.' },
-      { t: 'Start from the spreadsheet you have', b: 'Upload your rent roll — AI reading maps it, you review, and the portfolio builds itself: properties, units, leases, balances.' },
-      { t: 'You approve; it executes', b: 'Every agent starts in draft-for-approval mode. You’re not handing over the keys — you’re getting a tireless assistant who drafts everything.' },
+      { t: 'Every lead answered in seconds', b: 'The Leasing AI replies with real availability and books tours into the windows you set — every prospect gets an immediate, professional response.' },
+      { t: 'Rent collection, handled professionally', b: 'Billing runs on schedule, late fees follow your policy, and every reminder goes out in a tone you approved.' },
+      { t: 'Maintenance as a decision, not a project', b: 'Requests come with photos, get triaged instantly, and reach you as a one-tap decision — "approve plumber Thursday?"' },
+      { t: 'Books that are always current', b: 'Every rent payment and repair bill posts double-entry automatically. Tax season becomes an export.' },
+      { t: 'Start from the spreadsheet you have', b: 'Upload your rent roll — the system maps it, you review, and the portfolio builds itself: properties, units, leases, balances.' },
+      { t: 'You approve; it executes', b: 'Every agent starts in draft-for-approval mode — a tireless assistant that drafts everything and sends nothing without you.' },
     ],
     mock: {
       kpis: [['2am', 'Lead answered'], ['$0', 'Missed follow-ups'], ['15m', 'Your weekly books time'], ['1', 'Decision waiting']],
@@ -856,9 +856,9 @@ export const MK_PAGES: MkPage[] = [
       ],
     },
     faq: [
-      { q: 'I have 12 units. Is this overkill?', a: 'The opposite — the smaller you are, the more the night shift hurts, because it’s all yours. Twelve units is exactly who this is priced and shaped for. Free during early access.' },
+      { q: 'Does this make sense for a dozen units?', a: 'Yes — a dozen units is exactly who this is priced and shaped for. Full coverage from day one, free during early access.' },
       { q: 'How long does setup actually take?', a: 'One afternoon is the honest answer for a rent-roll import: upload, review what the AI mapped, accept. You operate the same day.' },
-      { q: 'What if I don’t trust AI with my tenants?', a: 'Then don’t — at first. Everything starts as drafts for your approval. Most owners dial up after-hours leasing within a couple of weeks, because the drafts were what they’d have written.' },
+      { q: 'How much control do I keep over what the AI sends?', a: 'Complete control. Everything starts as drafts for your approval, and most owners grant after-hours leasing within a couple of weeks — because the drafts were what they would have written.' },
     ],
     related: [
       { label: 'Switching from spreadsheets', href: '/for/switching-from-spreadsheets' },

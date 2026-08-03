@@ -60,7 +60,7 @@ export const MK_NAV: MkNavGroup[] = [
     label: "Who it's for",
     href: '/for',
     items: [
-      ['Self-managing owners', '/for/self-managing-owners', 'Your 10–100 doors, without the 11pm admin shift'],
+      ['Self-managing owners', '/for/self-managing-owners', 'Your portfolio, professionally run around the clock'],
       ['Small management companies', '/for/small-management-companies', 'Hundreds of doors on a two-person office'],
       ['Growing portfolios', '/for/growing-portfolios', 'Institutional-grade books without the headcount'],
       ['Switching from Buildium / AppFolio', '/for/switching-from-buildium-appfolio', 'Your rent roll imports in one afternoon'],
