@@ -31,23 +31,27 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   assert.match(body, /Property management software that does the work/i);
   assert.match(body, /Operational in an afternoon\./);
   assert.match(body, /Everything in one place\./);
-  assert.match(body, /Never used AI before\?/);
-  assert.match(body, /You set the level of autonomy\./);
+  assert.match(body, /Approval-first by design\./);
+  assert.match(body, /Three levels of autonomy\./);
   assert.match(body, /Purpose-built agents for every workflow\./);
-  assert.match(body, /You stay in control\. Always\./);
+  assert.match(body, /Governance and oversight\./);
   assert.match(body, /Built for independent operators/);
   assert.match(body, /Straightforward pricing/);
   assert.match(body, /Self-managing owners/);
   assert.match(body, /Equal Housing Opportunity/);
-  // small-operator language: the retired enterprise framing must stay gone
+  // the platform suites (the Entrata-model taxonomy)
+  for (const suite of ['Leasing & Marketing', 'Payments & Receivables', 'Accounting & Finance', 'Facilities & Maintenance', 'Resident Services', 'Reporting & Analytics']) {
+    assert.ok(body.includes(suite.replace('&', '&amp;')) || body.includes(suite), `suite "${suite}" present`);
+  }
+  // the retired jargon must stay gone
   assert.ok(!/ontology/i.test(body), 'no ontology-layer jargon');
   assert.ok(!/Operations Experience|Resident Experience/.test(body), 'no OXP/RXP platform framing');
   assert.ok(!/agentic operating system/i.test(body), 'no agentic-OS meta line');
-  // the three first-week steps and three autonomy modes
-  for (const step of ['Upload what you have', 'Watch it draft, click approve', 'Hand off what you trust']) {
+  // the three implementation steps and three autonomy levels
+  for (const step of ['Import the portfolio', 'Review and approve drafts', 'Delegate proven work']) {
     assert.match(body, new RegExp(step), `step "${step}" present`);
   }
-  for (const mode of ['It drafts, you approve', 'It handles the routine, asks about the rest', 'It runs the job, you watch the log']) {
+  for (const mode of ['Draft for approval', 'Autonomous within limits', 'Fully autonomous, audited']) {
     assert.match(body, new RegExp(mode), `mode "${mode}" present`);
   }
   await page.close();
