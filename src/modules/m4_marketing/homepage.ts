@@ -60,7 +60,7 @@ const SOLUTIONS: { name: string; body: string }[] = [
 ];
 
 function cube(n: number): string {
-  const hues = ['#22d3ee', '#60a5fa', '#a78bfa', '#8b5cf6', '#3b82f6'];
+  const hues = ['#2DD4BF', '#34D399', '#6EE7B7', '#10B981', '#059669'];
   const c = hues[n % hues.length]!;
   return `<svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 29 10v12L16 29 3 22V10z" fill="${c}" opacity=".16"/><path d="M16 3 29 10 16 17 3 10z" fill="${c}" opacity=".55"/><path d="M16 17v12L3 22V10z" fill="${c}" opacity=".35"/><path d="M16 17v12l13-7V10z" fill="${c}"/></svg>`;
 }

@@ -146,7 +146,7 @@ export function routes(r: Router): void {
           <div style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
             <div><b>${p.done} of ${p.total}</b> <span class="muted">steps complete</span></div>
             <div style="flex:1;min-width:160px;max-width:420px;background:var(--line,#e5e7eb);border-radius:99px;height:8px;overflow:hidden">
-              <div style="width:${pct}%;height:8px;background:linear-gradient(90deg,#22d3ee,#3b82f6,#8b5cf6)"></div>
+              <div style="width:${pct}%;height:8px;background:linear-gradient(90deg,#2dd4bf,#10b981,#047857)"></div>
             </div>
             ${when(p.required_done, () => html`<form method="post" action="/welcome/dismiss"><button class="btn btn-ghost">Finish setup — go to dashboard</button></form>`)}
           </div>

@@ -81,7 +81,7 @@ export function mkHeader(): Raw {
     : html`<a class="mk-btn mk-btn-solid" href="/#walkthrough">Book a walkthrough</a>`;
   return html`<header class="mk-nav">
   <div class="mk-wrap mk-nav-in">
-    <a class="mk-logo" href="/">${logo(24, '#60a5fa')}<span>Stay<b>Leased</b></span></a>
+    <a class="mk-logo" href="/">${logo(24, '#34D399')}<span>Stay<b>Leased</b></span></a>
     <nav class="mk-menu" aria-label="Main">
       ${MK_NAV.map((m, gi) => html`<div class="mk-item${gi === MK_NAV.length - 1 ? ' mk-item-end' : ''}"><button class="mk-item-btn" type="button" aria-haspopup="true" aria-expanded="false">${m.label}<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round"><path d="m6 9 6 6 6-6"/></svg></button>
         <div class="mk-drop"><div class="mk-drop-grid">
@@ -131,7 +131,7 @@ export function mkFooter(): Raw {
     </div>
   </div>
   <div class="mk-wrap mk-foot-base">
-    <span>${logo(18, '#5d6b82')} © 2026 StayLeased · Property management, run by AI</span>
+    <span>${logo(18, '#5C7266')} © 2026 StayLeased · Property management, run by AI</span>
     <span>⌂ Equal Housing Opportunity</span>
   </div>
 </footer>`;
