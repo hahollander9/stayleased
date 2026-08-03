@@ -7,6 +7,7 @@ import { nowIso } from '../../lib/dates.ts';
 import { askRoutes } from './ask.ts';
 import { llmStatus } from '../../lib/sim/llm.ts';
 import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS, MK_NAV } from './chrome.ts';
+import { THEME_BOOT_JS } from '../../ui/ui.ts';
 
 /** The platform marketing homepage — the front door for logged-out visitors,
  * written for small operators (10–500 units), including ones who have never
@@ -367,7 +368,7 @@ ${mkFooter()}
   }
 
   // stagger children within revealing groups (cards cascade in)
-  ['.mk-two', '.mk-grid3', '.mk-grid5', '.mk-levels', '.mk-steps', '.mk-price-row', '.mk-checks', '.mk-foot-grid', '.mk-ask-grid'].forEach(function (sel) {
+  ['.mk-two', '.mk-grid3', '.mk-grid5', '.mk-levels', '.mk-steps', '.mk-price-row', '.mk-checks', '.mk-foot-grid', '.mk-ask-grid', '.mk-two-col'].forEach(function (sel) {
     document.querySelectorAll(sel).forEach(function (grp) {
       Array.prototype.forEach.call(grp.children, function (child, i) {
         child.classList.add('mk-stag');
@@ -576,7 +577,7 @@ ${mkFooter()}
 <meta property="og:description" content="The property manager you can't afford to hire. Upload your rent roll and be running in an afternoon — every AI draft waits for your approval." />
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-${raw('<script>(function(){try{var m=document.cookie.match(/(?:^|; )sl_theme=(light|dark)/);document.documentElement.setAttribute("data-theme",(m&&m[1])||"dark");}catch(e){}})();</script>')}
+${raw(`<script>${THEME_BOOT_JS}</script>`)}
 <style>${raw(MARKETING_CSS)}</style>
 </head><body class="mk">${body}${mkChromeScript()}</body></html>`.s}`);
 }

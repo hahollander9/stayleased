@@ -391,6 +391,71 @@ body.mk-mm-open { overflow: hidden; }
 .mk-h2::after { content: ''; position: absolute; left: 2px; bottom: 0; width: 68px; height: 3px; border-radius: 99px; background: var(--grad-wide); box-shadow: 0 0 16px rgba(96, 165, 250, .55); transform: scaleX(0); transform-origin: 0 50%; transition: transform .8s var(--ease) .3s; }
 .mk-reveal.vis .mk-h2::after, .vis .mk-h2::after { transform: scaleX(1); }
 
+/* ---------- scroll-DRIVEN choreography (Chromium/Safari) ----------
+ * Where the browser supports scroll timelines, reveals stop being one-shot
+ * fades: every element animates WITH the scroll position — cards stand up
+ * in 3D and settle as they cross the viewport, product frames straighten
+ * out of perspective, headlines wipe open, paired panels converge from the
+ * sides — all reversible when scrolling back. Browsers without support
+ * keep the IntersectionObserver reveals above. */
+@supports (animation-timeline: view()) {
+  .mk-reveal, .mk-stag {
+    opacity: 1; transform: none; filter: none;
+    transition: none;
+    animation-name: mk-scrub-rise; animation-timing-function: linear; animation-fill-mode: both;
+    animation-timeline: view(); animation-range: entry 0% cover 32%;
+  }
+  /* the hero is already on screen at load and has its own entrance */
+  .mk-hero-in.mk-reveal { animation: none; }
+
+  /* cards stand up from flat and settle */
+  .mk-grid3, .mk-grid5, .mk-checks, .mk-levels, .mk-two, .mk-ask-grid, .mk-price-row, .mk-foot-grid { perspective: 1100px; }
+  .mk-stag { animation-name: mk-scrub-stand; animation-range: entry 0% cover 42%; transform-origin: 50% 88%; }
+
+  /* paired panels converge from the sides with a hint of turn */
+  .mk-two > .mk-stag:first-child, .mk-ask-grid > .mk-stag:first-child, .mk-price-row > .mk-stag:first-child { animation-name: mk-scrub-left; }
+  .mk-two > .mk-stag:last-child, .mk-ask-grid > .mk-stag:last-child, .mk-price-row > .mk-stag:last-child { animation-name: mk-scrub-right; }
+
+  /* the first-week steps sweep in from the left, numbers springing after */
+  .mk-steps > .mk-stag { animation-name: mk-scrub-left; animation-range: entry 0% cover 38%; }
+  .mk-steps .mk-step-n {
+    animation-name: mk-scrub-pop; animation-timing-function: linear; animation-fill-mode: both;
+    animation-timeline: view(); animation-range: entry 20% cover 46%;
+  }
+
+  /* headlines wipe open left-to-right */
+  .mk-band .mk-h2 {
+    animation-name: mk-scrub-wipe; animation-timing-function: linear; animation-fill-mode: both;
+    animation-timeline: view(); animation-range: entry 0% cover 34%;
+  }
+  /* the walkthrough pair converges like the other paired panels */
+  .mk-two-col { perspective: 1100px; }
+  .mk-two-col > .mk-stag:first-child { animation-name: mk-scrub-left; }
+  .mk-two-col > .mk-stag:last-child { animation-name: mk-scrub-right; }
+
+  /* product frames straighten out of perspective as they arrive */
+  .mk-band .mk-frame {
+    animation-name: mk-scrub-straighten; animation-timing-function: linear; animation-fill-mode: both;
+    animation-timeline: view(); animation-range: entry 0% cover 48%;
+  }
+
+  /* section kickers drift in a beat ahead of their headline */
+  .mk-band .mk-kicker {
+    animation-name: mk-scrub-kicker; animation-timing-function: linear; animation-fill-mode: both;
+    animation-timeline: view(); animation-range: entry 0% cover 26%;
+  }
+}
+/* End keyframes are implicit (the element's own resting style) so filled
+ * scroll animations never pin transform/filter and hover lifts keep working. */
+@keyframes mk-scrub-rise { from { opacity: 0; transform: translateY(30px); } }
+@keyframes mk-scrub-stand { from { opacity: 0; transform: perspective(1100px) rotateX(18deg) translateY(56px) scale(.95); filter: blur(5px); } 60% { filter: blur(0); } }
+@keyframes mk-scrub-left { from { opacity: 0; transform: translateX(-72px) rotateY(5deg) scale(.97); filter: blur(4px); } 60% { filter: blur(0); } }
+@keyframes mk-scrub-right { from { opacity: 0; transform: translateX(72px) rotateY(-5deg) scale(.97); filter: blur(4px); } 60% { filter: blur(0); } }
+@keyframes mk-scrub-wipe { from { clip-path: inset(-20px 94% -20px -20px); opacity: .25; } to { clip-path: inset(-20px -4% -20px -20px); opacity: 1; } }
+@keyframes mk-scrub-straighten { from { opacity: .3; transform: perspective(1200px) rotateX(12deg) translateY(42px) scale(.93); } }
+@keyframes mk-scrub-pop { from { opacity: 0; transform: scale(.35) rotate(-14deg); } }
+@keyframes mk-scrub-kicker { from { opacity: 0; letter-spacing: .34em; transform: translateY(14px); } }
+
 /* ask stayleased section */
 .mk-kicker-ai { display: inline-flex; align-items: center; gap: 7px; }
 .mk-ask-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 44px; align-items: center; }
@@ -547,6 +612,7 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
   @view-transition { navigation: none; }
   body.mk { scroll-behavior: auto; }
+  .mk-reveal, .mk-stag, .mk-band .mk-h2, .mk-band .mk-frame, .mk-band .mk-kicker, .mk-steps .mk-step-n { animation: none !important; }
   .mk-reveal, .mk-stag { opacity: 1 !important; transform: none !important; filter: none !important; transition: none; }
   .mk-h2::after { transform: scaleX(1); transition: none; }
   .mk-hero::before, .mk-dark::before, .mk-hero-visual, .mk-frame-feed div::before, .mk-kicker { animation: none !important; }
