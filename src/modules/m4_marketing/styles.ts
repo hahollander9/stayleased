@@ -1,9 +1,12 @@
-/** Marketing site styles v3 — "Editorial" design language. Ink on paper,
- * Fraunces serif display, hairline rules, generous whitespace, ONE accent
- * (brand blue) used sparingly. No gradients, no glass, no glow — restraint
- * is the aesthetic. Light-first with a dark-ink variant for the system
- * theme. All class names are unchanged from v2 (tests + templates pin
- * them); only the visual language moved. */
+/** Marketing site styles v6 — Entrata-grade theme (Space Grotesk display,
+ * cream/white bands, pill buttons, elevated cards, floating hero
+ * vignettes) + choreographed one-shot motion. Motion doctrine (permanent):
+ * NOTHING is scroll-scrubbed — each element animates once on first entry
+ * (typed direction + stagger via the --sd var set in chrome.ts) and then
+ * holds still; the only continuous motion is the hero vignettes' slow
+ * float, which is time-based, never scroll-linked. Light-first with a
+ * dark variant for the system theme. All class names are unchanged from
+ * v2 (tests + templates pin them); only visuals and motion move. */
 
 export const MARKETING_CSS = `
 @font-face {
@@ -25,6 +28,7 @@ export const MARKETING_CSS = `
   --btn-bg: #1D4ED8; --btn-ink: #FFFFFF;
   --display: 'Space Grotesk', 'InterVar', ui-sans-serif, system-ui, sans-serif;
   --ease: cubic-bezier(.16,1,.3,1);
+  --spring: cubic-bezier(.34,1.5,.64,1);
   /* legacy token aliases (components reference these) */
   --bg: var(--paper); --sky: var(--accent); --sky-ink: var(--accent);
 }
@@ -140,9 +144,9 @@ body.mk-mm-open { overflow: hidden; }
 /* hero vignettes — stylized product cards, layered like a desk */
 .mk-vigrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; align-items: start; margin: 60px auto -78px; position: relative; z-index: 2; padding-bottom: 8px; }
 .mk-hero + .mk-band { padding-top: 178px; }
-.mk-vig { background: var(--card); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 2px 4px rgba(19,21,25,.06), 0 32px 64px -24px rgba(19,21,25,.35); padding: 18px; font-size: 13px; }
-.mk-vig:first-child { transform: rotate(-1.6deg) translateY(14px); }
-.mk-vig:last-child { transform: rotate(1.4deg) translateY(10px); }
+.mk-vig { --vr: 0deg; --vy: 0px; background: var(--card); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 2px 4px rgba(19,21,25,.06), 0 32px 64px -24px rgba(19,21,25,.35); padding: 18px; font-size: 13px; transform: rotate(var(--vr)) translateY(var(--vy)); }
+.mk-vig:first-child { --vr: -1.6deg; --vy: 14px; }
+.mk-vig:last-child { --vr: 1.4deg; --vy: 10px; }
 .mk-vig-head { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid var(--line-2); margin-bottom: 12px; }
 .mk-vig-av { width: 30px; height: 30px; border-radius: 50%; background: var(--accent); color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center; flex: none; }
 .mk-vig-head b { font-size: 13px; color: var(--ink); display: block; line-height: 1.2; }
@@ -166,7 +170,7 @@ html[data-theme="dark"] .mk-vig-chip.warn { color: #E3B341; border-color: rgba(2
 .mk-vig-ghost { border: 1px solid var(--line); color: var(--ink2); }
 @media (max-width: 980px) {
   .mk-vigrow { grid-template-columns: 1fr; margin: 40px auto 0; }
-  .mk-vig, .mk-vig:first-child, .mk-vig:last-child { transform: none; }
+  .mk-vig, .mk-vig:first-child, .mk-vig:last-child { --vr: 0deg; --vy: 0px; transform: none; }
   .mk-hero + .mk-band { padding-top: 96px; }
   .mk-vigrow { margin-bottom: 40px; }
 }
@@ -175,8 +179,7 @@ html[data-theme="dark"] .mk-vig-chip.warn { color: #E3B341; border-color: rgba(2
 .mk-suites { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
 .mk-suite { display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: 16px; background: var(--card); padding: 28px; box-shadow: 0 1px 2px rgba(19,21,25,.05), 0 14px 34px -18px rgba(19,21,25,.22); transition: transform .18s var(--ease), box-shadow .18s ease; }
 .mk-suite:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(19,21,25,.05), 0 24px 48px -20px rgba(19,21,25,.28); }
-.mk-suite h3 { font-family: var(--display); font-size: 21px; font-weight: 640; letter-spacing: -.015em; color: var(--ink); margin-bottom: 7px; }
-.mk-suite p { font-size: 14px; color: var(--ink2); margin-bottom: 14px; }
+.mk-suite h3 { font-family: var(--display); font-size: 21px; font-weight: 640; letter-spacing: -.015em; color: var(--ink); margin-bottom: 12px; }
 .mk-suite ul { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 6px; flex: 1; }
 .mk-suite li { position: relative; padding-left: 18px; font-size: 13.5px; color: var(--ink2); line-height: 1.5; }
 .mk-suite li::before { content: ''; position: absolute; left: 0; top: 9px; width: 8px; height: 1.5px; background: var(--accent); }
@@ -193,9 +196,6 @@ html[data-theme="dark"] .mk-vig-chip.warn { color: #E3B341; border-color: rgba(2
 .mk-frame-kpis div { border: 1px solid var(--line-2); border-radius: 6px; padding: 10px 12px; }
 .mk-frame-kpis b { display: block; font-size: 19px; letter-spacing: -.02em; color: var(--ink); font-family: var(--display); font-weight: 560; }
 .mk-frame-kpis i { font-style: normal; font-size: 11px; color: var(--mut); }
-.mk-frame-chart { display: flex; align-items: flex-end; gap: 7px; height: 110px; padding: 4px 16px 12px; }
-.mk-frame-chart i { flex: 1; background: var(--accent); opacity: .85; border-radius: 2px 2px 0 0; min-height: 12%; transform: scaleY(0); transform-origin: bottom; transition: transform .7s var(--ease); }
-.mk-frame-chart i.grown { transform: scaleY(1); }
 .mk-frame-aihead { display: flex; align-items: center; justify-content: space-between; padding: 9px 16px; border-top: 1px solid var(--line-2); }
 .mk-frame-aihead span { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); }
 .mk-frame-aihead i { font-style: normal; font-size: 11px; font-weight: 600; color: var(--ink2); border: 1px solid var(--line); border-radius: 3px; padding: 2px 8px; }
@@ -203,17 +203,6 @@ html[data-theme="dark"] .mk-vig-chip.warn { color: #E3B341; border-color: rgba(2
 .mk-frame-feed div { position: relative; padding-left: 14px; }
 .mk-frame-feed div::before { content: ''; position: absolute; left: 0; top: 8px; width: 5px; height: 5px; border-radius: 99px; background: var(--accent); }
 .mk-frame-feed em { font-style: normal; font-weight: 650; color: var(--ink); }
-
-/* capability ticker — a thin editorial rule line */
-.mk-marquee { position: relative; overflow: hidden; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 13px 0; background: var(--paper); }
-.mk-marquee::before, .mk-marquee::after { content: ''; position: absolute; top: 0; bottom: 0; width: 110px; z-index: 1; pointer-events: none; }
-.mk-marquee::before { left: 0; background: linear-gradient(90deg, var(--paper), transparent); }
-.mk-marquee::after { right: 0; background: linear-gradient(270deg, var(--paper), transparent); }
-.mk-marquee-track { display: flex; gap: 38px; width: max-content; animation: mkMarquee 40s linear infinite; }
-.mk-marquee:hover .mk-marquee-track { animation-play-state: paused; }
-.mk-mq-item { display: inline-flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; color: var(--mut); white-space: nowrap; }
-.mk-mq-item::before { content: ''; width: 4px; height: 4px; border-radius: 99px; background: var(--faint); }
-@keyframes mkMarquee { to { transform: translateX(-50%); } }
 
 /* sections — hairline-separated bands on one paper */
 .mk-band { position: relative; padding: 96px 0; }
@@ -338,11 +327,40 @@ html[data-theme="dark"] .mk-compare .mkc-us { background: rgba(143,175,247,.07);
 .mk-foot-grid a:hover { color: #FFFFFF; }
 .mk-foot-base { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding-top: 20px; font-size: 13px; align-items: center; color: #6B6F7A; }
 
-/* reveal — ONE calm fade-up on first entry. No scroll-scrubbing, no
- * directional slides, no letter-spacing or clip-path movement: content
- * appears once and then holds perfectly still. */
-.mk-reveal, .mk-stag { opacity: 0; transform: translateY(12px); transition: opacity .6s ease, transform .6s ease; }
-.mk-reveal.vis, .vis .mk-stag, .mk-stag.vis { opacity: 1; transform: none; }
+/* ---------- motion v6: choreographed ONE-SHOT reveals ----------
+ * Doctrine (permanent): nothing on this site is scrubbed by scroll
+ * position — scrubbing reads as vibration. Every element animates exactly
+ * once on first entry, with direction, stagger, and spring chosen per
+ * component, then holds perfectly still. The chrome script assigns
+ * .mk-stag + a --sd delay to group children and .vis on entry; everything
+ * below is pure CSS keyed off those. The footer never gets any of this. */
+.mk-reveal { opacity: 0; transform: translateY(10px); transition: opacity .65s var(--ease), transform .65s var(--ease); }
+.mk-reveal.vis { opacity: 1; transform: none; }
+/* headings arrive as a focus-pull: rise + de-blur, lead follows a beat later */
+.mk-reveal > .mk-h2, .mk-reveal .mk-ask-copy > .mk-h2 { opacity: 0; transform: translateY(26px); filter: blur(9px); transition: opacity .8s var(--ease), transform .8s var(--ease), filter .8s var(--ease); }
+.mk-reveal > .mk-lead, .mk-reveal .mk-ask-copy > .mk-lead { opacity: 0; transform: translateY(20px); transition: opacity .7s var(--ease) .12s, transform .7s var(--ease) .12s; }
+.mk-reveal.vis > .mk-h2, .mk-reveal.vis .mk-ask-copy > .mk-h2, .mk-reveal.vis > .mk-lead, .mk-reveal.vis .mk-ask-copy > .mk-lead { opacity: 1; transform: none; filter: none; }
+/* staggered children: rise by default, typed direction per component.
+ * Every typed override is :where()-wrapped (specificity 0,1,0) so the
+ * .vis reset below (0,2,0) always wins — a bare ".mk-compare tbody >"
+ * override once out-specified the reset and left rows stuck mid-slide. */
+.mk-stag { opacity: 0; transform: translateY(26px); transition: opacity .6s var(--ease) var(--sd, 0s), transform .6s var(--ease) var(--sd, 0s); }
+:where(.mk-suites, .mk-grid3, .mk-grid2, .mk-grid5, .mk-price-row) > .mk-stag { transform: translateY(30px) scale(.96); }
+:where(.mk-steps, .mk-levels, .mk-checks) > .mk-stag { transform: translateX(-30px); }
+:where(.mk-compare tbody) > .mk-stag { transform: none; } /* rows fade in place — slides get clipped by overflow-x */
+:where(.mk-ask-grid, .mk-two-col) > .mk-stag:where(:first-child) { transform: translateX(-32px); }
+:where(.mk-ask-grid, .mk-two-col) > .mk-stag:where(:last-child) { transform: translateX(32px); }
+.vis .mk-stag, .mk-stag.vis { opacity: 1; transform: none; }
+/* inner choreography: parts arrive just after their row, with a spring */
+.mk-stag .mk-step-n { opacity: 0; transform: scale(.4); transition: opacity .45s var(--ease) calc(var(--sd, 0s) + .18s), transform .6s var(--spring) calc(var(--sd, 0s) + .18s); }
+.mk-stag .mk-level-cube { opacity: 0; transform: scale(.35) rotate(-100deg); transition: opacity .45s var(--ease) calc(var(--sd, 0s) + .18s), transform .65s var(--spring) calc(var(--sd, 0s) + .18s); }
+.vis .mk-stag .mk-step-n, .vis .mk-stag .mk-level-cube { opacity: 1; transform: none; }
+/* the draft card plays out its own story: lead arrives → AI drafts → note */
+.mk-stag .mk-nta-row, .mk-stag .mk-nta-draft, .mk-stag .mk-nta-note { opacity: 0; transform: translateY(12px); transition: opacity .55s var(--ease), transform .55s var(--ease); }
+.mk-stag .mk-nta-row { transition-delay: calc(var(--sd, 0s) + .3s); }
+.mk-stag .mk-nta-draft { transition-delay: calc(var(--sd, 0s) + .65s); }
+.mk-stag .mk-nta-note { transition-delay: calc(var(--sd, 0s) + 1s); }
+.vis .mk-stag .mk-nta-row, .vis .mk-stag .mk-nta-draft, .vis .mk-stag .mk-nta-note { opacity: 1; transform: none; }
 .mk-h2 { padding-bottom: 4px; }
 
 /* ask stayleased section */
@@ -451,16 +469,39 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 @keyframes mkFade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mkPing { 0% { opacity: 1; } 100% { opacity: 1; } }
 
-/* hero entrance — a single quiet rise, then the page is still */
-.mk-hero-copy > * { animation: mkUp .6s var(--ease) both; }
-.mk-hero-copy > *:nth-child(1) { animation-delay: .03s; }
-.mk-hero-copy > *:nth-child(2) { animation-delay: .1s; }
-.mk-hero-copy > *:nth-child(3) { animation-delay: .17s; }
-.mk-hero-copy > *:nth-child(4) { animation-delay: .25s; }
-.mk-hero-copy > *:nth-child(5) { animation-delay: .33s; }
-.mk-hero-in .mk-hero-visual { animation: mkUp .7s var(--ease) .2s both; }
-@keyframes mkUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
-@keyframes mkVis { from { opacity: 0; } to { opacity: 1; } }
+/* hero entrance — plays once on load, then only the vignettes breathe.
+ * The copy cascades down; the three vignette cards rise up into their
+ * desk tilts with a spring; inside them the conversation/tasks play out
+ * in order like live product activity; then each card floats on its own
+ * slow phase (continuous but NOT scroll-linked — nothing ever vibrates). */
+@media (prefers-reduced-motion: no-preference) {
+  .mk-hero-copy > * { animation: mkUp .65s var(--ease) both; }
+  .mk-hero-copy > *:nth-child(1) { animation-delay: .05s; }
+  .mk-hero-copy > *:nth-child(2) { animation-delay: .14s; animation-duration: .8s; }
+  .mk-hero-copy > *:nth-child(3) { animation-delay: .26s; }
+  .mk-hero-copy > *:nth-child(4) { animation-delay: .38s; }
+  .mk-hero-copy > *:nth-child(5) { animation-delay: .5s; }
+  .mk-hero h1 { animation-name: mkH1; }
+  .mk-vig { animation: mkVigIn .85s var(--ease) both, mkVigFloat 7s ease-in-out 3.4s infinite alternate; }
+  .mk-vig:nth-child(1) { animation-delay: .72s, 3.4s; }
+  .mk-vig:nth-child(2) { animation-delay: .58s, 2.9s; animation-duration: .85s, 8.2s; }
+  .mk-vig:nth-child(3) { animation-delay: .86s, 3.9s; animation-duration: .85s, 7.4s; }
+  .mk-vig > :not(.mk-vig-head) { animation: mkItemIn .5s var(--ease) both; }
+  .mk-vig > :nth-child(2) { animation-delay: 1.5s; }
+  .mk-vig > :nth-child(3) { animation-delay: 1.95s; }
+  .mk-vig > :nth-child(4) { animation-delay: 2.4s; }
+  .mk-vig > :nth-child(5) { animation-delay: 2.85s; }
+  .mk-hero::before { animation: mkDrift 18s ease-in-out infinite alternate; }
+}
+@keyframes mkUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
+@keyframes mkH1 { from { opacity: 0; transform: translateY(22px); filter: blur(10px); } to { opacity: 1; transform: none; filter: none; } }
+@keyframes mkVigIn { from { opacity: 0; transform: rotate(var(--vr)) translateY(calc(var(--vy) + 52px)) scale(.94); } to { opacity: 1; transform: rotate(var(--vr)) translateY(var(--vy)) scale(1); } }
+@keyframes mkVigFloat { from { transform: rotate(var(--vr)) translateY(var(--vy)); } to { transform: rotate(var(--vr)) translateY(calc(var(--vy) - 9px)); } }
+@keyframes mkItemIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
+@keyframes mkDrift { from { transform: translateX(-58%) translateY(0); } to { transform: translateX(-42%) translateY(26px); } }
+/* soft brand wash behind the hero — static color, slow positional drift */
+.mk-hero::before { content: ''; position: absolute; left: 50%; top: -240px; width: 980px; height: 680px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(29,78,216,.08), transparent 72%); pointer-events: none; }
+html[data-theme="dark"] .mk-hero::before { background: radial-gradient(closest-side, rgba(127,163,246,.07), transparent 72%); }
 
 /* back-to-top */
 #mktop { position: fixed; right: 22px; bottom: 22px; z-index: 70; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 12px 26px -14px rgba(20,18,14,.4); opacity: 0; transform: translateY(14px); pointer-events: none; transition: opacity .26s var(--ease), transform .26s var(--ease), border-color .16s ease; }
@@ -493,14 +534,16 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
   @view-transition { navigation: none; }
   body.mk { scroll-behavior: auto; }
-  .mk-reveal, .mk-stag { opacity: 1 !important; transform: none !important; transition: none; }
-  .mk-h2::after { transform: scaleX(1); transition: none; }
-  .mk-marquee-track { animation: none; }
-  .mk-frame-chart i { transform: scaleY(1); }
+  /* absolutely everything visible and still — the motion system is opt-in
+   * (classes come from JS, hero keyframes live behind no-preference), and
+   * this block is the belt-and-braces guarantee on top */
+  .mk-reveal, .mk-stag, .mk-reveal > .mk-h2, .mk-reveal .mk-ask-copy > .mk-h2, .mk-reveal > .mk-lead, .mk-reveal .mk-ask-copy > .mk-lead,
+  .mk-stag .mk-step-n, .mk-stag .mk-level-cube, .mk-stag .mk-nta-row, .mk-stag .mk-nta-draft, .mk-stag .mk-nta-note {
+    opacity: 1 !important; transform: none !important; filter: none !important; transition: none !important;
+  }
   #mktop { transition: opacity .2s ease; }
   .mk-live i, .mk-typing i { animation: none !important; }
   .mk-msg { animation: none; }
   .mk-item.open .mk-drop, .mk-mobile.open { animation: none; }
-  .mk-hero-copy > *, .mk-hero-in .mk-hero-visual { animation: none !important; }
 }
 `;

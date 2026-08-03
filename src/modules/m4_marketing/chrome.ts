@@ -285,26 +285,40 @@ const CHROME_JS = `
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
 
-  // ---------- reveal-on-scroll for pages that opt in via .mk-reveal ----------
+  // ---------- motion engine: choreographed ONE-SHOT reveals ----------
+  // Doctrine: nothing is ever scrubbed by scroll position. Each section and
+  // each staggered child animates exactly once on first entry, then holds
+  // perfectly still. Direction, delay, and per-part choreography (step
+  // numbers popping, table rows sliding, the draft card sequencing) all
+  // live in CSS keyed off .vis + the --sd delay set here. The footer never
+  // animates. Under prefers-reduced-motion nothing is hidden at all.
   if (reduce) {
     document.querySelectorAll('.mk-reveal, .mk-stag').forEach(function (el) { el.classList.add('vis'); });
     return;
   }
-  ['.mk-grid3', '.mk-grid2', '.mkp-stats'].forEach(function (sel) {
+  var GROUPS = ['.mk-suites', '.mk-grid3', '.mk-grid2', '.mk-grid5', '.mkp-stats', '.mk-steps', '.mk-levels', '.mk-checks', '.mk-price-row', '.mk-ask-grid', '.mk-two-col', '.mk-two', '.mk-compare tbody'];
+  GROUPS.forEach(function (sel) {
     document.querySelectorAll(sel).forEach(function (grp) {
       Array.prototype.forEach.call(grp.children, function (child, i) {
         child.classList.add('mk-stag');
-        child.style.transitionDelay = (0.05 + i * 0.06) + 's';
+        child.style.setProperty('--sd', (0.05 + Math.min(i, 9) * 0.08).toFixed(2) + 's');
       });
     });
   });
   if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('vis'); io.unobserve(en.target); } });
-    }, { threshold: 0.1, rootMargin: '0px 0px -7% 0px' });
-    document.querySelectorAll('.mk-reveal').forEach(function (el) { io.observe(el); });
-    // staggered groups reveal on their own entry (their parents may not be .mk-reveal)
-    document.querySelectorAll('.mk-grid3, .mk-grid2, .mkp-stats').forEach(function (el) { io.observe(el); });
+    }, { threshold: 0, rootMargin: '0px 0px -8% 0px' });
+    // threshold 0: fires the moment the first pixel crosses the line 8%
+    // above the viewport bottom — a fractional threshold can NEVER fire for
+    // an element taller than that fraction allows (legal prose, long wraps)
+    // every section wrap becomes a reveal trigger (headings + leads rise as
+    // one; the hero and footer are excluded — hero animates on load, the
+    // footer must be readable the instant it appears)
+    document.querySelectorAll('.mk-band .mk-wrap, .mk-reveal').forEach(function (el) { el.classList.add('mk-reveal'); io.observe(el); });
+    // staggered groups reveal on their own entry (their wrap may already be
+    // visible when they scroll in, and some live outside .mk-band wraps)
+    document.querySelectorAll(GROUPS.join(', ')).forEach(function (el) { io.observe(el); });
   } else {
     document.querySelectorAll('.mk-reveal, .mk-stag').forEach(function (el) { el.classList.add('vis'); });
   }
