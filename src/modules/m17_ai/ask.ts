@@ -33,6 +33,20 @@ function matchProperty(ctx: Ctx, question: string): { id: string; name: string }
   return null;
 }
 
+/** The property a question is about: a name in the question wins; otherwise
+ * the property the user is currently working in (the switcher / a property
+ * dashboard) scopes the answer — that's what makes Ask feel aware of where
+ * you are. Saying "portfolio" or "all properties" escapes back to org-wide. */
+function contextProperty(ctx: Ctx, question: string): { id: string; name: string } | null {
+  const named = matchProperty(ctx, question);
+  if (named) return named;
+  if (/portfolio|all propert|across (the )?(org|company|portfolio)|org.?wide|overall/i.test(question)) return null;
+  if (ctx.currentPropertyId) {
+    return q1<any>('SELECT id, name FROM properties WHERE id=? AND org_id=?', ctx.currentPropertyId, ctx.orgId) || null;
+  }
+  return null;
+}
+
 type Handler = (ctx: Ctx, question: string) => AskAnswer | null;
 
 const HANDLERS: Handler[] = [
@@ -41,7 +55,7 @@ const HANDLERS: Handler[] = [
     if (!/delinquen|owe|past due|balance/i.test(question)) return null;
     const money = /(?:over|above|more than|>)\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i.exec(question);
     const floor = money ? parseUsd(money[1]!) : 0;
-    const prop = matchProperty(ctx, question);
+    const prop = contextProperty(ctx, question);
     const rows = agingRows(ctx, { propertyId: prop?.id || null }).filter((a) => a.balance >= floor);
     const total = rows.reduce((s, a) => s + a.balance, 0);
     return {
@@ -64,7 +78,7 @@ const HANDLERS: Handler[] = [
     if (!/turn|expir|ending|end this|end next|move.?outs?/i.test(question)) return null;
     const next = /next month/i.test(question);
     const mk = monthKey(addMonths(ctx.businessDate, next ? 1 : 0));
-    const prop = matchProperty(ctx, question);
+    const prop = contextProperty(ctx, question);
     const pf = prop ? ' AND l.property_id=?' : propFilter(ctx, 'l.property_id').sql;
     const params = prop ? [prop.id] : propFilter(ctx, 'l.property_id').params;
     const leases = q<any>(
@@ -92,7 +106,7 @@ const HANDLERS: Handler[] = [
   // occupancy / exposure
   (ctx, question) => {
     if (!/occupanc|exposure|vacan|how full/i.test(question)) return null;
-    const prop = matchProperty(ctx, question);
+    const prop = contextProperty(ctx, question);
     const pf = propFilter(ctx, 'id');
     const props = prop ? [prop] : q<any>(`SELECT id, name FROM properties WHERE org_id=?${pf.sql}`, ctx.orgId, ...pf.params);
     const rows = props.map((p: any) => {
@@ -117,7 +131,7 @@ const HANDLERS: Handler[] = [
     if (!/collect|on.?time/i.test(question)) return null;
     const last = /last month/i.test(question);
     const mk = monthKey(addMonths(ctx.businessDate, last ? -1 : 0));
-    const prop = matchProperty(ctx, question);
+    const prop = contextProperty(ctx, question);
     const s = receivablesStats(ctx, mk, prop?.id || null);
     return {
       title: `Collections — ${fmtMonth(mk)}${prop ? ` at ${prop.name}` : ''}`,
@@ -144,7 +158,7 @@ const HANDLERS: Handler[] = [
   // work orders / maintenance backlog
   (ctx, question) => {
     if (!/work order|maintenance|backlog|repairs?/i.test(question)) return null;
-    const prop = matchProperty(ctx, question);
+    const prop = contextProperty(ctx, question);
     const pf = prop ? ' AND wo.property_id=?' : propFilter(ctx, 'wo.property_id').sql;
     const params = prop ? [prop.id] : propFilter(ctx, 'wo.property_id').params;
     const rows = q<any>(
@@ -292,4 +306,55 @@ export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[
 
 export function askBrainLive(): boolean {
   return llmStatus().live;
+}
+
+// ---------- context for the everywhere-panel (and the /ask page) ----------
+
+/** Suggested questions by app area. Each phrasing hits a structured handler
+ * so a click always lands a real table, not a fallback. Unnamed questions
+ * scope to the current property automatically via contextProperty. */
+const SECTION_CHIPS: [RegExp, string[]][] = [
+  [/^\/(leads|tours|leasing|funnel|applications|syndication|cms|hub\/leasing)/, [
+    'which units turn this month', 'occupancy right now', 'pricing recommendations', 'vacancy and exposure']],
+  [/^\/(residents|leases|renewals|hub\/residents|inbox|comms)/, [
+    'which leases end next month', 'delinquency over $500', 'collection rate this month', 'occupancy right now']],
+  [/^\/(receivables|delinquency|deposits|gl|banking|payables|budgets|close|statements|utilities|hub\/financials)/, [
+    'collection rate last month', 'delinquency over $500', 'top vendor spend', 'which leases end this month']],
+  [/^\/(workorders|turns|dispatch|inspections|pm\b|inventory|purchasing|vendors|facilities|hub\/operations)/, [
+    'open work orders', 'which units turn this month', 'top vendor spend', 'occupancy right now']],
+  [/^\/(properties|units|map|insurance|hub\/property)/, [
+    'occupancy right now', 'vacancy and exposure', 'open work orders', 'which units turn this month']],
+];
+
+export interface AskPanelContext {
+  scope: string | null; // property name when answers are scoped
+  greeting: string;
+  chips: string[];
+}
+
+/** What the Ask panel opens with: a greeting grounded in live figures for
+ * wherever the user is standing (their selected property, or the portfolio)
+ * and suggested questions tailored to the app area they are looking at. */
+export function askPanelContext(ctx: Ctx, path: string): AskPanelContext {
+  const prop = ctx.currentPropertyId
+    ? q1<any>('SELECT id, name FROM properties WHERE id=? AND org_id=?', ctx.currentPropertyId, ctx.orgId)
+    : null;
+  let greeting: string;
+  if (prop) {
+    const m = computeDayMetrics(ctx, prop.id, ctx.businessDate);
+    const owed = agingRows(ctx, { propertyId: prop.id }).reduce((s, a) => s + a.balance, 0);
+    const wos = val<number>(
+      `SELECT COUNT(*) FROM work_orders WHERE org_id=? AND property_id=? AND status NOT IN ('completed','canceled')`,
+      ctx.orgId, prop.id,
+    ) || 0;
+    greeting = `You're working in ${prop.name} — ${m.occupancy_pct}% occupied, ${usd(owed)} outstanding, ${wos} open work order${wos === 1 ? '' : 's'}. Answers are scoped here; say "portfolio" for the whole picture.`;
+  } else {
+    const units = val<number>('SELECT COUNT(*) FROM units WHERE org_id=?', ctx.orgId) || 0;
+    const occ = val<number>(`SELECT COUNT(*) FROM units WHERE org_id=? AND status='occupied'`, ctx.orgId) || 0;
+    const owed = agingRows(ctx, {}).reduce((s, a) => s + a.balance, 0);
+    greeting = `Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: ${units ? `${Math.round((occ / units) * 1000) / 10}% occupied` : 'no units yet'}, ${usd(owed)} outstanding right now. Name any property to zoom in.`;
+  }
+  const chips = SECTION_CHIPS.find(([re]) => re.test(path))?.[1]
+    || ['occupancy right now', 'delinquency over $500', 'which units turn this month', 'collection rate last month'];
+  return { scope: prop?.name || null, greeting, chips };
 }

@@ -1,6 +1,6 @@
 import { html, raw, when, type Raw } from '../../lib/html.ts';
 import { htmlRes, type Res } from '../../lib/http.ts';
-import { logo } from '../../ui/ui.ts';
+import { logo, THEME_BOOT_JS } from '../../ui/ui.ts';
 import { env } from '../../lib/env.ts';
 import { MARKETING_CSS } from './styles.ts';
 
@@ -149,7 +149,7 @@ export function mkDoc(title: string, description: string, body: Raw): Res {
 <meta property="og:description" content="${description}" />
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
-${raw('<script>(function(){try{var m=document.cookie.match(/(?:^|; )sl_theme=(light|dark)/);document.documentElement.setAttribute("data-theme",(m&&m[1])||"dark");}catch(e){}})();</script>')}
+${raw(`<script>${THEME_BOOT_JS}</script>`)}
 <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
 <style>${raw(MARKETING_CSS)}</style>

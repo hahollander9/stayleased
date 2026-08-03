@@ -1249,8 +1249,8 @@ svg.chart g.ct:hover .ctdot { r: 4.6px; }
 .aichat-send:active { transform: scale(.96); }
 
 /* while the assistant is thinking/typing */
-.aichat-panel.busy .aichat-chip { opacity: .45; pointer-events: none; }
-.aichat-panel.busy .aichat-send { opacity: .55; cursor: default; transform: none; box-shadow: 0 4px 12px rgba(99, 102, 241, .2); filter: none; }
+.aichat-panel.busy .aichat-chip, .askdock.busy .aichat-chip { opacity: .45; pointer-events: none; }
+.aichat-panel.busy .aichat-send, .askdock.busy .aichat-send { opacity: .55; cursor: default; transform: none; box-shadow: 0 4px 12px rgba(99, 102, 241, .2); filter: none; }
 
 @media (max-width: 720px) {
   .aichat-hero { flex-wrap: wrap; gap: 12px; }
@@ -1266,4 +1266,95 @@ svg.chart g.ct:hover .ctdot { r: 4.6px; }
   .aichat-extra { transition: none; opacity: 1; transform: none; }
   .content { animation: none; }
   .dash-feed .df-head i { animation: none; }
+}
+
+/* ---------- AI workflow pipeline ---------- */
+.aiflow-legend {
+  display: flex; align-items: stretch; gap: 10px; margin-bottom: 16px;
+  padding: 14px 16px; border: 1px solid var(--line); border-radius: 14px;
+  background: linear-gradient(180deg, rgba(96, 165, 250, .05), transparent 70%), var(--surface);
+}
+.afl-step { display: flex; gap: 10px; align-items: flex-start; flex: 1; min-width: 0; }
+.afl-step i {
+  width: 22px; height: 22px; flex: none; border-radius: 50%; display: grid; place-items: center;
+  font-size: 11px; font-weight: 800; font-style: normal; color: #fff;
+  background: var(--grad, linear-gradient(135deg, #2563eb, #4f46e5));
+}
+.afl-step b { display: block; font-size: 12.5px; }
+.afl-step span { display: block; font-size: 11.5px; color: var(--muted); line-height: 1.45; margin-top: 1px; }
+.afl-arrow { align-self: center; color: var(--faint); font-weight: 700; flex: none; }
+@media (max-width: 900px) { .aiflow-legend { flex-wrap: wrap; } .afl-arrow { display: none; } .afl-step { flex: 1 1 45%; } }
+
+.aiflow { display: flex; align-items: flex-start; gap: 0; margin: 2px 0 14px; flex-wrap: wrap; }
+.aiflow .afs { display: flex; align-items: center; gap: 7px; flex: none; }
+.aiflow .afs i {
+  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; flex: none;
+  font-size: 10.5px; font-weight: 800; font-style: normal;
+  border: 1.6px solid var(--line); color: var(--muted); background: var(--surface-2);
+}
+.aiflow .afs.done i { border-color: transparent; background: var(--grad, linear-gradient(135deg, #2563eb, #4f46e5)); color: #fff; }
+.aiflow .afs.now i { border-color: var(--warn); color: var(--warn); box-shadow: 0 0 0 0 rgba(251, 191, 36, .4); animation: aiflow-ping 2s ease-out infinite; }
+.aiflow .afs.stop i { border-color: rgba(248, 113, 113, .7); color: var(--bad); background: var(--bad-soft, rgba(248, 113, 113, .12)); }
+.aiflow .afs.off { opacity: .45; }
+.aiflow .afs-l { font-size: 11.5px; font-weight: 700; color: var(--ink-2); display: flex; flex-direction: column; line-height: 1.25; }
+.aiflow .afs-l small { font-weight: 600; font-size: 10.5px; color: var(--muted); }
+.aiflow .afs.now .afs-l { color: var(--warn); }
+.aiflow .afs.now .afs-l small { color: var(--warn); opacity: .85; }
+.aiflow .afs.stop .afs-l { color: var(--bad); }
+.aiflow .afc { height: 1.6px; background: var(--line); flex: 0 0 26px; margin: 10px 8px 0; }
+.aiflow .afc.on { background: linear-gradient(90deg, #2563eb, #4f46e5); }
+.aiflow.mini { margin: 0; flex-wrap: nowrap; }
+.aiflow.mini .afs i { width: 13px; height: 13px; font-size: 8px; border-width: 1.3px; }
+.aiflow.mini .afc { flex-basis: 10px; margin: 6px 3px 0; }
+@keyframes aiflow-ping { 0% { box-shadow: 0 0 0 0 rgba(251, 191, 36, .38); } 75% { box-shadow: 0 0 0 7px rgba(251, 191, 36, 0); } 100% { box-shadow: 0 0 0 0 rgba(251, 191, 36, 0); } }
+@media (prefers-reduced-motion: reduce) { .aiflow .afs.now i { animation: none; } }
+[data-theme="light"] .aiflow .afs i { background: #fff; }
+[data-theme="light"] .aiflow .afs.done i { background: var(--grad, linear-gradient(135deg, #2563eb, #4f46e5)); }
+
+/* ---------- Ask StayLeased — the everywhere panel ---------- */
+.askdock { position: fixed; inset: 0; z-index: 90; pointer-events: none; }
+.askdock-back {
+  position: absolute; inset: 0; background: rgba(4, 8, 16, .45);
+  backdrop-filter: blur(2px); opacity: 0; transition: opacity .22s ease;
+}
+[data-theme="light"] .askdock-back { background: rgba(16, 24, 40, .28); }
+.askdock-panel {
+  position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 94vw);
+  display: flex; flex-direction: column;
+  background: var(--bg-2, var(--surface)); border-left: 1px solid var(--line);
+  box-shadow: -24px 0 64px rgba(0, 0, 0, .45);
+  transform: translateX(102%); transition: transform .26s cubic-bezier(.16, 1, .3, 1);
+}
+[data-theme="light"] .askdock-panel { box-shadow: -20px 0 48px rgba(16, 24, 40, .18); background: #fff; }
+.askdock.open { pointer-events: auto; }
+.askdock.open .askdock-back { opacity: 1; }
+.askdock.open .askdock-panel { transform: none; }
+.askdock-head {
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+  border-bottom: 1px solid var(--line-2); flex: none;
+}
+.askdock-head .aichat-orb { width: 34px; height: 34px; flex: none; }
+.askdock-head .aichat-orb::after { display: none; }
+.askdock-title { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+.askdock-title b { font-size: 13.5px; font-weight: 750; }
+.askdock-scope { font-size: 11px; color: var(--accent-ink); font-weight: 650; }
+.askdock-full {
+  font-size: 11.5px; font-weight: 650; color: var(--muted); text-decoration: none;
+  padding: 5px 9px; border: 1px solid var(--line); border-radius: 8px; flex: none;
+}
+.askdock-full:hover { color: var(--ink); border-color: rgba(96, 165, 250, .45); text-decoration: none; }
+.askdock-close {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line);
+  background: none; color: var(--muted); font-size: 19px; line-height: 1; cursor: pointer; flex: none;
+}
+.askdock-close:hover { color: var(--ink); border-color: rgba(96, 165, 250, .45); }
+.askdock .aichat-thread {
+  flex: 1; max-height: none; border: 0; border-radius: 0; min-height: 0;
+}
+.askdock .aichat-chips { padding: 8px 12px 0; flex: none; }
+.askdock .aichat-form { margin: 10px 12px 14px; flex: none; }
+.askdock .aichat-bubble { max-width: 96%; }
+.askdock .aichat-table { max-height: 240px; overflow-y: auto; }
+@media (prefers-reduced-motion: reduce) {
+  .askdock-back, .askdock-panel { transition: none; }
 }

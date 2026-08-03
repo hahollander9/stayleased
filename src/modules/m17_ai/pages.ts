@@ -13,7 +13,7 @@ import { llm, llmStatus } from '../../lib/sim/llm.ts';
 import { AGENTS, decideAction, autonomyFor, aiEnabled, type AgentKey, type Autonomy } from './framework.ts';
 import { handleLeadInbound, draftCollectionsOutreach, draftRenewalOutreach, evaluateCounter, triageRequest, setAiHooksLive } from './agents.ts';
 import { analyzeNewCalls, callRollup } from './analysis.ts';
-import { askStayLeased , askSmart , type AskAnswer } from './ask.ts';
+import { askStayLeased , askSmart , askPanelContext , type AskAnswer } from './ask.ts';
 import { generateListing, generateTemplateDraft, generateReviewResponse } from './content.ts';
 
 /** M17 screens: AI Activity (approval queue + full audit + autonomy dials),
@@ -28,6 +28,34 @@ function agentBadge(agent: string): ReturnType<typeof html> {
     renewals: 'Renewals AI', call_analysis: 'Call Analysis', content: 'Essentials', ask: 'Ask StayLeased',
   };
   return html`<span class="badge violet">${names[agent] || agent}</span>`;
+}
+
+/** The lifecycle of one AI action, as a visual pipeline. Every action moves
+ * Detected → Drafted → Review → Executed; the stepper shows exactly where
+ * this one stands and how it got through review (a person, or the
+ * autonomous dial — both logged). */
+function flowStepper(a: any, mini = false): ReturnType<typeof html> {
+  const auto = a.status === 'auto_executed';
+  const steps: { label: string; note: string; cls: string }[] = [
+    { label: 'Detected', note: '', cls: 'done' },
+    { label: 'Drafted', note: '', cls: 'done' },
+    a.status === 'proposed'
+      ? { label: 'Review', note: 'awaiting approval', cls: 'now' }
+      : a.status === 'rejected'
+        ? { label: 'Review', note: a.decided_by ? `rejected · ${a.decided_by}` : 'rejected', cls: 'stop' }
+        : auto
+          ? { label: 'Review', note: 'autonomous dial', cls: 'done' }
+          : { label: 'Review', note: a.decided_by ? `approved · ${a.decided_by}` : 'approved', cls: 'done' },
+    a.status === 'executed' || auto
+      ? { label: 'Executed', note: auto ? 'ran + logged' : 'logged', cls: 'done' }
+      : a.status === 'approved'
+        ? { label: 'Executed', note: a.autonomy === 'draft' ? 'human sends' : 'in flight', cls: 'now' }
+        : { label: 'Executed', note: '', cls: a.status === 'rejected' ? 'off' : 'next' },
+  ];
+  return html`<div class="aiflow${mini ? ' mini' : ''}" aria-label="Action workflow">${steps.map((s, i) => html`${when(i > 0, () => html`<span class="afc ${steps[i]!.cls === 'next' || steps[i]!.cls === 'off' ? '' : 'on'}"></span>`)}<span class="afs ${s.cls}" title="${s.label}${s.note ? ` — ${s.note}` : ''}">
+    <i>${s.cls === 'done' ? '✓' : s.cls === 'stop' ? '✕' : ''}</i>
+    ${when(!mini, () => html`<span class="afs-l">${s.label}${when(s.note, () => html`<small>${s.note}</small>`)}</span>`)}
+  </span>`)}</div>`;
 }
 
 export function routes(r: Router): void {
@@ -63,6 +91,15 @@ export function routes(r: Router): void {
       actions: html`${when(canConfigure, () => html`<form method="post" action="/ai/kill-switch" data-confirm="${on ? 'Pause ALL AI agents org-wide? Nothing will send until re-enabled.' : 'Re-enable AI agents?'}"><button class="btn ${on ? 'btn-danger' : ''}">${on ? '⏻ Kill switch' : '▶ Resume AI'}</button></form>`)}<a class="btn btn-ghost" href="/ai/calls">Call analysis</a><a class="btn btn-ghost" href="/ai/essentials">Content studio</a>`,
       content: html`
         ${when(!on, () => html`<div class="callout bad">🛑 <b>AI is paused by the global kill switch.</b> Agents keep recording proposals for audit, but nothing sends and nothing runs autonomously until an admin resumes.</div>`)}
+        <div class="aiflow-legend">
+          <div class="afl-step"><i>1</i><div><b>Watch</b><span>Agents monitor leads, payments, work orders and renewals as they happen</span></div></div>
+          <span class="afl-arrow">→</span>
+          <div class="afl-step"><i>2</i><div><b>Draft</b><span>The agent proposes an action, with confidence scored and guardrails applied</span></div></div>
+          <span class="afl-arrow">→</span>
+          <div class="afl-step"><i>3</i><div><b>Review</b><span>You approve, edit, or reject — unless the dial says it may run on its own</span></div></div>
+          <span class="afl-arrow">→</span>
+          <div class="afl-step"><i>4</i><div><b>Execute &amp; log</b><span>Every action lands in the audit trail, human-approved or autonomous</span></div></div>
+        </div>
         ${kpis([
           { label: 'Awaiting approval', value: String(pending.length), tone: pending.length ? 'warn' : 'ok' },
           { label: 'Executed on approval', value: String(cnt('executed')) },
@@ -89,7 +126,8 @@ export function routes(r: Router): void {
       const input = j<any>(a.input, {});
       return card(
         html`${agentBadge(a.agent)} ${a.title} <span class="muted small">· ${a.prop || 'org'} · ${a.created_at.slice(0, 16).replace('T', ' ')}</span>`,
-        html`<div class="split" style="display:flex;gap:20px;flex-wrap:wrap">
+        html`${flowStepper(a)}
+        <div class="split" style="display:flex;gap:20px;flex-wrap:wrap">
           <div style="flex:1;min-width:280px">
             ${when(output.draft, () => html`<div class="small muted" style="margin-bottom:4px">Draft (${a.autonomy === 'draft' ? 'draft-only dial: approve = reviewed, human sends' : 'sends on approval'}):</div>
               <div style="border:1px solid var(--line-2);border-radius:10px;padding:10px;background:var(--surface-2);max-height:220px;overflow:auto">${raw(String(output.draft))}</div>`)}
@@ -114,12 +152,12 @@ export function routes(r: Router): void {
 
   function historyView(history: any[]): ReturnType<typeof html> {
     return tbl(
-      [{ label: 'When' }, { label: 'Agent' }, { label: 'Action' }, { label: 'Property' }, { label: 'Dial' }, { label: 'Status' }, { label: 'Decided by' }, { label: 'Result' }],
+      [{ label: 'When' }, { label: 'Agent' }, { label: 'Action' }, { label: 'Property' }, { label: 'Workflow' }, { label: 'Status' }, { label: 'Decided by' }, { label: 'Result' }],
       history.map((a) => ({
         cells: [
           a.created_at.slice(5, 16).replace('T', ' '), agentBadge(a.agent),
           html`<span title="${a.title}">${a.title.slice(0, 60)}</span>`,
-          a.prop || '—', a.autonomy, statusBadge(a.status, a.status.replaceAll('_', ' ')),
+          a.prop || '—', flowStepper(a, true), statusBadge(a.status, a.status.replaceAll('_', ' ')),
           a.decided_by || (a.status === 'auto_executed' ? 'autonomous' : '—'),
           html`<span class="small muted">${(a.result || '—').slice(0, 50)}</span>`,
         ],
@@ -317,6 +355,8 @@ export function routes(r: Router): void {
     const question = (rq.query.get('q') || '').slice(0, 200);
     const answer = question ? askStayLeased(ctx, question) : null;
     const st = llmStatus();
+    const pc = askPanelContext(ctx, '/ask');
+    const chips = pc.scope ? pc.chips : ASK_SAMPLES;
     return shell(rq, {
       title: 'Ask StayLeased',
       active: '/ask',
@@ -328,12 +368,13 @@ export function routes(r: Router): void {
               <h2>Ask StayLeased</h2>
               <p>Plain-English questions about your portfolio, answered from your live operating records. Every answer is recorded in the audit log.</p>
             </div>
+            ${when(pc.scope, () => html`<span class="badge info">Scoped to ${pc.scope}</span>`)}
             <span class="aichat-brain ${st.live ? 'live' : ''}"><i></i>${st.live ? `Live · ${st.model}` : 'Demo brain'}</span>
           </div>
 
           <div class="aichat-panel">
             <div class="aichat-thread" id="aichat-thread" aria-live="polite">
-              <div class="aichat-msg agent"><div class="aichat-bubble">Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: delinquency, occupancy, turns, collections, work orders, vendor spend. Or just talk to me.</div></div>
+              <div class="aichat-msg agent"><div class="aichat-bubble">${pc.greeting}</div></div>
               ${when(answer, () => html`
                 <div class="aichat-msg you"><div class="aichat-bubble">${question}</div></div>
                 <div class="aichat-msg agent"><div class="aichat-bubble">
@@ -343,7 +384,7 @@ export function routes(r: Router): void {
                 </div></div>`)}
             </div>
             <div class="aichat-chips" id="aichat-chips">
-              ${ASK_SAMPLES.map((c) => html`<button type="button" class="aichat-chip">${c}</button>`)}
+              ${chips.map((c) => html`<button type="button" class="aichat-chip">${c}</button>`)}
             </div>
             <form class="aichat-form" id="aichat-form" autocomplete="off">
               <input id="aichat-input" name="q" placeholder="Ask anything about your portfolio…" maxlength="300" aria-label="Ask StayLeased" autofocus />
@@ -354,6 +395,15 @@ export function routes(r: Router): void {
         ${raw(`<script>${ASK_CHAT_JS}</script>`)}
       `,
     });
+  });
+
+  // context for the everywhere-panel: greeting grounded in live figures for
+  // the user's current property + suggested questions for the app area
+  r.get('/ask/panel.json', requirePerm('ai:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const path = String(rq.query.get('path') || '/').slice(0, 120);
+    const st = llmStatus();
+    return jsonRes({ ...askPanelContext(ctx, path), live: st.live, model: st.live ? st.model : null });
   });
 
   // fetch endpoint behind the same permission — structured or conversational

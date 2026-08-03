@@ -341,6 +341,157 @@
     els.forEach(function (el) { el.classList.add('scrollrev'); io.observe(el); });
   })();
 
+  // ---------- Ask StayLeased — the everywhere panel ----------
+  // The brandbar button opens a slide-over on ANY page instead of navigating.
+  // Content is tailored server-side (/ask/panel.json): greeting grounded in
+  // the current property's live figures + suggested questions for this page.
+  (function () {
+    var dock = null, thread = null, chipsEl = null, form = null, inp = null, sendBtn = null;
+    var history = [], busy = false, loaded = false;
+
+    function el(tag, cls, text) {
+      var n = document.createElement(tag);
+      if (cls) n.className = cls;
+      if (text) n.textContent = text;
+      return n;
+    }
+    function scrollDown() { if (thread) thread.scrollTop = thread.scrollHeight; }
+    function bubble(role) {
+      var m = el('div', 'aichat-msg ' + role);
+      var b = el('div', 'aichat-bubble');
+      m.appendChild(b);
+      thread.appendChild(m);
+      scrollDown();
+      return b;
+    }
+    function setBusy(on) {
+      busy = on;
+      dock.classList.toggle('busy', on);
+      if (sendBtn) sendBtn.disabled = on;
+    }
+
+    function build() {
+      dock = el('div', 'askdock');
+      dock.setAttribute('role', 'dialog');
+      dock.setAttribute('aria-label', 'Ask StayLeased');
+      var back = el('div', 'askdock-back');
+      back.addEventListener('click', close);
+      var panel = el('aside', 'askdock-panel');
+      var head = el('div', 'askdock-head');
+      var orb = el('span', 'aichat-orb');
+      orb.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.9 2.6 2.6.9-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9z"/></svg>';
+      var ttl = el('div', 'askdock-title');
+      ttl.appendChild(el('b', null, 'Ask StayLeased'));
+      var scope = el('span', 'askdock-scope', 'Portfolio');
+      ttl.appendChild(scope);
+      var full = el('a', 'askdock-full', 'Full page');
+      full.href = '/ask';
+      var x = el('button', 'askdock-close');
+      x.type = 'button';
+      x.setAttribute('aria-label', 'Close');
+      x.innerHTML = '&times;';
+      x.addEventListener('click', close);
+      head.appendChild(orb); head.appendChild(ttl); head.appendChild(full); head.appendChild(x);
+      thread = el('div', 'aichat-thread');
+      thread.setAttribute('aria-live', 'polite');
+      chipsEl = el('div', 'aichat-chips');
+      form = el('form', 'aichat-form');
+      inp = el('input');
+      inp.placeholder = 'Ask about where you are…';
+      inp.maxLength = 300;
+      inp.setAttribute('aria-label', 'Ask StayLeased');
+      sendBtn = el('button', 'aichat-send');
+      sendBtn.type = 'submit';
+      sendBtn.setAttribute('aria-label', 'Send');
+      sendBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
+      form.appendChild(inp); form.appendChild(sendBtn);
+      panel.appendChild(head); panel.appendChild(thread); panel.appendChild(chipsEl); panel.appendChild(form);
+      dock.appendChild(back); dock.appendChild(panel);
+      document.body.appendChild(dock);
+
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var q = (inp.value || '').trim();
+        if (q) ask(q);
+        inp.value = '';
+      });
+      chipsEl.addEventListener('click', function (e) {
+        var c = e.target.closest('.aichat-chip');
+        if (c && !busy) ask(c.textContent);
+      });
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && dock.classList.contains('open')) close();
+      });
+    }
+
+    function hydrate() {
+      if (loaded) return;
+      loaded = true;
+      fetch('/ask/panel.json?path=' + encodeURIComponent(location.pathname), { headers: { 'Accept': 'application/json' } })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          dock.querySelector('.askdock-scope').textContent = d.scope ? 'Scoped to ' + d.scope : 'Portfolio-wide';
+          bubble('agent').textContent = d.greeting || 'Ask me about your portfolio.';
+          (d.chips || []).forEach(function (c) {
+            var b = el('button', 'aichat-chip', c);
+            b.type = 'button';
+            chipsEl.appendChild(b);
+          });
+        })
+        .catch(function () { bubble('agent').textContent = 'Ask me about your portfolio.'; });
+    }
+
+    function ask(q) {
+      if (busy) return;
+      bubble('you').textContent = q;
+      history.push({ role: 'you', text: q });
+      setBusy(true);
+      var wait = bubble('agent');
+      wait.innerHTML = '<span class="aichat-typing"><i></i><i></i><i></i></span>';
+      fetch('/ask.json', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
+        body: 'q=' + encodeURIComponent(q) + '&history=' + encodeURIComponent(JSON.stringify(history.slice(-8))),
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        wait.innerHTML = '';
+        if (d.title) {
+          var t = el('div', 'aichat-title', d.title);
+          wait.appendChild(t);
+        }
+        var sum = el('div', 'aichat-summary', d.summary || 'Nothing came back — try again.');
+        wait.appendChild(sum);
+        if (d.extraHtml) {
+          var ex = el('div', 'aichat-extra vis');
+          ex.innerHTML = d.extraHtml;
+          wait.appendChild(ex);
+        }
+        history.push({ role: 'agent', text: d.summary || '' });
+        setBusy(false);
+        scrollDown();
+      }).catch(function () {
+        wait.textContent = 'Something went wrong — try again.';
+        setBusy(false);
+      });
+    }
+
+    function open() {
+      if (!dock) build();
+      dock.classList.add('open');
+      hydrate();
+      setTimeout(function () { inp.focus(); }, 180);
+    }
+    function close() { if (dock) dock.classList.remove('open'); }
+
+    document.addEventListener('click', function (e) {
+      var b = e.target.closest('[data-ask-open]');
+      if (!b) return;
+      if (e.metaKey || e.ctrlKey || e.shiftKey) return; // let new-tab clicks through
+      if (location.pathname === '/ask') return; // already on the full page
+      e.preventDefault();
+      open();
+    });
+  })();
+
   // drag & drop lanes (dispatch board / turns)
   document.querySelectorAll('[data-dnd-lane]').forEach(function (lane) {
     lane.addEventListener('dragover', function (e) { e.preventDefault(); });

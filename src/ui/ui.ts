@@ -287,7 +287,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         <div class="spacer"></div>
         ${propSwitch}
         <button class="searchbtn" data-palette-open type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="stext">Search…</span></button>
-        ${when(can(ctx, 'ai:view'), () => html`<a class="askbtn" href="/ask" title="Ask StayLeased — plain-English answers from your own portfolio data">${raw('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.9 2.6L22.5 18.5l-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9z"/></svg>')}<span class="stext">Ask StayLeased</span></a>`)}
+        ${when(can(ctx, 'ai:view'), () => html`<a class="askbtn" href="/ask" data-ask-open title="Ask StayLeased — plain-English answers from your own portfolio data">${raw('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.9 2.6L22.5 18.5l-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9z"/></svg>')}<span class="stext">Ask StayLeased</span></a>`)}
         ${ctx.orgKind === 'demo'
           ? html`<a class="bizdate" href="/dev/sim" title="Simulated business date — open Simulator Console"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</a>`
           : html`<span class="bizdate" title="Business date"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</span>`}
@@ -338,6 +338,23 @@ export function shell(r: Rq, opts: ShellOpts): Res {
   return htmlRes(doc(opts.title, body, opts.head ?? null));
 }
 
+/** Theme boot: an explicit choice (sl_theme cookie, set by the toggle) wins;
+ * otherwise the theme follows the visitor's system setting live, defaulting
+ * to light when the system expresses no preference. Runs synchronously in
+ * <head> so the first paint is already in the right theme. Shared with the
+ * marketing chrome. */
+export const THEME_BOOT_JS = `(function(){try{
+var d=document.documentElement;
+function cookie(){var m=document.cookie.match(/(?:^|; )sl_theme=(light|dark)/);return m&&m[1];}
+var mq=window.matchMedia?window.matchMedia('(prefers-color-scheme: dark)'):null;
+function sys(){return mq&&mq.matches?'dark':'light';}
+d.setAttribute('data-theme',cookie()||sys());
+if(mq&&mq.addEventListener)mq.addEventListener('change',function(){
+if(cookie())return;var t=sys();d.setAttribute('data-theme',t);
+try{document.dispatchEvent(new CustomEvent('sl-theme',{detail:t}))}catch(e){}
+});
+}catch(e){}})();`;
+
 export function doc(title: string, body: Child, extraHead: Child = null): string {
   return (
     '<!doctype html>' +
@@ -346,7 +363,7 @@ export function doc(title: string, body: Child, extraHead: Child = null): string
         <meta charset="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
         <title>${title} · StayLeased</title>
-        ${raw('<script>(function(){try{var m=document.cookie.match(/(?:^|; )sl_theme=(light|dark)/);document.documentElement.setAttribute("data-theme",(m&&m[1])||"dark");}catch(e){}})();</script>')}
+        ${raw(`<script>${THEME_BOOT_JS}</script>`)}
         <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
         <link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
         <link rel="stylesheet" href="/assets/theme.css?v=${ASSET_V}" />
