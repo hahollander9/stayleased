@@ -322,7 +322,20 @@ small, .small { font-size: 12px; }
   display: inline-flex; align-items: center; justify-content: center;
   transition: background .15s ease, color .15s ease, border-color .15s ease;
 }
-.icon-btn:hover, .icon-btn.active { background: var(--brand-soft); color: var(--brand-ink); border-color: rgba(96, 165, 250, .35); }
+.icon-btn:hover, .icon-btn.active { background: var(--brand-soft); color: var(--brand-ink); border-color: rgba(52, 211, 153, .35); }
+/* icon micro-interactions — hover-only, springy, cheap */
+.icon-btn svg { transition: transform .45s cubic-bezier(.34,1.5,.64,1); }
+.icon-btn:hover svg { transform: rotate(18deg) scale(1.12); }
+.icon-btn[data-theme-toggle]:hover svg { transform: rotate(50deg) scale(1.12); }
+.mtab-btn svg { transition: transform .3s cubic-bezier(.34,1.5,.64,1); }
+.mtab-btn:hover > svg:first-child { transform: translateY(-1.5px) scale(1.1); }
+.searchbtn svg, .org-chip svg { transition: transform .3s cubic-bezier(.34,1.5,.64,1); }
+.searchbtn:hover svg { transform: scale(1.12); }
+.btn svg { transition: transform .25s cubic-bezier(.34,1.5,.64,1); }
+.btn:hover svg { transform: scale(1.1); }
+@media (prefers-reduced-motion: reduce) {
+  .icon-btn svg, .mtab-btn svg, .searchbtn svg, .btn svg { transition: none !important; transform: none !important; }
+}
 .usermenu { position: relative; }
 .avatar {
   width: 33px; height: 33px; border-radius: 50%; background: var(--grad); color: #fff; border: 0;

@@ -343,6 +343,35 @@ html[data-theme="dark"] .mk-compare .mkc-us { background: rgba(110,231,183,.08);
 .mk-foot-grid a:hover { color: #FFFFFF; }
 .mk-foot-base { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding-top: 20px; font-size: 13px; align-items: center; color: #5C7266; }
 
+/* ---------- icon micro-interactions ----------
+ * Hover-only (never ambient): every interactive icon answers the cursor
+ * with a springy, GPU-cheap transform. Sun spins, chevrons dip, send
+ * arrows advance, the chat bubble tilts, list links step right. */
+.mk-theme svg { transition: transform .45s var(--spring); }
+.mk-theme:hover svg { transform: rotate(50deg) scale(1.12); }
+.mk-item-btn svg { transition: transform .25s var(--ease), opacity .2s ease; }
+.mk-item-btn:hover svg { opacity: 1; transform: translateY(2px); }
+.mk-item.open .mk-item-btn svg { transform: rotate(180deg); opacity: 1; }
+.mk-drop-grid a { transition: background .16s ease, transform .22s var(--ease); }
+.mk-drop-grid a:hover, .mk-drop-grid a:focus-visible { transform: translateX(4px); }
+.mk-drop-all { transition: letter-spacing .25s var(--ease); }
+.mk-drop-all:hover { letter-spacing: .02em; }
+.mk-chat-launch svg { transition: transform .45s var(--spring); }
+.mk-chat-launch:hover svg { transform: rotate(-10deg) scale(1.15); }
+#mktop svg { transition: transform .3s var(--spring); }
+#mktop:hover svg { transform: translateY(-2.5px) scale(1.08); }
+.mk-ask-form button svg, .mk-chat-form button svg { transition: transform .25s var(--spring); }
+.mk-ask-form button:hover svg, .mk-chat-form button:hover svg { transform: translateX(3px); }
+.mk-chat-close { transition: opacity .15s ease, transform .3s var(--spring); }
+.mk-chat-close:hover { transform: rotate(90deg); }
+.mk-foot-grid a { transition: color .15s ease, transform .2s var(--ease); }
+.mk-foot-grid a:hover { transform: translateX(3px); }
+.mk-suite .mk-more, .mk-card .mk-more, .mk-plat .mk-more { transition: text-decoration-color .16s ease, color .16s ease, letter-spacing .25s var(--ease); }
+.mk-suite:hover .mk-more, .mk-card:hover .mk-more, .mk-plat:hover .mk-more { letter-spacing: .015em; }
+.mk-burger span { transition: transform .3s var(--spring), opacity .18s ease; }
+.mk-logo svg { transition: transform .45s var(--spring); }
+.mk-logo:hover svg { transform: rotate(-6deg) scale(1.1); }
+
 /* ---------- motion v6: choreographed ONE-SHOT reveals ----------
  * Doctrine (permanent): nothing on this site is scrubbed by scroll
  * position — scrubbing reads as vibration. Every element animates exactly
@@ -562,6 +591,7 @@ html[data-theme="dark"] .mk-hero::before { background: radial-gradient(46% 52% a
   }
   #mktop { transition: opacity .2s ease; }
   .mk-live i, .mk-typing i { animation: none !important; }
+  .mk-theme svg, .mk-chat-launch svg, #mktop svg, .mk-logo svg, .mk-drop-grid a, .mk-foot-grid a, .mk-chat-close { transition: none !important; transform: none !important; }
   .mk-msg { animation: none; }
   .mk-item.open .mk-drop, .mk-mobile.open { animation: none; }
 }
