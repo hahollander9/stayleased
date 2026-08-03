@@ -63,14 +63,17 @@ a { color: inherit; text-decoration: none; }
 h1, h2, h3 { font-family: var(--display); }
 h4 { font-family: 'InterVar', sans-serif; }
 
-/* scroll progress bar */
-#mkprog { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 90; background: var(--ink); transform: scaleX(0); transform-origin: 0 50%; transition: transform .08s linear; }
+/* scroll progress bar — NO transition: an eased bar lags the scroll and
+ * keeps animating after the page stops, which reads as residual motion */
+#mkprog { position: fixed; top: 0; left: 0; right: 0; height: 2px; z-index: 90; background: var(--ink); transform: scaleX(0); transform-origin: 0 50%; }
 
 /* nav */
+/* nav — the scrolled state adds ONLY a shadow. It must never change
+ * height: a shrinking sticky nav shifts the whole document 10px at the
+ * scroll threshold and can oscillate there (part of the "jitter"). */
 .mk-nav { position: sticky; top: 0; z-index: 60; background: var(--paper); border-bottom: 1px solid var(--line); transition: box-shadow .25s ease; }
 .mk-nav.scrolled { box-shadow: 0 1px 0 var(--line), 0 8px 24px -18px rgba(20,18,14,.35); }
-.mk-nav-in { display: flex; align-items: center; gap: 30px; height: 68px; transition: height .25s ease; }
-.mk-nav.scrolled .mk-nav-in { height: 58px; }
+.mk-nav-in { display: flex; align-items: center; gap: 30px; height: 64px; }
 .mk-logo { display: flex; align-items: center; gap: 9px; font-size: 20px; font-weight: 560; font-family: var(--display); letter-spacing: -.01em; }
 .mk-logo b { font-weight: 640; }
 .mk-menu { display: flex; align-items: center; gap: 2px; flex: 1; }
@@ -469,11 +472,15 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 @keyframes mkFade { from { opacity: 0; } to { opacity: 1; } }
 @keyframes mkPing { 0% { opacity: 1; } 100% { opacity: 1; } }
 
-/* hero entrance — plays once on load, then only the vignettes breathe.
+/* hero entrance — plays once on load, then the page is PERFECTLY still.
  * The copy cascades down; the three vignette cards rise up into their
- * desk tilts with a spring; inside them the conversation/tasks play out
- * in order like live product activity; then each card floats on its own
- * slow phase (continuous but NOT scroll-linked — nothing ever vibrates). */
+ * desk tilts; inside them the conversation/tasks play out in order like
+ * live product activity — and then everything stops. Doctrine addendum
+ * (2026-08-03, after "still jittering"): ZERO continuous transform
+ * animation anywhere, especially on the rotated vignettes — translating
+ * a rotated text-bearing card forces per-frame re-rasterization and the
+ * text shimmers. The only things allowed to keep moving are the 5px
+ * LIVE pulse dots and the typing indicator (tiny, opacity-only). */
 @media (prefers-reduced-motion: no-preference) {
   .mk-hero-copy > * { animation: mkUp .65s var(--ease) both; }
   .mk-hero-copy > *:nth-child(1) { animation-delay: .05s; }
@@ -482,24 +489,21 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
   .mk-hero-copy > *:nth-child(4) { animation-delay: .38s; }
   .mk-hero-copy > *:nth-child(5) { animation-delay: .5s; }
   .mk-hero h1 { animation-name: mkH1; }
-  .mk-vig { animation: mkVigIn .85s var(--ease) both, mkVigFloat 7s ease-in-out 3.4s infinite alternate; }
-  .mk-vig:nth-child(1) { animation-delay: .72s, 3.4s; }
-  .mk-vig:nth-child(2) { animation-delay: .58s, 2.9s; animation-duration: .85s, 8.2s; }
-  .mk-vig:nth-child(3) { animation-delay: .86s, 3.9s; animation-duration: .85s, 7.4s; }
+  .mk-vig { animation: mkVigIn .85s var(--ease) both; }
+  .mk-vig:nth-child(1) { animation-delay: .72s; }
+  .mk-vig:nth-child(2) { animation-delay: .58s; }
+  .mk-vig:nth-child(3) { animation-delay: .86s; }
   .mk-vig > :not(.mk-vig-head) { animation: mkItemIn .5s var(--ease) both; }
   .mk-vig > :nth-child(2) { animation-delay: 1.5s; }
   .mk-vig > :nth-child(3) { animation-delay: 1.95s; }
   .mk-vig > :nth-child(4) { animation-delay: 2.4s; }
   .mk-vig > :nth-child(5) { animation-delay: 2.85s; }
-  .mk-hero::before { animation: mkDrift 18s ease-in-out infinite alternate; }
 }
 @keyframes mkUp { from { opacity: 0; transform: translateY(16px); } to { opacity: 1; transform: none; } }
 @keyframes mkH1 { from { opacity: 0; transform: translateY(22px); filter: blur(10px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes mkVigIn { from { opacity: 0; transform: rotate(var(--vr)) translateY(calc(var(--vy) + 52px)) scale(.94); } to { opacity: 1; transform: rotate(var(--vr)) translateY(var(--vy)) scale(1); } }
-@keyframes mkVigFloat { from { transform: rotate(var(--vr)) translateY(var(--vy)); } to { transform: rotate(var(--vr)) translateY(calc(var(--vy) - 9px)); } }
 @keyframes mkItemIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-@keyframes mkDrift { from { transform: translateX(-58%) translateY(0); } to { transform: translateX(-42%) translateY(26px); } }
-/* soft brand wash behind the hero — static color, slow positional drift */
+/* soft brand wash behind the hero — static, no drift */
 .mk-hero::before { content: ''; position: absolute; left: 50%; top: -240px; width: 980px; height: 680px; transform: translateX(-50%); border-radius: 50%; background: radial-gradient(closest-side, rgba(29,78,216,.08), transparent 72%); pointer-events: none; }
 html[data-theme="dark"] .mk-hero::before { background: radial-gradient(closest-side, rgba(127,163,246,.07), transparent 72%); }
 
