@@ -6,7 +6,7 @@ import { id } from '../../lib/ids.ts';
 import { nowIso } from '../../lib/dates.ts';
 import { askRoutes } from './ask.ts';
 import { llmStatus } from '../../lib/sim/llm.ts';
-import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS } from './chrome.ts';
+import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS, MK_NAV } from './chrome.ts';
 import { THEME_BOOT_JS } from '../../ui/ui.ts';
 
 /** The platform marketing homepage — the front door for logged-out visitors,
@@ -70,22 +70,60 @@ ${mkHeader()}
     <div class="mk-hero-copy">
       <div class="mk-kicker">For independent landlords &amp; property managers</div>
       <h1>Autonomous property management.</h1>
-      <p class="mk-sub">StayLeased answers your leads, collects rent, coordinates maintenance, and keeps your books — and every action waits for your approval.</p>
+      <p class="mk-sub">One platform for leasing, rent, maintenance, accounting, and residents — with AI that does the daily work, and every action waiting on your approval.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Explore the live demo</a>
         ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="#walkthrough">Book a walkthrough</a>`}
       </div>
       <div class="mk-hero-note">Set up in an afternoon — import from Buildium, AppFolio, or a spreadsheet.</div>
     </div>
+    <div class="mk-hero-shot" aria-hidden="true">
+      <img src="/assets/mk/hero-dashboard.png" alt="" width="2360" height="1520" loading="eager" />
+    </div>
   </div>
 </section>
 
-<div class="mk-shotband">
+<section class="mk-band mk-band-alt" id="platform">
   <div class="mk-wrap">
-    <div class="mk-shot"><img src="/assets/mk/dashboard-light.png" alt="The StayLeased portfolio dashboard" width="2280" height="1425" loading="eager" /></div>
-    <div class="mk-shot-cap"><span>The portfolio dashboard — live demonstration data</span><span>stayleased.com</span></div>
+    <h2 class="mk-h2">Everything in one place.</h2>
+    <p class="mk-lead">The complete operation — a lead becomes a lease becomes rent in your general ledger, nothing re-entered.</p>
+    <div class="mk-modgrid">
+      ${MK_NAV[0]!.items.map(([l, h, sub]) => html`<a class="mk-mod" href="${h}"><b>${l}</b><span>${sub}</span></a>`)}
+    </div>
   </div>
-</div>
+</section>
+
+<section class="mk-band" id="see">
+  <div class="mk-wrap">
+    <div class="mk-feat">
+      <div class="mk-feat-copy">
+        <div class="mk-kicker">Leasing</div>
+        <h3>Every lead answered in seconds — by AI you supervise.</h3>
+        <p>Inquiries get an immediate reply from live availability and pricing, tours book themselves, and every draft waits in your approval queue.</p>
+        <a class="mk-more" href="/agents/leasing">How the Leasing AI works →</a>
+      </div>
+      <div class="mk-feat-shot"><img src="/assets/mk/feat-ai.png" alt="The AI approval queue" loading="lazy" /></div>
+    </div>
+    <div class="mk-feat mk-feat-flip">
+      <div class="mk-feat-copy">
+        <div class="mk-kicker">Accounting</div>
+        <h3>Real double-entry books, kept current automatically.</h3>
+        <p>Every rent payment and vendor bill posts itself. Bank reconciliation, budgets, and owner-ready statements are built in.</p>
+        <a class="mk-more" href="/platform/accounting">Inside the accounting →</a>
+      </div>
+      <div class="mk-feat-shot"><img src="/assets/mk/feat-accounting.png" alt="The general ledger" loading="lazy" /></div>
+    </div>
+    <div class="mk-feat">
+      <div class="mk-feat-copy">
+        <div class="mk-kicker">Residents</div>
+        <h3>A portal residents actually use.</h3>
+        <p>Rent online with autopay, maintenance requests with photos, and documents they find themselves.</p>
+        <a class="mk-more" href="/platform/resident-portal">How the portal works →</a>
+      </div>
+      <div class="mk-feat-shot"><img src="/assets/mk/feat-portal.png" alt="The resident portal" loading="lazy" /></div>
+    </div>
+  </div>
+</section>
 
 <section class="mk-band mk-band-alt" id="agents">
   <div class="mk-wrap">
@@ -106,27 +144,6 @@ ${mkHeader()}
         <span class="mk-step-n">${st.n}</span>
         <div><div class="mk-step-head"><b>${st.name}</b><span class="mk-step-tag">${st.tag}</span></div><p>${st.body}</p></div>
       </div>`)}
-    </div>
-  </div>
-</section>
-
-<section class="mk-band mk-band-alt" id="platform">
-  <div class="mk-wrap">
-    <h2 class="mk-h2">Everything in one place.</h2>
-    <p class="mk-lead">A lead becomes a lease becomes rent in your general ledger — nothing is re-entered.</p>
-    <div class="mk-two">
-      <a class="mk-plat" href="/platform">
-        <div class="mk-plat-tag">For you</div>
-        <h3>Run the operation</h3>
-        <p>Leasing, rent, maintenance, vendors, and true double-entry accounting.</p>
-        <span class="mk-more">See everything included →</span>
-      </a>
-      <a class="mk-plat" href="/platform/resident-portal">
-        <div class="mk-plat-tag">For your tenants</div>
-        <h3>A portal residents use</h3>
-        <p>Online rent with autopay, maintenance requests with photos, documents.</p>
-        <span class="mk-more">How the portal works →</span>
-      </a>
     </div>
   </div>
 </section>
@@ -324,7 +341,7 @@ ${mkFooter()}
   }
 
   // stagger children within revealing groups (cards cascade in)
-  ['.mk-two', '.mk-grid3', '.mk-grid5', '.mk-levels', '.mk-steps', '.mk-price-row', '.mk-checks', '.mk-foot-grid', '.mk-ask-grid', '.mk-two-col'].forEach(function (sel) {
+  ['.mk-two', '.mk-grid3', '.mk-grid5', '.mk-levels', '.mk-steps', '.mk-price-row', '.mk-checks', '.mk-ask-grid', '.mk-two-col'].forEach(function (sel) {
     document.querySelectorAll(sel).forEach(function (grp) {
       Array.prototype.forEach.call(grp.children, function (child, i) {
         child.classList.add('mk-stag');
@@ -338,7 +355,8 @@ ${mkFooter()}
     var io = new IntersectionObserver(function (es) {
       es.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('vis'); io.unobserve(en.target); } });
     }, { threshold: 0.1, rootMargin: '0px 0px -7% 0px' });
-    document.querySelectorAll('.mk-band .mk-wrap, .mk-hero-in, .mk-foot .mk-wrap').forEach(function (el) { el.classList.add('mk-reveal'); io.observe(el); });
+    // the footer never animates — it must be readable the instant it scrolls into view
+    document.querySelectorAll('.mk-band .mk-wrap, .mk-hero-in').forEach(function (el) { el.classList.add('mk-reveal'); io.observe(el); });
   } else {
     document.querySelectorAll('.mk-reveal, .mk-stag').forEach(function (el) { el.classList.add('vis'); });
   }

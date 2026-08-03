@@ -29,6 +29,10 @@ export function buildRouter(): Router {
     '/assets/fonts/fraunces-italic-var.woff2': ['src/ui/fonts/fraunces-italic-var.woff2', 'font/woff2'],
     '/assets/mk/dashboard-light.png': ['src/ui/mk-assets/dashboard-light.png', 'image/png'],
     '/assets/mk/ai-queue-light.png': ['src/ui/mk-assets/ai-queue-light.png', 'image/png'],
+    '/assets/mk/hero-dashboard.png': ['src/ui/mk-assets/hero-dashboard.png', 'image/png'],
+    '/assets/mk/feat-ai.png': ['src/ui/mk-assets/feat-ai.png', 'image/png'],
+    '/assets/mk/feat-accounting.png': ['src/ui/mk-assets/feat-accounting.png', 'image/png'],
+    '/assets/mk/feat-portal.png': ['src/ui/mk-assets/feat-portal.png', 'image/png'],
     '/assets/vendor/leaflet.js': ['src/ui/vendor/leaflet.js', 'text/javascript; charset=utf-8'],
     '/assets/vendor/leaflet.css': ['src/ui/vendor/leaflet.css', 'text/css; charset=utf-8'],
   };

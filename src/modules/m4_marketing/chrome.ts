@@ -290,7 +290,7 @@ const CHROME_JS = `
     document.querySelectorAll('.mk-reveal, .mk-stag').forEach(function (el) { el.classList.add('vis'); });
     return;
   }
-  ['.mk-grid3', '.mk-grid2', '.mkp-stats', '.mk-foot-grid'].forEach(function (sel) {
+  ['.mk-grid3', '.mk-grid2', '.mkp-stats'].forEach(function (sel) {
     document.querySelectorAll(sel).forEach(function (grp) {
       Array.prototype.forEach.call(grp.children, function (child, i) {
         child.classList.add('mk-stag');

@@ -126,10 +126,12 @@ body.mk-mm-open { overflow: hidden; }
 .mk-btn-ghost { color: var(--ink2); background: transparent; }
 .mk-btn-ghost:hover { color: var(--ink); }
 
-/* hero — editorial: type does the work */
-.mk-hero { position: relative; }
-.mk-hero-in { position: relative; padding: 92px 40px 64px; }
-.mk-hero-copy { max-width: 900px; }
+/* hero — copy left, real product right */
+.mk-hero { position: relative; border-bottom: 1px solid var(--line); overflow: hidden; }
+.mk-hero-in { position: relative; padding: 76px 40px 80px; display: grid; grid-template-columns: minmax(420px, 1fr) 1.05fr; gap: 56px; align-items: center; }
+.mk-hero-copy { max-width: 620px; }
+.mk-hero-shot { position: relative; }
+.mk-hero-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 2px 4px rgba(22,24,29,.05), 0 32px 64px -32px rgba(22,24,29,.28); }
 .mk-kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 620; letter-spacing: .13em; text-transform: uppercase; color: var(--mut); margin-bottom: 30px; }
 .mk-kicker::before { content: ''; width: 22px; height: 1px; background: var(--accent); }
 .mk-hero h1 {
@@ -142,11 +144,23 @@ body.mk-mm-open { overflow: hidden; }
 .mk-hero-note { margin-top: 40px; padding-top: 22px; border-top: 1px solid var(--line); font-size: 14px; color: var(--mut); max-width: 900px; }
 .mk-hero-note b { color: var(--ink); font-weight: 600; }
 
-/* the real product, full width under the hero */
-.mk-shotband { padding: 26px 0 84px; }
-.mk-shot { border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--card); box-shadow: 0 1px 2px rgba(20,18,14,.05), 0 28px 56px -30px rgba(20,18,14,.25); }
-.mk-shot img { display: block; width: 100%; }
-.mk-shot-cap { display: flex; justify-content: space-between; gap: 14px; font-size: 13px; color: var(--mut); padding: 13px 4px 0; }
+/* module capability grid — the whole platform at a glance */
+.mk-modgrid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.mk-mod { display: flex; flex-direction: column; gap: 3px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); padding: 16px 18px; transition: border-color .18s ease; }
+.mk-mod b { font-size: 14.5px; font-weight: 640; color: var(--ink); }
+.mk-mod span { font-size: 13px; color: var(--mut); line-height: 1.45; }
+.mk-mod:hover { border-color: var(--ink); }
+.mk-mod:hover b { color: var(--accent); }
+
+/* feature rows — copy beside a real product screenshot */
+.mk-feat { display: grid; grid-template-columns: .85fr 1.15fr; gap: 56px; align-items: center; padding: 44px 0; }
+.mk-feat + .mk-feat { border-top: 1px solid var(--line-2); }
+.mk-feat-flip .mk-feat-copy { order: 2; }
+.mk-feat-flip .mk-feat-shot { order: 1; }
+.mk-feat-copy h3 { font-family: var(--display); font-size: 28px; font-weight: 520; letter-spacing: -.012em; line-height: 1.15; margin: 6px 0 12px; color: var(--ink); }
+.mk-feat-copy p { font-size: 15.5px; color: var(--ink2); max-width: 34em; }
+.mk-feat-copy .mk-more { margin-top: 14px; }
+.mk-feat-shot img { display: block; width: 100%; height: auto; border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 2px 4px rgba(22,24,29,.05), 0 26px 52px -30px rgba(22,24,29,.25); }
 
 /* legacy product-frame (feature pages) — plain document card now */
 .mk-hero-visual { position: relative; }
@@ -288,71 +302,15 @@ body.mk-mm-open { overflow: hidden; }
 .mk-foot-grid a:hover { color: var(--accent); }
 .mk-foot-base { display: flex; justify-content: space-between; gap: 14px; flex-wrap: wrap; padding-top: 20px; font-size: 13px; align-items: center; }
 
-/* reveal + stagger — fallback for browsers without scroll timelines */
-.mk-reveal { opacity: 0; transform: translateY(26px); transition: opacity .8s var(--ease), transform .8s var(--ease); }
-.mk-reveal.vis { opacity: 1; transform: none; }
-.mk-stag { opacity: 0; transform: translateY(22px); transition: opacity .7s var(--ease), transform .7s var(--ease); }
-.vis .mk-stag, .mk-stag.vis { opacity: 1; transform: none; }
-.mk-ask-grid > .mk-stag:first-child, .mk-two > .mk-stag:first-child { transform: translateX(-26px); }
-.mk-ask-grid > .mk-stag:last-child, .mk-two > .mk-stag:last-child { transform: translateX(26px); }
-.mk-steps > .mk-stag { transform: translateX(-26px); }
-.mk-price-row > .mk-stag:first-child { transform: translateX(-22px); }
-.mk-price-row > .mk-stag:last-child { transform: translateX(22px); }
-/* headline rule draws in as its section reveals */
+/* reveal — ONE calm fade-up on first entry. No scroll-scrubbing, no
+ * directional slides, no letter-spacing or clip-path movement: content
+ * appears once and then holds perfectly still. */
+.mk-reveal, .mk-stag { opacity: 0; transform: translateY(12px); transition: opacity .6s ease, transform .6s ease; }
+.mk-reveal.vis, .vis .mk-stag, .mk-stag.vis { opacity: 1; transform: none; }
+/* headline rule draws in once with its section */
 .mk-h2 { position: relative; padding-bottom: 18px; }
-.mk-h2::after { content: ''; position: absolute; left: 2px; bottom: 0; width: 44px; height: 2px; background: var(--accent); transform: scaleX(0); transform-origin: 0 50%; transition: transform .7s var(--ease) .25s; }
+.mk-h2::after { content: ''; position: absolute; left: 2px; bottom: 0; width: 44px; height: 2px; background: var(--accent); transform: scaleX(0); transform-origin: 0 50%; transition: transform .6s ease .2s; }
 .mk-reveal.vis .mk-h2::after, .vis .mk-h2::after { transform: scaleX(1); }
-.mk-dark .mk-h2::after { background: #91B0F5; }
-
-/* ---------- scroll-DRIVEN choreography (Chromium/Safari) ----------
- * Reveals track the scroll position — reversible, restrained: rows rise
- * and settle, paired panels converge, headlines wipe open, the product
- * shot straightens. Browsers without support keep the reveals above. */
-@supports (animation-timeline: view()) {
-  .mk-reveal, .mk-stag {
-    opacity: 1; transform: none;
-    transition: none;
-    animation-name: mk-scrub-rise; animation-timing-function: linear; animation-fill-mode: both;
-    animation-timeline: view(); animation-range: entry 0% cover 30%;
-  }
-  .mk-hero-in.mk-reveal { animation: none; }
-
-  .mk-stag { animation-name: mk-scrub-up; animation-range: entry 0% cover 38%; }
-
-  .mk-two > .mk-stag:first-child, .mk-ask-grid > .mk-stag:first-child, .mk-price-row > .mk-stag:first-child, .mk-two-col > .mk-stag:first-child { animation-name: mk-scrub-left; }
-  .mk-two > .mk-stag:last-child, .mk-ask-grid > .mk-stag:last-child, .mk-price-row > .mk-stag:last-child, .mk-two-col > .mk-stag:last-child { animation-name: mk-scrub-right; }
-
-  .mk-steps > .mk-stag, .mk-levels > .mk-stag { animation-name: mk-scrub-left; animation-range: entry 0% cover 34%; }
-  .mk-steps .mk-step-n {
-    animation-name: mk-scrub-num; animation-timing-function: linear; animation-fill-mode: both;
-    animation-timeline: view(); animation-range: entry 16% cover 42%;
-  }
-
-  .mk-band .mk-h2 {
-    animation-name: mk-scrub-wipe; animation-timing-function: linear; animation-fill-mode: both;
-    animation-timeline: view(); animation-range: entry 0% cover 32%;
-  }
-
-  .mk-shotband .mk-shot, .mk-band .mk-frame {
-    animation-name: mk-scrub-straighten; animation-timing-function: linear; animation-fill-mode: both;
-    animation-timeline: view(); animation-range: entry 0% cover 46%;
-  }
-
-  .mk-band .mk-kicker {
-    animation-name: mk-scrub-kicker; animation-timing-function: linear; animation-fill-mode: both;
-    animation-timeline: view(); animation-range: entry 0% cover 24%;
-  }
-}
-/* End keyframes are implicit (the element's own resting style) so filled
- * scroll animations never pin transform and hover states keep working. */
-@keyframes mk-scrub-rise { from { opacity: 0; transform: translateY(24px); } }
-@keyframes mk-scrub-up { from { opacity: 0; transform: translateY(34px); } }
-@keyframes mk-scrub-left { from { opacity: 0; transform: translateX(-44px); } }
-@keyframes mk-scrub-right { from { opacity: 0; transform: translateX(44px); } }
-@keyframes mk-scrub-wipe { from { clip-path: inset(-20px 92% -20px -20px); opacity: .3; } to { clip-path: inset(-20px -4% -20px -20px); opacity: 1; } }
-@keyframes mk-scrub-straighten { from { opacity: .35; transform: perspective(1400px) rotateX(7deg) translateY(30px) scale(.97); } }
-@keyframes mk-scrub-num { from { opacity: 0; transform: translateY(12px); } }
-@keyframes mk-scrub-kicker { from { opacity: 0; letter-spacing: .3em; } }
 
 /* ask stayleased section */
 .mk-kicker-ai { display: inline-flex; align-items: center; gap: 7px; }
@@ -481,10 +439,14 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
   .mk-wrap { padding: 0 24px; }
   .mk-menu, .mk-nav-cta { display: none; }
   .mk-burger { display: flex; }
-  .mk-hero-in { padding: 52px 24px 44px; }
+  .mk-hero-in { grid-template-columns: 1fr; padding: 52px 24px 44px; gap: 32px; }
   .mkp-hero-in { grid-template-columns: 1fr; padding: 46px 24px 54px; }
   .mk-hero h1 { font-size: clamp(38px, 8vw, 54px); }
   .mk-two, .mk-two-col, .mk-ask-grid { grid-template-columns: 1fr; }
+  .mk-feat, .mk-feat-flip { grid-template-columns: 1fr; gap: 22px; }
+  .mk-feat-flip .mk-feat-copy { order: 1; }
+  .mk-feat-flip .mk-feat-shot { order: 2; }
+  .mk-modgrid { grid-template-columns: 1fr 1fr; }
   .mk-grid3 { grid-template-columns: 1fr 1fr; }
   .mk-grid5 { grid-template-columns: 1fr 1fr; }
   .mk-grid2 { grid-template-columns: 1fr; }
@@ -492,6 +454,7 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
   .mkp-stats { grid-template-columns: 1fr; }
   .mkp-stat + .mkp-stat { border-left: 0; padding-left: 0; border-top: 1px solid var(--line-2); }
 }
+@media (max-width: 620px) { .mk-modgrid { grid-template-columns: 1fr; } }
 @media (max-width: 620px) { .mk-grid3, .mk-grid5, .mk-form-grid { grid-template-columns: 1fr; } .mk-foot-grid { grid-template-columns: 1fr 1fr; } }
 
 /* Cross-page transitions — pages crossfade instead of hard-cutting. */
@@ -502,7 +465,6 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 @media (prefers-reduced-motion: reduce) {
   @view-transition { navigation: none; }
   body.mk { scroll-behavior: auto; }
-  .mk-reveal, .mk-stag, .mk-band .mk-h2, .mk-band .mk-frame, .mk-band .mk-kicker, .mk-steps .mk-step-n, .mk-shotband .mk-shot { animation: none !important; }
   .mk-reveal, .mk-stag { opacity: 1 !important; transform: none !important; transition: none; }
   .mk-h2::after { transform: scaleX(1); transition: none; }
   .mk-marquee-track { animation: none; }
