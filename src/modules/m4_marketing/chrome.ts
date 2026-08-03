@@ -151,7 +151,7 @@ export function mkDoc(title: string, description: string, body: Raw): Res {
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
 ${raw(`<script>${THEME_BOOT_JS}</script>`)}
 <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
-<link rel="preload" href="/assets/fonts/fraunces-var.woff2" as="font" type="font/woff2" crossorigin />
+<link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
 <style>${raw(MARKETING_CSS)}</style>
 </head><body class="mk">${body}${mkChromeScript()}</body></html>`.s}`);
 }
