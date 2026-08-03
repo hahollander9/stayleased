@@ -1,6 +1,6 @@
 import { html, raw, when, join } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/http.ts';
-import { requirePerm, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, propFilter, canAccessProperty, can, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, run, insert, update } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, addDays, diffDays } from '../../lib/dates.ts';
@@ -211,9 +211,10 @@ export function routes(r: Router): void {
       active: '/workorders',
       crumbs: [['Work orders', '/workorders']],
       subtitle: html`${statusBadge(w.priority)} ${statusBadge(w.status)} · #${w.id.slice(-6)} · ${w.prop_name}${w.unit_number ? ` · Unit ${w.unit_number}` : ''}${w.sla_due ? html` · SLA ${fmtDate(w.sla_due)}` : ''}`,
-      actions: when(canManage, () => html`<div style="display:flex;gap:6px;flex-wrap:wrap">
-        ${next.filter((s) => !['assigned', 'scheduled'].includes(s)).map((s) => html`<form method="post" action="/workorders/${w.id}/transition"><input type="hidden" name="to" value="${s}" /><button class="btn btn-sm ${s === 'completed' ? '' : 'btn-ghost'}">${s.replaceAll('_', ' ')}</button></form>`)}
-      </div>`),
+      actions: html`<div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${when(can(ctx, 'pos:create') && !['completed', 'canceled', 'closed'].includes(w.status), () => html`<a class="btn btn-ghost btn-sm" href="/purchasing/new?workorder=${w.id}" title="Order parts or services for this job — routes to the approver over the threshold, then flows into AP">Create purchase order</a>`)}
+        ${when(canManage, () => next.filter((s) => !['assigned', 'scheduled'].includes(s)).map((s) => html`<form method="post" action="/workorders/${w.id}/transition"><input type="hidden" name="to" value="${s}" /><button class="btn btn-sm ${s === 'completed' ? '' : 'btn-ghost'}">${s.replaceAll('_', ' ')}</button></form>`))}
+      </div>`,
       content: html`
         <div class="grid cols-2">
           <div>

@@ -12,7 +12,7 @@ import { createInvoice, submitInvoice, approveInvoice, rejectInvoice, voidInvoic
 /** M9.6 — AP screens: invoice entry with GL splits, approval queue, payment
  * runs, positive-pay register with void/reissue, AP aging. */
 
-registerNav('Money', { href: '/ap', label: 'Payables', perm: 'ap:view', match: ['/ap'] });
+registerNav('Money', { href: '/ap', label: 'Payables', perm: 'ap:view', match: ['/ap/'] }); // not bare '/ap' — it prefix-matches /approvals
 
 const EXPENSE_OPTS = COA.filter(([, , t]) => t === 'expense' || t === 'asset').map(([c, n]): [string, string] => [c, `${c} — ${n}`]);
 

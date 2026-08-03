@@ -1,4 +1,4 @@
-import { html, raw, when, join } from '../../lib/html.ts';
+import { html, raw, when, join, type Child } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, run, insert } from '../../lib/db.ts';
@@ -15,6 +15,7 @@ import {
 } from '../../ui/ui.ts';
 import { lines as lineChart, donut } from '../../lib/charts.ts';
 import { agingRows, leaseBalance, leaseLedger, createCharge } from './service.ts';
+import { depositDeadline, postDepositInterest } from './depositlaw.ts';
 import {
   recordPayment, PaymentRejected, lateFeeCandidates, assessLateFees, waiveLateFee, receivablesStats,
   createPaymentPlan, primaryContact, depositHeld, finalizeDeposit, openCollectionCase, reversePayment, writeOffBalance,
@@ -405,7 +406,7 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const pf = propFilter(ctx, 'l.property_id');
     const held = q<any>(
-      `SELECT l.id, l.household_name, l.status, l.deposit_cents, l.deposit_alternative, l.move_out_date, u.unit_number, p.name AS prop_name
+      `SELECT l.id, l.property_id, l.household_name, l.status, l.deposit_cents, l.deposit_alternative, l.move_out_date, u.unit_number, p.name AS prop_name, p.state AS state
        FROM leases l JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=l.property_id
        WHERE l.org_id=? AND l.status IN ('active','month_to_month','notice','ended')${pf.sql}
        ORDER BY CASE WHEN l.status='ended' THEN 0 WHEN l.status='notice' THEN 1 ELSE 2 END, l.move_out_date`,
@@ -415,29 +416,36 @@ export function routes(r: Router): void {
       .map((l) => ({ ...l, held: depositHeld(ctx, l.id) }))
       .filter((l) => l.held > 0 || l.deposit_alternative || l.status === 'notice' || l.status === 'ended');
     const totalHeld = rows.reduce((s, l) => s + l.held, 0);
-    const dispositionDays = 30;
     return shell(rq, {
       title: 'Deposit accountability',
       active: '/deposits',
-      subtitle: `${usd(totalHeld)} held across ${rows.filter((x) => x.held > 0).length} households · dispositions due ${dispositionDays} days after move-out`,
-      content: card(null, tbl(
-        [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Status' }, { label: 'Held', num: true }, { label: 'Move-out' }, { label: 'Disposition' }],
-        rows.slice(0, 200).map((l) => {
-          const overdue = l.status === 'ended' && l.move_out_date && diffDays(ctx.businessDate, l.move_out_date) > dispositionDays && l.held > 0;
-          return {
-            href: `/leases/${l.id}?tab=deposit`,
-            cells: [
-              html`<b>${l.household_name}</b>`, l.unit_number, l.prop_name, statusBadge(l.status),
-              l.deposit_alternative ? html`<span class="badge violet">alternative</span>` : usd(l.held),
-              l.move_out_date ? fmtDate(l.move_out_date) : '—',
-              l.status === 'ended' && l.held > 0
-                ? (overdue ? html`<span class="badge bad">overdue</span>` : html`<span class="badge warn">due ${fmtDate(addDays(l.move_out_date, dispositionDays))}</span>`)
-                : l.held > 0 ? statusBadge('active', 'held') : '—',
-            ],
-          };
-        }),
-        { empty: 'No deposits held.' },
-      ), { flush: true }),
+      subtitle: html`${usd(totalHeld)} held across ${rows.filter((x) => x.held > 0).length} households · return deadlines follow each property's state law`,
+      content: html`
+        ${card(null, tbl(
+          [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Status' }, { label: 'Held', num: true }, { label: 'Move-out' }, { label: 'State clock' }, { label: 'Return due' }],
+          rows.slice(0, 200).map((l) => {
+            const dl2 = depositDeadline(ctx, l.property_id, l.state, l.move_out_date);
+            const ended = l.status === 'ended' && l.held > 0;
+            return {
+              href: `/leases/${l.id}?tab=deposit`,
+              cells: [
+                html`<b>${l.household_name}</b>`, l.unit_number, l.prop_name, statusBadge(l.status),
+                l.deposit_alternative ? html`<span class="badge violet">alternative</span>` : usd(l.held),
+                l.move_out_date ? fmtDate(l.move_out_date) : '—',
+                html`${l.state} · ${dl2.days}d${dl2.rule.interest ? html` <span class="badge violet" title="${dl2.rule.note || 'state requires interest on held deposits'}">interest</span>` : ''}`,
+                ended && dl2.due
+                  ? (dl2.daysLeft! < 0
+                      ? html`<span class="badge bad">overdue ${-dl2.daysLeft!}d</span>`
+                      : dl2.daysLeft! <= 7
+                        ? html`<span class="badge warn">${fmtDate(dl2.due)} · ${dl2.daysLeft}d left</span>`
+                        : html`${fmtDate(dl2.due)}`)
+                  : l.held > 0 ? statusBadge('active', 'held') : '—',
+              ],
+            };
+          }),
+          { empty: 'No deposits held.' },
+        ), { flush: true })}
+        <p class="small muted" style="margin-top:10px">Deadlines and interest flags are state-law presets — verify specifics with counsel. A per-property override lives in Settings (<code>deposit_disposition_days</code>); interest accrues at <code>deposit_interest_pct</code> from the lease's Deposit tab.</p>`,
     });
   });
 
@@ -482,6 +490,16 @@ export function routes(r: Router): void {
     );
   });
 
+  r.post('/leases/:id/deposit/interest', requirePerm('deposits:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    try {
+      const cents = postDepositInterest(ctx, rq.params.id!);
+      return redirect(`/leases/${rq.params.id}?tab=deposit`, `${usd(cents)} interest accrued onto the held deposit (5720 → 2100).`);
+    } catch (e) {
+      return redirect(`/leases/${rq.params.id}?tab=deposit`, (e as Error).message, 'err');
+    }
+  });
+
   r.post('/payments/:id/reverse', requirePerm('payments:refund'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const p = q1<any>('SELECT * FROM payments WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
@@ -501,18 +519,26 @@ registerLeaseTab((ctx, lease) => ({
     const held = depositHeld(ctx, lease.id);
     const activity = q<any>('SELECT * FROM deposit_activity WHERE lease_id=? ORDER BY date', lease.id);
     const balance = leaseBalance(ctx, lease.id);
+    const prop = q1<any>('SELECT state FROM properties WHERE id=?', lease.property_id);
+    const dl2 = depositDeadline(ctx, lease.property_id, prop?.state, lease.move_out_date);
     return html`
       ${card('Deposit position', dl([
         ['Contract deposit', lease.deposit_alternative ? html`Deposit alternative <span class="badge violet">no cash deposit</span>` : usd(lease.deposit_cents)],
         ['Currently held', usd(held)],
         ['Account balance', html`<span class="${balance > 0 ? 'neg' : ''}">${usd(balance)}</span>`],
+        ['Return deadline', html`${prop?.state || '—'} law: ${dl2.days} days after move-out${dl2.rule.note ? html` <span class="muted small">(${dl2.rule.note})</span>` : ''}${lease.move_out_date && dl2.due ? html` — due <b>${fmtDate(dl2.due)}</b> ${dl2.daysLeft! < 0 ? html`<span class="badge bad">overdue ${-dl2.daysLeft!}d</span>` : html`<span class="badge ${dl2.daysLeft! <= 7 ? 'warn' : 'ok'}">${dl2.daysLeft}d left</span>`}` : ''}`],
+        ...(dl2.rule.interest ? [['Interest', html`required in ${prop?.state} — accrues at the <code>deposit_interest_pct</code> setting`] as [Child, Child]] : []),
       ]))}
+      ${when(held > 0 && dl2.rule.interest, () => html`<form method="post" action="/leases/${lease.id}/deposit/interest" class="toolbar" style="margin:-6px 0 14px">
+        <button class="btn btn-ghost btn-sm">Accrue deposit interest through today</button>
+        <span class="small muted">posts DR 5720 / CR 2100 and adds to the held balance</span>
+      </form>`)}
       ${when(activity.length, () => card('Deposit activity', tbl(
         [{ label: 'Date' }, { label: 'Kind' }, { label: 'Memo' }, { label: 'Amount', num: true }],
         activity.map((a) => ({ cells: [fmtDate(a.date), statusBadge(undefined, a.kind), a.memo || '', usd(a.amount_cents)] })),
       ), { flush: true }))}
       ${when(held > 0 && ['notice', 'ended', 'month_to_month', 'active'].includes(lease.status), () => card('Move-out disposition (SODA)', html`
-        <p class="small muted">Post any damage charges on the ledger first (they appear in the final statement), then finalize: the held deposit applies to the balance oldest-first, any remainder refunds by check, any shortfall can escalate to collections.</p>
+        <p class="small muted">Post any damage charges on the ledger first (they appear in the final statement), then finalize: the held deposit applies to the balance oldest-first, any remainder refunds by check, any shortfall can escalate to collections. An <b>itemized statement is required</b> when any portion is withheld — the SODA prints from the Statements panel below and must go out by the return deadline above.</p>
         <form method="post" action="/leases/${lease.id}/charges" class="toolbar">
           <input type="hidden" name="kind" value="damage" />
           ${field('Damage description', input('label', { placeholder: 'Carpet replacement — bedroom' }))}

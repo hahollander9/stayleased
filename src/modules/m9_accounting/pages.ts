@@ -21,7 +21,7 @@ export function routes(r: Router): void {
       title: 'General ledger',
       active: '/gl',
       subtitle: `Trial balance · ${basis} basis · as of ${fmtDate(ctx.businessDate)}`,
-      actions: html`<a class="btn btn-ghost" href="/gl/journal">Journal entries</a> <a class="btn btn-ghost" href="/gl/invariants">Integrity checks</a>`,
+      actions: html`<a class="btn btn-ghost" href="/gl/setup">Accounting setup</a> <a class="btn btn-ghost" href="/gl/journal">Journal entries</a> <a class="btn btn-ghost" href="/gl/invariants">Integrity checks</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Basis', select('basis', [['accrual', 'Accrual'], ['cash', 'Cash']], basis))}

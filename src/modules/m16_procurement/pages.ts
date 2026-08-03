@@ -80,6 +80,10 @@ export function routes(r: Router): void {
     ensureCatalog(ctx.orgId);
     const props = propsFor(ctx);
     const vendors = q<any>('SELECT id, name FROM vendors WHERE org_id=? AND active=1 ORDER BY name', ctx.orgId);
+    // arriving from a work order pre-fills vendor/property/memo and links the PO back
+    const wo = rq.query.get('workorder')
+      ? q1<any>('SELECT * FROM work_orders WHERE id=? AND org_id=?', rq.query.get('workorder'), ctx.orgId)
+      : undefined;
     const catalog = q<any>('SELECT * FROM catalog_items WHERE org_id=? AND active=1 ORDER BY category, name', ctx.orgId);
     const projects = q<any>(`SELECT id, name FROM capital_projects WHERE org_id=? AND status='active'`, ctx.orgId);
     const lineRow = (i: number): Child => html`
@@ -97,11 +101,13 @@ export function routes(r: Router): void {
         <form method="post" action="/purchasing/new">
           ${card('Order', html`
             <div class="grid2">
-              ${field('Vendor', select('vendor_id', vendors.map((v: any): [string, string] => [v.id, v.name]), '', { required: true }))}
-              ${field('Property', select('property_id', props.map((p): [string, string] => [p.id, p.name]), ctx.currentPropertyId || '', { required: true }))}
+              ${field('Vendor', select('vendor_id', vendors.map((v: any): [string, string] => [v.id, v.name]), wo?.vendor_id || '', { required: true }))}
+              ${field('Property', select('property_id', props.map((p): [string, string] => [p.id, p.name]), wo?.property_id || ctx.currentPropertyId || '', { required: true }))}
               ${field('Needed by', input('needed_by', { type: 'date' }))}
-              ${field('Memo', input('memo', { placeholder: 'e.g. B-building turn materials' }))}
-            </div>`)}
+              ${field('Memo', input('memo', { placeholder: 'e.g. B-building turn materials', value: wo ? `WO ${wo.id.slice(-6)}: ${wo.summary}` : undefined }))}
+            </div>
+            ${when(wo, () => html`<input type="hidden" name="source" value="workorder" /><input type="hidden" name="source_id" value="${wo.id}" />
+              <p class="small muted">Linked to work order <a href="/workorders/${wo.id}">${wo.summary}</a> — the approved purchase flows into AP against this job.</p>`)}`)}
           ${card('Lines (catalog or free-form)', html`
             <table class="tbl"><thead><tr><th>Catalog item</th><th>Free-form description</th><th>Qty</th><th>Unit price</th><th>Capital project</th></tr></thead>
             <tbody>${join([0, 1, 2, 3].map(lineRow), '')}</tbody></table>
@@ -135,6 +141,8 @@ export function routes(r: Router): void {
       const poId = createPo(ctx, {
         propertyId: String(b.property_id), vendorId: String(b.vendor_id),
         memo: String(b.memo || '') || undefined, neededBy: String(b.needed_by || '') || undefined, lines,
+        source: b.source === 'workorder' ? 'workorder' : undefined,
+        sourceId: b.source === 'workorder' && b.source_id ? String(b.source_id) : undefined,
       });
       const res = submitPo(ctx, poId);
       return redirect(`/purchasing/${poId}`, res === 'approved' ? 'PO approved and sent to the vendor' : 'PO submitted for approval');

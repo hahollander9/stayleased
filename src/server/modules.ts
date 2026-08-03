@@ -17,7 +17,8 @@ import '../modules/m5_screening/service.ts'; // registers screening_results + ho
 import * as m6 from '../modules/m6_leases/pages.ts';
 import '../modules/m6_leases/service.ts'; // registers lease_activation + lease_rollover jobs
 import * as m9ap from '../modules/m9_accounting/pages_ap.ts';
-import * as m9fin from '../modules/m9_accounting/pages_fin.ts'; // also registers bank_feed + recurring_jes jobs
+import * as m9fin from '../modules/m9_accounting/pages_fin.ts';
+import * as m9ops from '../modules/m9_accounting/finops.ts'; // approvals inbox + bank import + accounting setup // also registers bank_feed + recurring_jes jobs
 import * as m11 from '../modules/m11_utilities/pages.ts'; // also registers utility_cycle job
 import * as m12 from '../modules/m12_insurance/pages.ts'; // also registers insurance_compliance job + deposit-alt hook
 import * as m16 from '../modules/m16_procurement/pages.ts';
@@ -56,6 +57,7 @@ export function registerModules(r: Router): void {
   m6.routes(r); // Phase 9: lease packets, e-sign, renewals, templates
   m6.portalRoutes(r); // Phase 9: portal renewal acceptance + checklist
   m9ap.routes(r); // Phase 10: accounts payable + payment runs
+  m9ops.routes(r); // approvals inbox, bank-file import, accounting setup
   m9fin.routes(r); // Phase 10: banking/recon, close, budgets, statements, projects
   m11.routes(r); // Phase 11: utilities — meters, RUBS, recovery
   m12.routes(r); // Phase 11: insurance compliance + risk

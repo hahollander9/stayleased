@@ -94,13 +94,20 @@ export function routes(r: Router): void {
       active: '/banking',
       subtitle: `${acct.bank_name} · …${acct.last4} · feed shows ${txns.length < 300 ? txns.length : '300+'} transactions`,
       actions: html`<a class="btn" href="/banking/${acct.id}/reconcile">Reconcile</a>`,
-      content: card(null, tbl(
-        [{ label: 'Date' }, { label: 'Description' }, { label: 'Ref' }, { label: 'Kind' }, { label: 'Status' }, { label: 'Amount', num: true }],
-        txns.map((t) => ({
-          cells: [fmtDate(t.date), t.description, html`<span class="mono small">${t.ref || ''}</span>`, t.kind, statusBadge(t.status), html`<span class="${t.amount_cents < 0 ? 'neg' : ''}">${usd(t.amount_cents)}</span>`],
-        })),
-        { empty: 'Feed is empty — pull the latest feed from the banking page.' },
-      ), { flush: true }),
+      content: html`
+        ${card('Import a statement file', html`
+          <form method="post" action="/banking/${acct.id}/upload" enctype="multipart/form-data" class="toolbar">
+            ${field('CSV or OFX/QFX from the bank', html`<input type="file" name="statement" accept=".csv,.ofx,.qfx,.txt" required />`)}
+            <button class="btn">Import transactions</button>
+          </form>
+          <p class="small muted">Bank exports land here directly — date, description, and amount (or debit/credit) columns are detected automatically, re-imports never duplicate, and everything imported is matchable in the reconciliation workbench.</p>`)}
+        ${card(null, tbl(
+          [{ label: 'Date' }, { label: 'Description' }, { label: 'Ref' }, { label: 'Kind' }, { label: 'Status' }, { label: 'Amount', num: true }],
+          txns.map((t) => ({
+            cells: [fmtDate(t.date), t.description, html`<span class="mono small">${t.ref || ''}</span>`, t.kind, statusBadge(t.status), html`<span class="${t.amount_cents < 0 ? 'neg' : ''}">${usd(t.amount_cents)}</span>`],
+          })),
+          { empty: 'No transactions yet — import a statement file above or pull the demo feed from the banking page.' },
+        ), { flush: true })}`,
     });
   });
 
