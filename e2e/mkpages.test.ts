@@ -48,6 +48,26 @@ test('gate: unknown feature slugs 404 instead of erroring', async () => {
   }
 });
 
+test('gate: staggered content actually becomes visible (no opacity-0 stuck cards)', async () => {
+  // regression: reveal children were left at opacity 0 when their group had
+  // no .mk-reveal ancestor — content rendered in source but never appeared
+  const page = await newPage(browser);
+  for (const url of ['/platform', '/for/self-managing-owners']) {
+    await page.goto(`${base}${url}`, { waitUntil: 'networkidle' });
+    const card = page.locator('.mk-grid3 > *, .mk-grid2 > *, .mkp-stats > *').first();
+    await card.scrollIntoViewIfNeeded();
+    await page.waitForFunction(
+      () => {
+        const el = document.querySelector('.mk-grid3 > *, .mk-grid2 > *, .mkp-stats > *');
+        return el && parseFloat(getComputedStyle(el).opacity) > 0.9;
+      },
+      undefined,
+      { timeout: 5000 },
+    ).catch(() => { throw new Error(`${url}: staggered card stuck invisible`); });
+  }
+  await page.close();
+});
+
 test('gate: retired /resident URLs redirect to the portal page', async () => {
   for (const url of ['/resident', '/resident/portal', '/resident/autopay', '/resident/anything']) {
     const res = await fetch(`${base}${url}`); // follows redirects

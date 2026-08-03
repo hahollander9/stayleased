@@ -303,6 +303,8 @@ const CHROME_JS = `
       es.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('vis'); io.unobserve(en.target); } });
     }, { threshold: 0.1, rootMargin: '0px 0px -7% 0px' });
     document.querySelectorAll('.mk-reveal').forEach(function (el) { io.observe(el); });
+    // staggered groups reveal on their own entry (their parents may not be .mk-reveal)
+    document.querySelectorAll('.mk-grid3, .mk-grid2, .mkp-stats').forEach(function (el) { io.observe(el); });
   } else {
     document.querySelectorAll('.mk-reveal, .mk-stag').forEach(function (el) { el.classList.add('vis'); });
   }
