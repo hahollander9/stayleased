@@ -87,7 +87,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'AI Activity',
       active: '/ai',
-      subtitle: html`Every agent action with its input, output and approval trail — powered by <b>${st.live ? st.model : llm().name}</b>. Supervision is the product. ${brainBadge}`,
+      subtitle: html`Every agent action with its input, output and approval trail. Drafts come from the deterministic engine, grounded in live records${st.live ? html` — Ask and document reading run on <b>${st.model}</b>` : ''}. Supervision is the product. ${brainBadge}`,
       actions: html`${when(canConfigure, () => html`<form method="post" action="/ai/kill-switch" data-confirm="${on ? 'Pause ALL AI agents org-wide? Nothing will send until re-enabled.' : 'Re-enable AI agents?'}"><button class="btn ${on ? 'btn-danger' : ''}">${on ? '⏻ Kill switch' : '▶ Resume AI'}</button></form>`)}<a class="btn btn-ghost" href="/ai/calls">Call analysis</a><a class="btn btn-ghost" href="/ai/essentials">Content studio</a>`,
       content: html`
         ${when(!on, () => html`<div class="callout bad">🛑 <b>AI is paused by the global kill switch.</b> Agents keep recording proposals for audit, but nothing sends and nothing runs autonomously until an admin resumes.</div>`)}

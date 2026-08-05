@@ -3,7 +3,7 @@ import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
 import { addMonths, monthKey, fmtMonth, fmtDate } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
-import { propFilter } from '../../lib/auth.ts';
+import { propFilter, can } from '../../lib/auth.ts';
 import { propose } from './framework.ts';
 import { agingRows } from '../m8_receivables/service.ts';
 import { receivablesStats } from '../m8_receivables/payments.ts';
@@ -53,6 +53,17 @@ const HANDLERS: Handler[] = [
   // delinquency over $X (at property)
   (ctx, question) => {
     if (!/delinquen|owe|past due|balance/i.test(question)) return null;
+    // "It sees nothing your role could not already see": household balances
+    // are the receivables screens' data, so the assistant requires the same
+    // permission those screens do. Answer with the refusal (rather than
+    // returning null) so the question can't fall through to the LLM lane.
+    if (!can(ctx, 'ledger:view')) {
+      return {
+        title: 'Delinquency', matched: 'delinquency',
+        summary: 'Resident balances are outside your role’s access — the assistant answers with the same permissions as the screens. Ask an admin for ledger access if you need this.',
+        links: [],
+      };
+    }
     const money = /(?:over|above|more than|>)\s*\$?\s*([\d,]+(?:\.\d{1,2})?)/i.exec(question);
     const floor = money ? parseUsd(money[1]!) : 0;
     const prop = contextProperty(ctx, question);
@@ -238,11 +249,14 @@ function orgFactsBlock(ctx: Ctx): string {
   const occ = n(`SELECT COUNT(*) FROM units WHERE org_id=? AND status='occupied'`, ctx.orgId);
   const props = n('SELECT COUNT(*) FROM properties WHERE org_id=?', ctx.orgId);
   const openWos = n(`SELECT COUNT(*) FROM work_orders WHERE org_id=? AND status NOT IN ('completed','canceled')`, ctx.orgId);
-  const stats = receivablesStats(ctx, monthKey(ctx.businessDate), ctx.currentPropertyId);
   const pctOcc = units ? Math.round((occ / units) * 1000) / 10 : 0;
+  // Financial facts enter the LLM lane only for roles that can see them on
+  // screens — the assistant must not become a side door around RBAC.
+  const money = can(ctx, 'ledger:view')
+    ? (() => { const s = receivablesStats(ctx, monthKey(ctx.businessDate), ctx.currentPropertyId); return `\n- this month: billed ${usd(s.billed)}, collected ${usd(s.collected)} (${s.collectionRate}% collection rate)`; })()
+    : '';
   return `FACTS (org "${ctx.orgId.slice(0, 10)}…", business date ${ctx.businessDate}):
-- portfolio: ${props} properties, ${units} units, occupancy ${pctOcc}% (${occ} occupied)
-- this month: billed ${usd(stats.billed)}, collected ${usd(stats.collected)} (${stats.collectionRate}% collection rate)
+- portfolio: ${props} properties, ${units} units, occupancy ${pctOcc}% (${occ} occupied)${money}
 - maintenance: ${openWos} open work orders`;
 }
 
@@ -340,19 +354,20 @@ export function askPanelContext(ctx: Ctx, path: string): AskPanelContext {
     ? q1<any>('SELECT id, name FROM properties WHERE id=? AND org_id=?', ctx.currentPropertyId, ctx.orgId)
     : null;
   let greeting: string;
+  const ledger = can(ctx, 'ledger:view'); // money figures follow screen permissions
   if (prop) {
     const m = computeDayMetrics(ctx, prop.id, ctx.businessDate);
-    const owed = agingRows(ctx, { propertyId: prop.id }).reduce((s, a) => s + a.balance, 0);
+    const owed = ledger ? agingRows(ctx, { propertyId: prop.id }).reduce((s, a) => s + a.balance, 0) : 0;
     const wos = val<number>(
       `SELECT COUNT(*) FROM work_orders WHERE org_id=? AND property_id=? AND status NOT IN ('completed','canceled')`,
       ctx.orgId, prop.id,
     ) || 0;
-    greeting = `You're working in ${prop.name} — ${m.occupancy_pct}% occupied, ${usd(owed)} outstanding, ${wos} open work order${wos === 1 ? '' : 's'}. Answers are scoped here; say "portfolio" for the whole picture.`;
+    greeting = `You're working in ${prop.name} — ${m.occupancy_pct}% occupied, ${ledger ? `${usd(owed)} outstanding, ` : ''}${wos} open work order${wos === 1 ? '' : 's'}. Answers are scoped here; say "portfolio" for the whole picture.`;
   } else {
     const units = val<number>('SELECT COUNT(*) FROM units WHERE org_id=?', ctx.orgId) || 0;
     const occ = val<number>(`SELECT COUNT(*) FROM units WHERE org_id=? AND status='occupied'`, ctx.orgId) || 0;
-    const owed = agingRows(ctx, {}).reduce((s, a) => s + a.balance, 0);
-    greeting = `Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: ${units ? `${Math.round((occ / units) * 1000) / 10}% occupied` : 'no units yet'}, ${usd(owed)} outstanding right now. Name any property to zoom in.`;
+    const owed = ledger ? agingRows(ctx, {}).reduce((s, a) => s + a.balance, 0) : 0;
+    greeting = `Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: ${units ? `${Math.round((occ / units) * 1000) / 10}% occupied` : 'no units yet'}${ledger ? `, ${usd(owed)} outstanding right now` : ''}. Name any property to zoom in.`;
   }
   const chips = SECTION_CHIPS.find(([re]) => re.test(path))?.[1]
     || ['occupancy right now', 'delinquency over $500', 'which units turn this month', 'collection rate last month'];

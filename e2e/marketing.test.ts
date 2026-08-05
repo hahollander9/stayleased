@@ -113,7 +113,7 @@ test('syndication manager toggles listings per channel', async () => {
   await login(staff, base, 'marketing@summitridge.demo');
   await staff.goto(`${base}/marketing/syndication`);
   const content = (await staff.textContent('.content')) || '';
-  assert.match(content, /zillow/);
+  assert.match(content, /Zillow/);
   assert.match(content, /active listings/);
   const liveButtons = await staff.locator('button:has-text("Live")').count();
   assert.equal(liveButtons > 0, true, 'seeded publications visible');

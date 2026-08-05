@@ -30,8 +30,33 @@ export function jobDefs(): JobDef[] {
 /** Jobs that FABRICATE world activity (inbound leads, bank transactions,
  * meter reads + provider invoices). They exist so the demo org feels alive.
  * Live customer orgs must never run them — a real company's books cannot
- * grow simulated data. Real integrations will replace them per rail. */
-export const SIM_ONLY_JOBS = new Set(['ils_leads', 'bank_feed', 'utility_cycle']);
+ * grow simulated data. Real integrations will replace them per rail.
+ *
+ * `autopay` and `screening_results` were added 2026-08-05: each drives a
+ * rail that is explicitly waitlisted rather than live, so in a real org
+ * they invented financial and consumer-report facts. `autopay` pushed rent
+ * through the simulated processor and posted real dual-basis journal
+ * entries for money that never moved; `screening_results` derived credit
+ * scores and criminal/eviction findings from a hash of the applicant's
+ * identity. Fabricated books are bad; a fabricated adverse-action record
+ * against a real applicant is worse.
+ *
+ * NOT sim-only, deliberately — these mix genuine logic with simulated
+ * inputs and need narrower gating at the simulated call site rather than a
+ * whole-job kill, or real functionality disappears with them:
+ *   · payment_settlement   — settling a staff-recorded check/money order is
+ *     real bookkeeping a live org needs (and period close requires a clear
+ *     settlement queue). Only the ACH NSF dice-roll was simulation; that is
+ *     now gated by org kind inside settleDuePayments.
+ *   · insurance_compliance — policy expiry and lapse reminders are real;
+ *     only the carrier verification round-trip is simulated.
+ *   · pricing_engine       — recommendations off the operator's own
+ *     portfolio are real; only the comp-set market data is fabricated.
+ *   · payment_plans        — installment scheduling is real business logic. */
+export const SIM_ONLY_JOBS = new Set([
+  'ils_leads', 'bank_feed', 'utility_cycle',
+  'autopay', 'screening_results',
+]);
 
 export function orgKind(orgId: string): 'demo' | 'live' {
   return (q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', orgId)?.kind as 'demo' | 'live') || 'demo';
@@ -134,14 +159,23 @@ export function liveToday(): string {
   return new Date(Date.now() - 8 * 3600_000).toISOString().slice(0, 10);
 }
 
-/** Live orgs run on the real calendar: whenever the wall clock has moved past
- * an org's business date, advance it day by day through the normal scheduler
- * (rent posting, late fees, lease rollover, ...). Demo orgs keep their
- * simulator time machine and are untouched here. */
+/** Every org runs on (at least) the real calendar: whenever the wall clock
+ * has moved past an org's business date, advance it day by day through the
+ * normal scheduler (rent posting, late fees, lease rollover, ...).
+ *
+ * Live orgs: mandatory — their books ARE the calendar.
+ * Demo orgs: also synced since 2026-08-05. The demo previously only moved
+ * when someone pushed the Simulator Console time machine, so the public
+ * demo drifted stale — visitors saw "today" frozen at the seed date, with
+ * every dashboard date days or weeks behind the real world. The time
+ * machine still works: it can jump the demo AHEAD of today, and this sync
+ * only ever advances (`business_date < today`), never rewinds. Each synced
+ * day runs the full scheduler, so the demo also keeps generating its
+ * simulated world (leads, bank feed, meter reads) instead of flatlining. */
 export function syncLiveOrgClocks(): number {
   const today = liveToday();
   let advanced = 0;
-  for (const org of q<{ id: string; business_date: string }>(`SELECT id, business_date FROM orgs WHERE kind='live'`)) {
+  for (const org of q<{ id: string; business_date: string }>(`SELECT id, business_date FROM orgs`)) {
     if (org.business_date < today) {
       try {
         advanceBusinessDate(org.id, today);

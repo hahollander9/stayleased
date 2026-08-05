@@ -1,11 +1,13 @@
 import { html, raw, when, join } from '../../lib/html.ts';
 import { redirect, notFound, type Router } from '../../lib/http.ts';
 import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
-import { q, q1, val, insert, j, js } from '../../lib/db.ts';
+import { q, q1, val, insert, run, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso } from '../../lib/dates.ts';
 import { fmtDate, addDays } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
+import { v } from '../../lib/validate.ts';
+import { audit } from '../../lib/audit.ts';
 import { putFile } from '../../lib/files.ts';
 import {
   shell, card, tbl, dl, statusBadge, field, select, input, textarea, moneyInput, checkbox,
@@ -24,20 +26,24 @@ import { registerLeaseAction } from '../people/pages.ts';
  * waitlist), the military toolkit, and the CAM worksheet. */
 
 // Adaptive nav: vertical screens only appear when the portfolio actually has
-// that vertical — a conventional 40–60 unit operator never sees them. The
-// /verticals mode manager is configuration, so it lives in the Setup gear.
-// Product decision (Henry, 2026-08-02): student housing and affordable are
-// out of scope for the product surface. Routes stay functional for existing
-// data, but nothing links to them — the nav entries are withheld entirely.
+// that vertical — a conventional 40–60 unit operator never sees them.
+// Product decision (Henry, 2026-08-02): student housing out of the product
+// surface — routes stay functional for existing data, nothing links to them.
+// REVERSED for affordable (Henry, 2026-08-05): affordable housing is back in
+// scope — operators like DC's mission-driven managers (LIHTC + HAP + PSH
+// portfolios at 30–80% AMI) are exactly the understaffed-middle thesis. The
+// Affordable tab appears when the portfolio has program units; the Vertical
+// modes manager is always available in the Setup gear so a new affordable
+// company can flag its first units.
 registerNav('Property', {
   href: '/student', label: 'Student housing', perm: 'leases:view', match: ['/student'],
   show: () => false,
 });
 registerNav('Property', {
   href: '/affordable', label: 'Affordable', perm: 'leases:view', match: ['/affordable'],
-  show: () => false,
+  show: (ctx) => !!q1<any>(`SELECT 1 FROM units WHERE org_id=? AND program IS NOT NULL LIMIT 1`, ctx.orgId),
 });
-registerNav('Admin', { href: '/verticals', label: 'Vertical modes', perm: 'admin:settings', match: ['/verticals'], show: () => false });
+registerNav('Admin', { href: '/verticals', label: 'Vertical modes', perm: 'admin:settings', match: ['/verticals'] });
 
 // PCS break action on every active lease detail (military households live everywhere)
 registerLeaseAction((ctx, lease) => {
@@ -195,7 +201,14 @@ export function routes(r: Router): void {
        WHERE u.org_id=? AND u.program IS NOT NULL ORDER BY p.name, u.unit_number`,
       ctx.orgId,
     );
-    if (!programUnits.length) return shell(rq, { title: 'Affordable housing', active: '/affordable', content: emptyState('No program units', 'Flag units with a program (LIHTC / Section 8) to activate compliance workflows.') });
+    if (!programUnits.length) {
+      return shell(rq, {
+        title: 'Affordable housing', active: '/affordable',
+        content: html`
+          ${emptyState('No program units yet', 'Flag LIHTC set-aside units below to activate certification gating, rent limits, and the audit-safe waitlist. (Section 8 / HAP subsidy ledgers are on the roadmap.)')}
+          ${when(can(ctx, 'properties:manage'), () => flagUnitCard(ctx))}`,
+      });
+    }
     const view = rq.query.get('view') || 'compliance';
     const certs = q<any>(
       `SELECT ic.*, u.unit_number FROM income_certs ic JOIN units u ON u.id=ic.unit_id
@@ -228,8 +241,8 @@ export function routes(r: Router): void {
         ])}
         ${view === 'certs' ? certsView(ctx, openCerts, certs, canManage)
           : view === 'waitlist' ? waitlistView(waitlist, canManage)
-          : view === 'limits' ? limitsView(limits)
-          : complianceView(ctx, programUnits)}`,
+          : view === 'limits' ? html`${limitsView(limits)}${when(can(ctx, 'properties:manage'), () => limitsEditCard())}`
+          : html`${complianceView(ctx, programUnits)}${when(can(ctx, 'properties:manage'), () => flagUnitCard(ctx))}`}`,
     });
   });
 
@@ -348,6 +361,69 @@ export function routes(r: Router): void {
       )}
       <p class="small muted">Tenant-paid rent may not exceed the limit minus the unit's utility allowance. Enforced at lease activation, renewal offers, and the pricing engine (program units are never engine-priced).</p>`);
   }
+
+  /** Program configuration — flag a unit into the LIHTC set-aside (or clear
+   * it). This is the missing first mile: the compliance center previously
+   * READ program units but only the seed could create them, so a real
+   * affordable operator could never turn the feature on. */
+  function flagUnitCard(ctx: Ctx): ReturnType<typeof html> {
+    const candidates = q<any>(
+      `SELECT u.id, u.unit_number, u.program, p.name AS prop FROM units u JOIN properties p ON p.id=u.property_id
+       WHERE u.org_id=? ORDER BY p.name, u.unit_number LIMIT 400`,
+      ctx.orgId,
+    );
+    return card('Program setup — flag units', html`
+      <form method="post" action="/affordable/units" class="toolbar">
+        ${field('Unit', select('unit_id', candidates.map((u): [string, string] => [u.id, `${u.prop} · ${u.unit_number}${u.program ? ` (${String(u.program).toUpperCase()})` : ''}`]), candidates[0]?.id))}
+        ${field('Program', select('program', [['lihtc', 'LIHTC set-aside'], ['', 'None (remove from program)']], 'lihtc'))}
+        ${field('AMI band', select('ami_pct', [['50', '50% AMI'], ['60', '60% AMI'], ['80', '80% AMI']], '60'))}
+        ${field('Utility allowance / mo', input('utility_allowance', { placeholder: '85.00' }))}
+        <button class="btn btn-sm">Save unit</button>
+      </form>
+      <p class="small muted">Flagged units get certification gating (no move-in without a completed initial cert), max-tenant-rent enforcement (limit minus utility allowance), exclusion from engine pricing, and annual recert scheduling.</p>`);
+  }
+
+  /** Rent-limit schedule editor — the published HUD/agency limits for your
+   * jurisdiction, entered per AMI band and bedroom count. */
+  function limitsEditCard(): ReturnType<typeof html> {
+    return card('Update a limit', html`
+      <form method="post" action="/affordable/limits" class="toolbar">
+        ${field('AMI band', select('ami_pct', [['50', '50%'], ['60', '60%'], ['80', '80%']], '60'))}
+        ${field('Bedrooms', select('beds', [['0', 'Studio'], ['1', '1 BR'], ['2', '2 BR'], ['3', '3 BR']], '1'))}
+        ${field('Max gross rent / mo', input('max_rent', { placeholder: '1580.00', required: true }))}
+        <button class="btn btn-sm">Save limit</button>
+      </form>
+      <p class="small muted">Enter the published limit for your county and program year; the enforced tenant-paid maximum is this figure minus each unit's utility allowance.</p>`);
+  }
+
+  function parseUsdOrZero(x: string): number {
+    try { return x.trim() ? parseUsd(x) : 0; } catch { return 0; }
+  }
+
+  r.post('/affordable/units', requirePerm('properties:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const u = q1<any>('SELECT * FROM units WHERE id=? AND org_id=?', String(rq.body.unit_id || ''), ctx.orgId);
+    if (!u) return notFound('Unit not found');
+    const program = String(rq.body.program || '') === 'lihtc' ? 'lihtc' : null;
+    const ami = program ? v.int({ min: 20, max: 120 }).parse(rq.body.ami_pct) : null;
+    const allowance = program ? Math.max(0, parseUsdOrZero(String(rq.body.utility_allowance || ''))) : null;
+    run('UPDATE units SET program=?, ami_pct=?, utility_allowance_cents=? WHERE id=?', program, ami, allowance, u.id);
+    audit(ctx, 'unit', u.id, 'program_flag', { program: u.program, ami_pct: u.ami_pct }, { program, ami_pct: ami });
+    return redirect('/affordable', program ? `${u.unit_number} flagged — ${ami}% AMI LIHTC set-aside.` : `${u.unit_number} removed from the program.`);
+  });
+
+  r.post('/affordable/limits', requirePerm('properties:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const ami = v.int({ min: 20, max: 120 }).parse(rq.body.ami_pct);
+    const beds = v.int({ min: 0, max: 6 }).parse(rq.body.beds);
+    const cents = parseUsdOrZero(String(rq.body.max_rent || ''));
+    if (cents <= 0) return redirect('/affordable?view=limits', 'Enter a max rent above zero.', 'err');
+    const existing = q1<any>('SELECT id FROM rent_limits WHERE org_id=? AND ami_pct=? AND beds=?', ctx.orgId, ami, beds);
+    if (existing) run('UPDATE rent_limits SET max_rent_cents=? WHERE id=?', cents, existing.id);
+    else insert('rent_limits', { id: id('rlm'), org_id: ctx.orgId, ami_pct: ami, beds, max_rent_cents: cents });
+    audit(ctx, 'rent_limit', `${ami}:${beds}`, existing ? 'update' : 'create', null, { ami_pct: ami, beds, max_rent_cents: cents });
+    return redirect('/affordable?view=limits', `Limit saved — ${ami}% AMI, ${beds} BR.`);
+  });
 
   r.post('/affordable/certs/:id/check', requirePerm('leases:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;

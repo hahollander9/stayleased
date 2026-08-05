@@ -153,6 +153,7 @@ export function routes(r: Router): void {
                   ${field('Outcome', select('outcome', [['answered', 'Answered'], ['voicemail', 'Voicemail'], ['missed', 'Missed']], 'answered'))}
                 </div>
                 ${field('Notes', textarea('notes', { rows: 2, required: true }))}
+                ${field('Transcript (optional)', textarea('transcript', { rows: 3, placeholder: 'Paste the call transcript or a detailed recap — the call-analysis agent summarizes it, grades sentiment, and files the follow-ups.' }))}
                 <button class="btn btn-sm">Log call</button>
               </form>`)}
             ${card('Internal note', html`
@@ -196,11 +197,15 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT * FROM threads WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!t) return notFound();
+    // A pasted transcript is the entry path into call analysis — without it
+    // the analysis agent has nothing to read (it skips transcript-less rows).
+    const transcript = String(rq.body?.transcript || '').trim();
     insert('call_logs', {
       id: id('cal'), org_id: ctx.orgId, property_id: t.property_id,
       lead_id: t.person_kind === 'lead' ? t.person_id : null, resident_id: t.person_kind === 'resident' ? t.person_id : null,
       direction: String(rq.body?.direction || 'outbound'), duration_seconds: 240,
-      outcome: String(rq.body?.outcome || 'answered'), notes: String(rq.body?.notes || ''), at: nowIso(), business_date: ctx.businessDate,
+      outcome: String(rq.body?.outcome || 'answered'), notes: String(rq.body?.notes || ''),
+      transcript: transcript || null, at: nowIso(), business_date: ctx.businessDate,
     });
     run(`UPDATE threads SET last_message_at=?, last_snippet=? WHERE id=?`, nowIso(), `📞 ${rq.body?.outcome}: ${String(rq.body?.notes || '').slice(0, 80)}`, t.id);
     return redirect(`/inbox/${t.id}`, 'Call logged');

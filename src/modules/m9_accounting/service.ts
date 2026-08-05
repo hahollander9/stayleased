@@ -2,6 +2,7 @@ import { q, q1, insert, val, tx, run } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, monthKey } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
+import { audit } from '../../lib/audit.ts';
 
 /** M9 core: the ledger is law (§3.2.2). Every financial event flows through
  * postJE; entries must balance to zero; posting into a closed period is
@@ -68,6 +69,13 @@ export function postJE(ctx: Ctx, input: JEInput): string {
         debit_cents: l.debit || 0, credit_cents: l.credit || 0, property_id: input.propertyId, memo: l.memo || null,
       });
     }
+    // The ledger is the one place "complete audit trail of every action"
+    // must be literally true — this is the single choke point where every
+    // journal entry in the system is written, so the audit row lives here.
+    audit(ctx, 'journal_entry', jeId, 'post', null, {
+      date: input.date, basis: input.basis, property_id: input.propertyId,
+      source: input.sourceKind, memo: input.memo || null, total_cents: dr,
+    });
     return jeId;
   });
 }
@@ -167,7 +175,42 @@ export function runInvariants(ctx: Ctx): InvariantResult[] {
     detail: `GL 2100 ${depGl} vs subledger ${depSub}`,
   });
 
-  // 4. accounting equation per basis: assets = liabilities + equity + (income - expense)
+  // 4. trust three-way: deposit ESCROW CASH ties to the deposit LIABILITY
+  // (which invariant 3 already ties to the tenant-level subledger). This is
+  // the check a trust auditor runs first: settled tenant deposit money must
+  // sit in the escrow account, and nothing else may. Two legitimate,
+  // computable reconciling items are netted out rather than flagged:
+  //   · receipts still pending settlement (their cash is in 1050 clearing);
+  //   · accrued deposit interest (credited to 2100 as owed to the tenant,
+  //     but funded from operating at payout per common statute — so escrow
+  //     runs exactly Σinterest below the liability across all states of the
+  //     lifecycle, including after disposition).
+  // Anything else = escrow above expectation: operator funds commingled in
+  // the trust account; below: tenant money spent. Both are violations.
+  {
+    const escrowCash = accountBalance(ctx, '1020', { basis: 'cash' });
+    const depLiab = -accountBalance(ctx, '2100', { basis: 'cash' });
+    const pendingDeposit = val<number>(
+      `SELECT COALESCE(SUM(pa.amount_cents),0) FROM payment_applications pa
+         JOIN charges c ON c.id=pa.charge_id AND c.kind='deposit'
+         JOIN payments p ON p.id=pa.payment_id
+       WHERE pa.org_id=? AND p.status='pending'`,
+      ctx.orgId,
+    ) || 0;
+    const interestAccrued = val<number>(
+      `SELECT COALESCE(SUM(amount_cents),0) FROM deposit_activity WHERE org_id=? AND kind='interest'`,
+      ctx.orgId,
+    ) || 0;
+    const expected = depLiab - pendingDeposit - interestAccrued;
+    out.push({
+      name: 'Deposit escrow cash ties to deposit liability (trust three-way)',
+      ok: escrowCash === expected,
+      detail: `GL 1020 ${escrowCash} vs GL 2100 ${depLiab} − pending ${pendingDeposit} − interest ${interestAccrued} = ${expected}`
+        + (escrowCash > expected ? ' — operator funds in trust (sweep due)' : escrowCash < expected ? ' — trust underfunded' : ''),
+    });
+  }
+
+  // 5. accounting equation per basis: assets = liabilities + equity + (income - expense)
   for (const basis of ['accrual', 'cash'] as const) {
     const sums = q<any>(
       `SELECT a.type, SUM(jl.debit_cents - jl.credit_cents) net

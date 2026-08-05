@@ -5,7 +5,7 @@ import { usd, splitCents } from '../../lib/money.ts';
 import { assertPerm, type Ctx } from '../../lib/auth.ts';
 import { emit, on } from '../../lib/events.ts';
 import { getSetting } from '../../lib/settings.ts';
-import { registerJob } from '../../lib/jobs.ts';
+import { registerJob, orgKind } from '../../lib/jobs.ts';
 import { notify } from '../../lib/templates.ts';
 import { audit } from '../../lib/audit.ts';
 import { postJE } from '../m9_accounting/service.ts';
@@ -232,9 +232,14 @@ export function settleDuePayments(ctx: Ctx, date: string): string {
   );
   let settled = 0;
   let bounced = 0;
+  // The NSF dice-roll is the simulated ACH network. It exists so the demo
+  // org exercises the reversal workflow; a live org's payments must never
+  // be randomly bounced by a simulator. (Real NSF handling arrives with the
+  // processor rail; until then live-org receipts settle deterministically.)
+  const simulatedRail = orgKind(ctx.orgId) !== 'live';
   for (const p of due) {
     const token = p.method_token_id ? q1<any>('SELECT * FROM payment_method_tokens WHERE id=?', p.method_token_id) : undefined;
-    if (p.method === 'ach' && achWillBounce(ctx.orgId, p.id, token?.behavior || 'ok')) {
+    if (simulatedRail && p.method === 'ach' && achWillBounce(ctx.orgId, p.id, token?.behavior || 'ok')) {
       reversePayment(ctx, p, date, 'nsf');
       bounced++;
       continue;
@@ -625,6 +630,23 @@ export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string;
         id: id('dep'), org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId,
         kind: 'apply', amount_cents: -apply, date: opts.date, memo: 'applied to final balance', created_at: nowIso(),
       });
+      // TRUST SWEEP — the credit payment above debits the 2100 liability, but
+      // the CASH backing it is still sitting in 1020 (deposit escrow). Once a
+      // deposit is lawfully applied it is the operator's money and must leave
+      // the trust account, or escrow cash permanently exceeds the deposit
+      // liability — commingled operator funds in a tenant trust account,
+      // a statutory violation in segregation states. Move it to operating.
+      for (const basis of ['accrual', 'cash'] as const) {
+        postJE(ctx, {
+          propertyId: lease.property_id, date: opts.date, basis,
+          memo: `Deposit application sweep ${usd(apply)} — ${lease.household_name} (escrow → operating)`,
+          sourceKind: 'deposit_sweep', sourceId: leaseId,
+          lines: [
+            { account: '1010', debit: apply },
+            { account: '1020', credit: apply },
+          ],
+        });
+      }
     }
     const remaining = held - apply;
     if (remaining > 0) {

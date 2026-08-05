@@ -156,8 +156,8 @@ export function routes(r: Router): void {
         ${card('Opening balances', html`
           <p class="small">Three ways to establish the books, in order of preference:</p>
           ${dl([
-            ['1 · Migration Center', html`Import the prior system's trial balance and subledgers — <a href="/migration">open Migration Center</a>`],
-            ['2 · Opening-balance entry', html`Post one manual JE against <span class="mono">3030 Opening Balance Equity</span> as of the cutover date — <a href="/gl/new">new journal entry</a>`],
+            ['1 · Opening-balance entry', html`Post one manual JE against <span class="mono">3030 Opening Balance Equity</span> as of the cutover date — <a href="/gl/new">new journal entry</a>. This is how a trial balance comes across today; there is no trial-balance import yet.`],
+            ['2 · Migration Center', html`Brings across the <b>subledgers</b> — rent roll, units, leases, residents, deposits, per-lease balances and vendors — from a spreadsheet or lease PDFs: <a href="/setup/import">open Migration Center</a>. It does not import GL history.`],
             ['3 · Live from zero', 'New portfolios simply start posting — no opening entry needed.'],
           ])}`)}
         ${card('Chart of accounts', html`

@@ -147,19 +147,19 @@ ${mkHeader()}
   </div>
   <div class="mk-wrap mk-vigrow" aria-hidden="true">
     <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">SR</span><div><b>Ask StayLeased</b><span>portfolio assistant</span></div><span class="mk-vig-live"><i></i>LIVE</span></div>
+      <div class="mk-vig-head"><span class="mk-vig-av">SR</span><div><b>Ask StayLeased</b><span>portfolio assistant</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
       <div class="mk-vig-msg you">What's my occupancy?</div>
       <div class="mk-vig-msg agent">Occupancy is 93.1% — 362 of 389 units, with 15 vacant-ready and 8 in turnover averaging 6 days to ready.</div>
     </div>
     <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">PA</span><div><b>Payments Agent</b><span>agent activity · real time</span></div><span class="mk-vig-live"><i></i>LIVE</span></div>
+      <div class="mk-vig-head"><span class="mk-vig-av">PA</span><div><b>Payments Agent</b><span>agent activity · demo portfolio</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
       <div class="mk-vig-task"><i>✓</i>3 residents past due on rent</div>
       <div class="mk-vig-task"><i>✓</i>Reminders drafted in the approved tone</div>
       <div class="mk-vig-task"><i>✓</i>Payment plan prepared — Keller household</div>
       <div class="mk-vig-task hold"><i>●</i>4 drafts queued<span class="mk-vig-chip warn">awaiting approval</span></div>
     </div>
     <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">LA</span><div><b>Leasing Agent</b><span>new lead · Zillow · 9:04 pm</span></div><span class="mk-vig-live"><i></i>LIVE</span></div>
+      <div class="mk-vig-head"><span class="mk-vig-av">LA</span><div><b>Leasing Agent</b><span>new lead · Zillow · 9:04 pm</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
       <div class="mk-vig-msg agent">"Hi Sam — yes, the 2BR is available at $1,450. Saturday I have 10:00, 11:30, or 2:00 for a tour."</div>
       <div class="mk-vig-actions"><span class="mk-vig-ok">✓ Approve</span><span class="mk-vig-ghost">Edit</span><span class="mk-vig-ghost">Reject</span></div>
     </div>
@@ -221,8 +221,8 @@ ${mkHeader()}
           <tr><td>Complete system of record</td><td>${raw(CHECK)}</td><td>—</td><td class="mkc-us">${raw(CHECK)}</td></tr>
           <tr><td>Agents that do the daily work</td><td>—</td><td>One function</td><td class="mkc-us">Every function</td></tr>
           <tr><td>Approval-first governance &amp; audit trail</td><td>—</td><td>—</td><td class="mkc-us">${raw(CHECK)}</td></tr>
-          <tr><td>Published pricing</td><td>Quote-only, 50-unit minimums</td><td>Enterprise contracts</td><td class="mkc-us">Published</td></tr>
-          <tr><td>Built for</td><td>400+-unit portfolios</td><td>NMHC Top 50 operators</td><td class="mkc-us">10–100-unit buildings</td></tr>
+          <tr><td>Published pricing</td><td>Often quote-led; unit minimums common</td><td>Enterprise contracts</td><td class="mkc-us">Published</td></tr>
+          <tr><td>Built for</td><td>Mid-size and larger portfolios</td><td>NMHC Top 50 operators</td><td class="mkc-us">10–100-unit buildings</td></tr>
           <tr><td>Implementation</td><td>Weeks</td><td>Integration project</td><td class="mkc-us">One afternoon</td></tr>
         </tbody>
       </table>

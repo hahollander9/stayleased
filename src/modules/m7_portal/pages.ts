@@ -168,7 +168,9 @@ export function routes(r: Router): void {
             ${join(open.slice(0, 6).map((c) => html`<div class="list-item"><div class="li-main"><div class="li-title" style="font-weight:500">${labelOf(c)}</div><div class="li-sub">due ${fmtDate(c.due_date)}</div></div><b>${usd(c.amount_cents - c.applied)}</b></div>`))}` : html`<p class="muted small">Nothing due.</p>`}
           ${when(share, () => html`<p class="small muted" style="margin-top:8px">Split with roommates: your suggested share is <b>${usd(share!)}</b> (1 of ${adults} adults — each pays separately).</p>`)}`)}
 
-        ${card('Make a payment', html`
+        ${ctx.orgKind === 'live' ? card('Make a payment', html`
+          <p class="small">Online card and bank payments are <b>coming</b> — the processing rail is rolling out to early-access companies. Until it reaches yours, pay by check or money order to the office and it will appear on this ledger once recorded.</p>
+          <p class="small muted">No money can move through this page today; your management team will tell you the moment online payment opens.</p>`) : html`${card('Make a payment', html`
           <form method="post" action="/portal/pay">
             ${field('Amount', moneyInput('amount', balance > 0 ? balance : null, { required: true }))}
             ${field('Payment method', select('method_token', [
@@ -203,7 +205,7 @@ export function routes(r: Router): void {
               ${checkbox('is_default', 'Make default', true)}
               <button class="btn btn-sm">Save method</button>
             </form>
-          </details>`)}
+          </details>`)}`}
 
         ${card('History & statements', html`
           <a class="btn btn-ghost btn-sm" href="/portal/ledger">Full ledger history</a>
@@ -221,6 +223,9 @@ export function routes(r: Router): void {
     const pc = portalCtx(rq);
     if (!pc) return noLease(rq);
     const { ctx, lease, resident } = pc;
+    // Live orgs have no processing rail yet — the simulated processor must
+    // never post receipts (and the JEs behind them) against a real company.
+    if (ctx.orgKind === 'live') return redirect('/portal/pay', 'Online payments are not open for this community yet.', 'err');
     const tokenId = String(rq.body.method_token || '');
     const token = q1<any>('SELECT * FROM payment_method_tokens WHERE id=? AND user_id=?', tokenId, ctx.userId);
     if (!token) return redirect('/portal/pay', 'Pick a saved payment method (or add one).', 'err');
@@ -244,6 +249,7 @@ export function routes(r: Router): void {
     const pc = portalCtx(rq);
     if (!pc) return noLease(rq);
     const { ctx, resident } = pc;
+    if (ctx.orgKind === 'live') return redirect('/portal/pay', 'Online payments are not open for this community yet.', 'err');
     const kind = v.oneOf('ach', 'card').parse(rq.body.kind);
     const number = String(rq.body.number || '').replace(/\D/g, '');
     if (number.length < 4) return redirect('/portal/pay', 'Enter a valid (demo) number.', 'err');
@@ -269,6 +275,7 @@ export function routes(r: Router): void {
     const pc = portalCtx(rq);
     if (!pc) return noLease(rq);
     const { ctx, lease, resident } = pc;
+    if (ctx.orgKind === 'live') return redirect('/portal/pay', 'Online payments are not open for this community yet.', 'err');
     const token = q1<any>('SELECT * FROM payment_method_tokens WHERE id=? AND user_id=? AND kind=?', String(rq.body.method_token || ''), ctx.userId, 'ach');
     if (!token) return redirect('/portal/pay', 'Autopay needs a saved bank account (ACH).', 'err');
     const mode = v.oneOf('full_balance', 'fixed').parse(rq.body.mode);

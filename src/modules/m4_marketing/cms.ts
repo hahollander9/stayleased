@@ -15,6 +15,10 @@ registerNav('Marketing', { href: '/marketing/sites', label: 'Websites (CMS)', pe
 registerNav('Marketing', { href: '/marketing/syndication', label: 'Syndication', perm: 'marketing:syndication' });
 
 const CHANNELS = ['zillow', 'apartments_com', 'craigslist', 'facebook'] as const;
+/** Display names — channel keys are storage identifiers, never UI copy. */
+const CHANNEL_LABEL: Record<(typeof CHANNELS)[number], string> = {
+  zillow: 'Zillow', apartments_com: 'Apartments.com', craigslist: 'Craigslist', facebook: 'Facebook',
+};
 
 export function routes(r: Router): void {
   // ---------- CMS: site list ----------
@@ -139,9 +143,9 @@ export function routes(r: Router): void {
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Property', select('property', props.map((x): [string, string] => [x.id, x.name]), prop.id))}
         </form>
-        <div class="kpis">${CHANNELS.map((ch, i) => html`<div class="kpi"><div class="k-label">${ch.replaceAll('_', '.')}</div><div class="k-value">${activeCounts[i]}</div><div class="k-sub">active listings</div></div>`)}</div>
+        <div class="kpis">${CHANNELS.map((ch, i) => html`<div class="kpi"><div class="k-label">${CHANNEL_LABEL[ch]}</div><div class="k-value">${activeCounts[i]}</div><div class="k-sub">active listings</div></div>`)}</div>
         ${card(html`Exposed units <form method="post" action="/marketing/syndication/${prop.id}/publish-all" style="display:inline"><button class="btn btn-sm" style="margin-left:8px">Publish all vacant-ready to all channels</button></form>`, tbl(
-          [{ label: 'Unit' }, { label: 'Plan' }, { label: 'Status' }, ...CHANNELS.map((ch) => ({ label: ch.replaceAll('_', '.') }))],
+          [{ label: 'Unit' }, { label: 'Plan' }, { label: 'Status' }, ...CHANNELS.map((ch) => ({ label: CHANNEL_LABEL[ch] }))],
           units.map((u) => ({
             cells: [
               html`<b>${u.unit_number}</b>`, u.fp_name || '—', statusBadge(u.status),
@@ -175,7 +179,7 @@ export function routes(r: Router): void {
       run('UPDATE listing_publications SET status=? WHERE id=?', existing.status === 'active' ? 'paused' : 'active', existing.id);
     }
     audit(ctx, 'listing', `${unitId}:${channel}`, 'syndication_toggle');
-    return redirect(`/marketing/syndication?property=${unit.property_id}`, `${channel} listing updated.`);
+    return redirect(`/marketing/syndication?property=${unit.property_id}`, `${CHANNEL_LABEL[channel as (typeof CHANNELS)[number]] || channel} listing updated.`);
   });
 
   r.post('/marketing/syndication/:propId/publish-all', requirePerm('marketing:syndication'), (rq) => {

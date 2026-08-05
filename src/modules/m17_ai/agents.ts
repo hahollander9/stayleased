@@ -211,7 +211,10 @@ registerExecutor('maintenance.apply_triage', (ctx, action, output) => {
 
 // ---------- 3. Payments AI ----------
 
-const BANNED = /(evict|lawsuit|attorney|sue you|credit bureau|collections agency will|garnish|police)/i;
+/** Global flag is REQUIRED: `String.replace` with a non-global regex rewrites
+ * only the FIRST match, so a draft naming several banned terms was scrubbed
+ * once and sent with the rest intact. This is the hard collections rail. */
+const BANNED = /(evict|lawsuit|attorney|sue you|credit bureau|collections agency will|garnish|police)/gi;
 
 export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: string; status: string } | null {
   const lease = q1<any>(
@@ -241,8 +244,12 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
   const draft = llm().complete('collections_outreach', {
     name: contact?.first_name || 'there', balance: usd(bal), days, tone, planLine, propertyName: lease.prop_name,
   });
-  const banned = BANNED.test(draft);
-  const cleanDraft = banned ? draft.replace(BANNED, '[removed by compliance filter]') : draft;
+  // Derive the flag from the scrub result rather than calling BANNED.test():
+  // a /g regex carries `lastIndex` across calls, so a module-level regex used
+  // with .test() would start mid-string on the next draft and miss matches.
+  // String.replace resets lastIndex itself, so this path is stateless.
+  const cleanDraft = draft.replace(BANNED, '[removed by compliance filter]');
+  const banned = cleanDraft !== draft;
 
   const outreach = propose(ctx, {
     agent: 'payments',

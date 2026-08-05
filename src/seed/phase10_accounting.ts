@@ -81,7 +81,14 @@ export async function seedAccounting(s2: SeedCtx): Promise<void> {
         { account: '5410', debit: monthly, memo: 'insurance expense' },
         { account: '1200', credit: monthly, memo: 'prepaid draw-down' },
       ],
-      dayOfMonth: 1, startMonth: monthKey(historyStart), basis: 'both',
+      dayOfMonth: 1, startMonth: monthKey(historyStart),
+      // The opening prepaid balance is exactly 12 months of premium, so the
+      // amortization MUST stop after 12 postings. Without the end month it
+      // kept drawing 1200 below zero — a negative Prepaid Expenses asset on
+      // the demo balance sheet (and it worsened every month now that the
+      // demo clock follows the real calendar).
+      endMonth: monthKey(addMonths(`${monthKey(historyStart)}-01`, 11)),
+      basis: 'both',
     });
   }
   runRecurringJes(ctx, s.businessDate);

@@ -424,7 +424,7 @@ export const MK_PAGES: MkPage[] = [
       { b: 'Recovery visible', s: 'Utility recovery reporting shows what you recouped' },
     ],
     features: [
-      { t: 'Utility expense capture', b: 'Enter or import the property’s utility bills — water, sewer, trash, gas, electric — with period and amount, coded to the right GL account.' },
+      { t: 'Utility expense capture (rolling out)', b: 'Bill capture — water, sewer, trash, gas, electric, with period and amount coded to the right GL account — is in rollout; the demo shows the full cycle end to end on simulated meter and invoice data.' },
       { t: 'Allocation methods', b: 'Divide by occupied units, all units, square footage, occupant count, or custom ratios per property — whichever your leases specify.' },
       { t: 'Automatic charge posting', b: 'Allocated amounts post to each resident ledger as labeled utility charges in the next billing cycle — collected with rent, followed up by the same Payments AI.' },
       { t: 'Common-area & vacancy handling', b: 'Common-area deductions and vacant-unit shares stay with the property so your recovery numbers stay honest.' },
@@ -468,7 +468,7 @@ export const MK_PAGES: MkPage[] = [
     features: [
       { t: 'Money, self-serve', b: 'Balance, what it’s made of, payment history with receipts, and autopay controls. Balance questions become a screen residents check themselves.' },
       { t: 'Repair requests that behave', b: 'A photo of the leak, access notes, and live status — received, scheduled with a window, done. The “is anyone coming?” call disappears from your phone.' },
-      { t: 'Answers at 2am', b: 'The AI answers portal questions instantly from their actual lease — rent amount, due dates, policies — and walks them through safe first steps on maintenance. You read every exchange.' },
+      { t: 'Answers without a phone call', b: 'Rent amount, due dates, balance detail, lease terms and documents sit on the portal itself — residents look instead of calling. An in-portal AI assistant is on the roadmap; today the answers live one tap away on the relevant screen.' },
       { t: 'Documents on demand', b: 'The signed lease, addenda, notices, and renewal offers, downloadable anytime. No more digging through email to resend a lease.' },
       { t: 'Insurance & deposit alternative', b: 'Tenants upload proof of coverage or enroll in your programs; compliance status stays visible on both sides instead of surprising anyone.' },
       { t: 'Everything lands in your system', b: 'Every payment, request, and message threads into the same records and books you run on — no separate tenant app to check.' },
@@ -650,7 +650,7 @@ export const MK_PAGES: MkPage[] = [
     },
     faq: [
       { q: 'Will this ever threaten eviction?', a: 'No. Eviction, attorneys, credit bureaus, and similar language are on a hard banned list enforced in code. Escalation to legal process is a human decision that happens outside the agent.' },
-      { q: 'Do reminders actually send to residents?', a: 'Messages compose, thread, and queue in the system today; the outbound SMS/email delivery rail is in rollout, and approved messages are visible in the resident portal thread. When delivery reaches your account, the same approved messages go out externally.' },
+      { q: 'Do reminders actually send to residents?', a: 'Messages compose, thread, and queue in the comms center today; the outbound SMS/email delivery rail is in rollout. When delivery reaches your account, the same approved messages go out externally — until then they are staged, visible to your team, and nothing reaches a resident unreviewed.' },
       { q: 'Can I review everything before it sends?', a: 'Yes — that’s the default. Approve, edit, or reject from the queue; dial up autonomy only when the edits stop.' },
     ],
     related: [
@@ -731,7 +731,7 @@ export const MK_PAGES: MkPage[] = [
       ],
     },
     faq: [
-      { q: 'Where do the call recordings come from?', a: 'Calls logged in StayLeased’s comms center are analyzed automatically. Direct phone-system integrations are on the connections waitlist — today, recordings and logs added to the system get the same treatment.' },
+      { q: 'Where do the call transcripts come from?', a: 'Paste a transcript (or a detailed recap) when logging a call in the comms center — analysis runs on it automatically. Direct phone-system integrations that capture transcripts for you are on the connections waitlist.' },
       { q: 'Is this legal to do?', a: 'Call recording consent laws vary by state (one-party vs. all-party). Recording policy and disclosures are your responsibility; the analysis layer only works with what you lawfully record.' },
       { q: 'Can my staff see their own coaching notes?', a: 'That’s a permissions choice — many operators share notes 1:1. The point is consistent, specific feedback, not surveillance theater.' },
     ],

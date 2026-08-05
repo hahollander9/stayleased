@@ -9,13 +9,56 @@ import { COA } from './coa.ts';
 
 export type Basis = 'accrual' | 'cash';
 
-const TYPE: Record<string, string> = Object.fromEntries(COA.map(([code, , type]) => [code, type]));
-const NAME: Record<string, string> = Object.fromEntries(COA.map(([code, name]) => [code, name]));
+const STATIC_TYPE: Record<string, string> = Object.fromEntries(COA.map(([code, , type]) => [code, type]));
+const STATIC_NAME: Record<string, string> = Object.fromEntries(COA.map(([code, name]) => [code, name]));
 
 export interface StatementLine {
   code: string;
   name: string;
   amount: number; // natural sign (assets/expenses debit-positive; liab/equity/income credit-positive)
+}
+
+/** The account universe for every statement MUST come from the org's own
+ * `gl_accounts` table, never from the static COA seed array. Operators add
+ * accounts at /gl/setup/account, and the product itself creates 5720
+ * (Security Deposit Interest) lazily on the first interest accrual. Reading
+ * the seed array meant any such account showed on the trial balance (which
+ * joins gl_accounts) but vanished from the P&L and balance sheet — so the
+ * balance sheet reported OUT OF BALANCE and disagreed with the TB. */
+interface Acct { code: string; name: string; type: string }
+
+/** Last-resort classification for a code with no chart row. This chart
+ * follows the standard convention where the leading digit is the class. */
+function typeFromCode(code: string): string {
+  switch (code[0]) {
+    case '1': return 'asset';
+    case '2': return 'liability';
+    case '3': return 'equity';
+    case '4': return 'income';
+    default: return 'expense';
+  }
+}
+
+function chart(ctx: Ctx): Acct[] {
+  const rows = q<any>('SELECT code, name, type FROM gl_accounts WHERE org_id=? ORDER BY sort, code', ctx.orgId);
+  if (rows.length) return rows.map((r) => ({ code: String(r.code), name: String(r.name), type: String(r.type) }));
+  return COA.map(([code, name, type]) => ({ code, name, type })); // org predates ensureCoa
+}
+
+/** The chart, plus any account code carrying journal activity that has no
+ * chart row at all. Guarantees a missing gl_accounts row can never silently
+ * drop a balance — and therefore can never unbalance the balance sheet. */
+function chartCovering(ctx: Ctx, ...seen: Iterable<string>[]): Acct[] {
+  const accts = chart(ctx);
+  const have = new Set(accts.map((a) => a.code));
+  for (const codes of seen) {
+    for (const code of codes) {
+      if (have.has(code)) continue;
+      have.add(code);
+      accts.push({ code, name: STATIC_NAME[code] || `Account ${code}`, type: STATIC_TYPE[code] || typeFromCode(code) });
+    }
+  }
+  return accts;
 }
 
 function balances(
@@ -35,8 +78,8 @@ function balances(
   return new Map(rows.map((r) => [r.code as string, Number(r.net)]));
 }
 
-function naturalize(code: string, net: number): number {
-  const t = TYPE[code] || 'asset';
+function naturalize(type: string | undefined, net: number): number {
+  const t = type || 'asset';
   return t === 'asset' || t === 'expense' ? net : -net;
 }
 
@@ -55,24 +98,27 @@ export interface BalanceSheet {
 export function balanceSheet(ctx: Ctx, opts: { propertyId?: string | null; asOf: string; basis: Basis }): BalanceSheet {
   const b = balances(ctx, { propertyId: opts.propertyId, basis: opts.basis, to: opts.asOf });
   const fyStart = `${opts.asOf.slice(0, 4)}-01-01`;
-  const mk = (codes: string[]): StatementLine[] =>
-    codes
-      .map((code) => ({ code, name: NAME[code] || code, amount: naturalize(code, b.get(code) || 0) }))
+  const bPrior = balances(ctx, { propertyId: opts.propertyId, basis: opts.basis, to: `${Number(opts.asOf.slice(0, 4)) - 1}-12-31` });
+  const bFy = balances(ctx, { propertyId: opts.propertyId, basis: opts.basis, from: fyStart, to: opts.asOf });
+  const accts = chartCovering(ctx, b.keys(), bPrior.keys(), bFy.keys());
+
+  const mk = (t: string): StatementLine[] =>
+    accts
+      .filter((a) => a.type === t)
+      .map((a) => ({ code: a.code, name: a.name, amount: naturalize(a.type, b.get(a.code) || 0) }))
       .filter((l) => l.amount !== 0);
 
-  const assets = mk(COA.filter(([, , t]) => t === 'asset').map(([c]) => c));
-  const liabilities = mk(COA.filter(([, , t]) => t === 'liability').map(([c]) => c));
-  const equity = mk(COA.filter(([, , t]) => t === 'equity').map(([c]) => c));
+  const assets = mk('asset');
+  const liabilities = mk('liability');
+  const equity = mk('equity');
 
   // earnings roll-forward: prior years → retained earnings; current FY → net income line
   let prior = 0;
   let currentFy = 0;
-  const pnlCodes = new Set(COA.filter(([, , t]) => t === 'income' || t === 'expense').map(([c]) => c));
-  const bPrior = balances(ctx, { propertyId: opts.propertyId, basis: opts.basis, to: `${Number(opts.asOf.slice(0, 4)) - 1}-12-31` });
+  const pnlCodes = accts.filter((a) => a.type === 'income' || a.type === 'expense').map((a) => a.code);
   for (const code of pnlCodes) {
     prior += -(bPrior.get(code) || 0); // income credit-positive minus expenses
   }
-  const bFy = balances(ctx, { propertyId: opts.propertyId, basis: opts.basis, from: fyStart, to: opts.asOf });
   for (const code of pnlCodes) currentFy += -(bFy.get(code) || 0);
   if (prior !== 0) equity.push({ code: '3900', name: 'Retained Earnings — Prior Years', amount: prior });
   if (currentFy !== 0) equity.push({ code: '3950', name: `Net Income — FY${opts.asOf.slice(0, 4)}`, amount: currentFy });
@@ -100,9 +146,11 @@ export interface IncomeStatement {
 
 export function incomeStatement(ctx: Ctx, opts: { propertyId?: string | null; from: string; to: string; basis: Basis }): IncomeStatement {
   const b = balances(ctx, { propertyId: opts.propertyId, basis: opts.basis, from: opts.from, to: opts.to });
+  const accts = chartCovering(ctx, b.keys());
   const mk = (t: string): StatementLine[] =>
-    COA.filter(([, , type]) => type === t)
-      .map(([code]) => ({ code, name: NAME[code] || code, amount: naturalize(code, b.get(code) || 0) }))
+    accts
+      .filter((a) => a.type === t)
+      .map((a) => ({ code: a.code, name: a.name, amount: naturalize(a.type, b.get(a.code) || 0) }))
       .filter((l) => l.amount !== 0);
   const income = mk('income');
   const expenses = mk('expense');
@@ -136,11 +184,11 @@ export function t12(ctx: Ctx, opts: { propertyId?: string | null; to: string; ba
     byAcct.get(r.code)!.set(r.mk, Number(r.net));
   }
   const out: T12['rows'] = [];
-  for (const [code, name, type] of COA) {
+  for (const { code, name, type } of chartCovering(ctx, byAcct.keys())) {
     if (type !== 'income' && type !== 'expense') continue;
     const m = byAcct.get(code);
     if (!m) continue;
-    const cells = months.map((mk) => naturalize(code, m.get(mk) || 0));
+    const cells = months.map((mk) => naturalize(type, m.get(mk) || 0));
     const total = cells.reduce((s, c) => s + c, 0);
     if (total !== 0 || cells.some((c) => c !== 0)) out.push({ code, name, type, cells, total });
   }
@@ -185,6 +233,9 @@ export function cashFlow(ctx: Ctx, opts: { propertyId?: string | null; from: str
   );
   const byEntry = new Map<string, any[]>();
   for (const l of lines) byEntry.set(l.entry_id, [...(byEntry.get(l.entry_id) || []), l]);
+  const accts = chartCovering(ctx, lines.map((l) => String(l.account_code)));
+  const typeOf = new Map(accts.map((a) => [a.code, a.type]));
+  const nameOf = new Map(accts.map((a) => [a.code, a.name]));
 
   const buckets: Record<'operating' | 'investing' | 'financing', Map<string, number>> = {
     operating: new Map(), investing: new Map(), financing: new Map(),
@@ -198,13 +249,13 @@ export function cashFlow(ctx: Ctx, opts: { propertyId?: string | null; from: str
     const counters = ls.filter((l) => !CASH_CODES.has(l.account_code));
     const main = counters.sort((a, b) => Math.abs(b.debit_cents - b.credit_cents) - Math.abs(a.debit_cents - a.credit_cents))[0];
     const code = main?.account_code || '4080';
-    const t = TYPE[code] || 'income';
+    const t = typeOf.get(code) || 'income';
     const bucket = code === '1500' ? 'investing' : t === 'equity' ? 'financing' : 'operating';
     buckets[bucket].set(code, (buckets[bucket].get(code) || 0) + cashNet);
   }
   const mk = (m: Map<string, number>): StatementLine[] =>
     [...m.entries()]
-      .map(([code, amount]) => ({ code, name: NAME[code] || `Account ${code}`, amount }))
+      .map(([code, amount]) => ({ code, name: nameOf.get(code) || `Account ${code}`, amount }))
       .filter((l) => l.amount !== 0)
       .sort((a, b) => a.code.localeCompare(b.code));
 
