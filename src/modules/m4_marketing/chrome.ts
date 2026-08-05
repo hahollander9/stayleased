@@ -32,7 +32,7 @@ export const MK_NAV: MkNavGroup[] = [
       ['Rent collection', '/platform/rent-collection', 'Autopay, late-fee policy, and AI follow-up on every balance'],
       ['Leasing CRM', '/platform/leasing-crm', 'Every lead answered in seconds; tours booked while you sleep'],
       ['Maintenance & turns', '/platform/maintenance', 'Requests triaged 24/7, vendors dispatched with approval'],
-      ['Accounting', '/platform/accounting', 'Real double-entry books, bank rec, owner-ready statements'],
+      ['Accounting', '/platform/accounting', 'Real double-entry books, bank rec, financial statements'],
       ['Leases & e-sign', '/platform/leases-esign', 'Templates, packets, renewals, and signatures'],
       ['Applications & screening', '/platform/applications-screening', 'Applicant portal, criteria, and decisioning'],
       ['Property sites & listings', '/platform/property-sites', 'A leasing website per property with live pricing'],
@@ -296,7 +296,7 @@ const CHROME_JS = `
     document.querySelectorAll('.mk-reveal, .mk-stag').forEach(function (el) { el.classList.add('vis'); });
     return;
   }
-  var GROUPS = ['.mk-suites', '.mk-grid3', '.mk-grid2', '.mk-grid5', '.mkp-stats', '.mk-steps', '.mk-levels', '.mk-checks', '.mk-price-row', '.mk-ask-grid', '.mk-two-col', '.mk-two', '.mk-compare tbody'];
+  var GROUPS = ['.mk-suites', '.mk-grid3', '.mk-grid2', '.mk-grid5', '.mkp-stats', '.mk-stats', '.mk-verify', '.mk-steps', '.mk-levels', '.mk-checks', '.mk-price-row', '.mk-ask-grid', '.mk-two-col', '.mk-two', '.mk-compare tbody'];
   GROUPS.forEach(function (sel) {
     document.querySelectorAll(sel).forEach(function (grp) {
       Array.prototype.forEach.call(grp.children, function (child, i) {
@@ -305,9 +305,44 @@ const CHROME_JS = `
       });
     });
   });
+  // one-shot count-up on the evidence numerals: the HTML serves the final
+  // numbers (SEO / no-JS / reduced-motion all read the truth); with motion
+  // allowed we run them 0 → value exactly once on entry, then stillness.
+  // Each numeral reserves its final width in ch, so nothing shifts.
+  function runCounters(grp) {
+    if (grp._counted) return; grp._counted = true;
+    var ns = grp.querySelectorAll('.mk-n');
+    Array.prototype.forEach.call(ns, function (el, i) {
+      var rawV = el.getAttribute('data-count') || '0';
+      var target = parseFloat(rawV);
+      var dec = rawV.indexOf('.') > -1 ? 1 : 0;
+      if (!isFinite(target)) return;
+      // lock the numeral to its true final width (the HTML ships the final
+      // value) so the count never shifts the layout by a single pixel
+      el.style.minWidth = el.getBoundingClientRect().width + 'px';
+      setTimeout(function () {
+        var t0 = null, DUR = 950;
+        function frame(ts) {
+          if (t0 === null) t0 = ts;
+          var p = Math.min(1, (ts - t0) / DUR);
+          var e = 1 - Math.pow(1 - p, 3); // cubic ease-out
+          el.textContent = (target * e).toFixed(dec);
+          if (p < 1) requestAnimationFrame(frame); else el.textContent = rawV;
+        }
+        requestAnimationFrame(frame);
+      }, 240 + i * 140);
+    });
+  }
+
   if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function (es) {
-      es.forEach(function (en) { if (en.isIntersecting) { en.target.classList.add('vis'); io.unobserve(en.target); } });
+      es.forEach(function (en) {
+        if (en.isIntersecting) {
+          en.target.classList.add('vis');
+          if (en.target.classList.contains('mk-stats')) runCounters(en.target);
+          io.unobserve(en.target);
+        }
+      });
     }, { threshold: 0, rootMargin: '0px 0px -8% 0px' });
     // threshold 0: fires the moment the first pixel crosses the line 8%
     // above the viewport bottom — a fractional threshold can NEVER fire for

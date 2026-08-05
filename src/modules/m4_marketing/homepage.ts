@@ -9,24 +9,27 @@ import { llmStatus } from '../../lib/sim/llm.ts';
 import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS } from './chrome.ts';
 import { THEME_BOOT_JS } from '../../ui/ui.ts';
 
-/** The platform marketing homepage — the front door for logged-out visitors,
- * written for small operators (10–500 units), including ones who have never
- * used AI: hero → first-week walkthrough → everything-in-one-place → Ask
- * demo → never-used-AI reassurance → three autonomy modes → agent grid →
- * you-stay-in-control → who-it's-for → pricing → walkthrough form →
- * mega-footer. Entrata's enterprise framing (two platforms / ontology
- * layers / L1–L5 ladder) was deliberately retired 2026-07-28 — that
- * language sells to REITs, not landlords. Copy doctrine (2026-08-03):
- * terse noun-phrase bodies, no "you" headlines, information kept but
- * compressed. Every claim maps to something the product actually does;
- * the demo login and /signup are one click away everywhere. Nav, footer,
- * styles, menus, AND the reveal/stagger motion engine live in chrome.ts,
- * shared with the /platform, /agents, /for, and /legal pages. */
+/** The platform marketing homepage — the front door for logged-out visitors.
+ * Architecture v3 (2026-08-05, per the differentiation strategy): the page is
+ * an argument, not a platform tour. Hero (segment + labor + governance) →
+ * segment evidence band (the staffing dead zone, sourced market data) →
+ * agents as a staff roster → the system of record as the mechanism that
+ * grounds them → architecture comparison → first-week steps → Ask demo →
+ * approval model → autonomy levels → governance (dark anchor band) →
+ * verification band (radical verifiability) → who-it's-for → pricing →
+ * walkthrough form → mega-footer. "Everything in one place" was retired as a
+ * headline 2026-08-05 — it is the literal hero copy of every incumbent — and
+ * demoted from benefit to mechanism. Copy doctrine (2026-08-03): terse
+ * noun-phrase headlines, no "you" headlines, information compressed never
+ * deleted. Every market figure on the page is sourced (Terner, RHFS, MRI,
+ * RentEngine); no usage stats are implied — there are no customers yet.
+ * Nav, footer, styles, menus, AND the reveal/stagger motion engine live in
+ * chrome.ts, shared with the /platform, /agents, /for, and /legal pages. */
 
 const SUITES: { name: string; href: string; caps: string[] }[] = [
   { name: 'Leasing & Marketing', href: '/platform/leasing-crm', caps: ['Property sites & live pricing', 'Lead CRM & follow-up', 'Applications & screening', 'Leases & e-signature'] },
   { name: 'Payments & Receivables', href: '/platform/rent-collection', caps: ['Automatic monthly billing', 'Autopay & online payment', 'Late-fee policy engine', 'Delinquency workflow'] },
-  { name: 'Accounting & Finance', href: '/platform/accounting', caps: ['True double-entry ledger', 'Bank reconciliation & AP', 'Budgets & month-end close', 'Owner-ready statements'] },
+  { name: 'Accounting & Finance', href: '/platform/accounting', caps: ['True double-entry ledger', 'Bank reconciliation & AP', 'Budgets & month-end close', 'Financial statements & reports'] },
   { name: 'Facilities & Maintenance', href: '/platform/maintenance', caps: ['Work orders & triage', 'Vendor dispatch & turns', 'Preventive schedules', 'Emergency escalation'] },
   { name: 'Resident Services', href: '/platform/resident-portal', caps: ['Rent online with autopay', 'Requests with photos', 'Documents & history', 'Announcements'] },
   { name: 'Reporting & Analytics', href: '/platform/reports', caps: ['50 standard reports', 'Custom report builder', 'Scheduled delivery', 'CSV & PDF export'] },
@@ -44,13 +47,32 @@ const MODES: { l: string; name: string; body: string }[] = [
   { l: '3', name: 'Fully autonomous, audited', body: 'Delegated work runs end to end, every action logged.' },
 ];
 
-const AGENTS: { name: string; blurb: string }[] = [
-  { name: 'Leasing Agent', blurb: 'Answers every inquiry in seconds and books the tour.' },
-  { name: 'Maintenance Agent', blurb: 'Triages every request; emergencies escalate instantly.' },
-  { name: 'Payments Agent', blurb: 'Runs the delinquency sequence within your limits.' },
-  { name: 'Renewals Agent', blurb: 'Prepares renewal offers inside approved pricing bounds.' },
-  { name: 'Call Analysis', blurb: 'Summarizes every call and files the follow-ups.' },
-  { name: 'Ask StayLeased', blurb: 'Answers portfolio questions from live records.' },
+/** The staffing dead zone, in checkable numbers. Sources stay on the page —
+ * market data only, never implied usage stats (there are no customers yet). */
+const EVIDENCE: { n: string; body: string; src: string }[] = [
+  { n: '17%', body: 'of U.S. rental housing sits in buildings of 5–49 units', src: 'Terner Center, UC Berkeley' },
+  { n: '~70%', body: 'of rental properties are owned by individual investors', src: 'HUD / Census RHFS 2021' },
+  { n: '5–10%', body: 'of collected rent for full-service management, plus ½–1 month’s rent per new lease', src: 'MRI Software fee survey' },
+  { n: '56.8%', body: 'of rental inquiries arrive outside office hours', src: 'RentEngine industry analysis' },
+];
+
+/** Agents presented as a staff roster — the roles the segment's economics
+ * can't fill with people — never as a feature list. Names are pinned by e2e. */
+const AGENTS: { role: string; name: string; blurb: string; ico: string }[] = [
+  { role: 'The leasing desk that never closes', name: 'Leasing Agent', blurb: 'Answers the 9:04 pm Zillow lead in seconds and books the Saturday tour.', ico: 'chat' },
+  { role: 'The 24-hour maintenance line', name: 'Maintenance Agent', blurb: 'Triages the 2 am call, dispatches within limits, and escalates every emergency to a human.', ico: 'wrench' },
+  { role: 'The collections clerk', name: 'Payments Agent', blurb: 'Runs the delinquency sequence inside set limits, in the approved tone.', ico: 'bank' },
+  { role: 'The renewals desk', name: 'Renewals Agent', blurb: 'Prepares offers inside approved pricing bounds, ahead of every expiration.', ico: 'refresh' },
+  { role: 'The front-desk notetaker', name: 'Call Analysis', blurb: 'Summarizes every call and files the follow-ups.', ico: 'phone' },
+  { role: 'The portfolio analyst', name: 'Ask StayLeased', blurb: 'Answers operational questions from the live records.', ico: 'spark' },
+];
+
+const VERIFY: { head: string; body: string; href?: string }[] = [
+  { head: 'Live demo, open to anyone', body: 'Fully populated — no sales call, no email gate.', href: '/login' },
+  { head: 'Pricing, published', body: 'On this page. No quotation process.', href: '#pricing' },
+  { head: 'Build status, published in the product', body: 'Working now vs. coming soon — including what is still simulated.' },
+  { head: 'Records, the operator’s property', body: 'Full export at any time, in open formats.' },
+  { head: 'Every action on the audit trail', body: 'Human or AI — logged, attributed, reviewable.' },
 ];
 
 const SOLUTIONS: { name: string; body: string }[] = [
@@ -65,6 +87,38 @@ function cube(n: number): string {
   return `<svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><path d="M16 3 29 10v12L16 29 3 22V10z" fill="${c}" opacity=".16"/><path d="M16 3 29 10 16 17 3 10z" fill="${c}" opacity=".55"/><path d="M16 17v12L3 22V10z" fill="${c}" opacity=".35"/><path d="M16 17v12l13-7V10z" fill="${c}"/></svg>`;
 }
 
+/** Stroke icon set for the agent roster — same language as the logo mark
+ * (stroke-based, inherits color). SVG only; no emoji-as-icon anywhere. */
+const AGENT_ICONS: Record<string, string> = {
+  chat: '<path d="M21 12.5a8.4 8.4 0 0 1-8.5 8.3 8.9 8.9 0 0 1-3.7-.8L3 21l1.1-5.4a8 8 0 0 1-1.1-4A8.4 8.4 0 0 1 11.5 3.3 8.4 8.4 0 0 1 21 12.5z"/><path d="M8.5 11.5h7M8.5 14.5h4.5"/>',
+  wrench: '<path d="M14.7 6.3a4.6 4.6 0 0 0-6 5.9L3 18l3 3 5.8-5.7a4.6 4.6 0 0 0 5.9-6l-3.2 3.2-2.8-.7-.7-2.8z"/>',
+  bank: '<path d="M3 9.5 12 4l9 5.5"/><path d="M5 10v8M9.5 10v8M14.5 10v8M19 10v8"/><path d="M3 20h18"/>',
+  refresh: '<path d="M20 11a8 8 0 0 0-14.9-2.9"/><path d="M5 4v4.3h4.3"/><path d="M4 13a8 8 0 0 0 14.9 2.9"/><path d="M19 20v-4.3h-4.3"/>',
+  phone: '<path d="M6.8 3.5c.5 0 1 .3 1.2.8l1.3 2.9c.2.5.1 1.1-.3 1.5l-1.2 1.2a13.5 13.5 0 0 0 6.3 6.3l1.2-1.2c.4-.4 1-.5 1.5-.3l2.9 1.3c.5.2.8.7.8 1.2v2.3c0 .8-.7 1.5-1.5 1.4C10.6 20.3 3.7 13.4 3.1 5c-.1-.8.6-1.5 1.4-1.5h2.3z"/>',
+  spark: '<path d="M12 3.5 13.8 9l5.5 1.8-5.5 1.8L12 18l-1.8-5.4L4.7 10.8 10.2 9z"/><path d="M19 15.5l.9 2.6 2.6.9-2.6.9-.9 2.6-.9-2.6-2.6-.9 2.6-.9z"/>',
+};
+function agentIcon(k: string): string {
+  // pathLength=1 normalizes every stroke for the one-shot draw-in entrance
+  const paths = (AGENT_ICONS[k] || AGENT_ICONS['spark'])!.replace(/<path /g, '<path pathLength="1" ');
+  return `<svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+}
+
+/** Small check mark used in the comparison table's yes-cells. */
+const CHECK = '<svg class="mk-ck" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" role="img" aria-label="Yes"><path d="M4.5 12.8 9.7 18 19.5 6.5"/></svg>';
+
+/** Wrap the numeric runs of an evidence figure so the chrome script can
+ * count them up once on entry (one-shot; final values are served in the
+ * HTML, so no-JS, crawlers, and reduced-motion all see the real numbers).
+ * Each run reserves its final width in ch so the count never shifts layout. */
+function statNum(v: string) {
+  return raw(v.replace(/(\d+(?:\.\d+)?)/g, (m) => `<i class="mk-n" data-count="${m}">${m}</i>`));
+}
+
+/** Numbered band kicker — the page reads as a guided argument, 01 → 12. */
+function kick(n: string, label: string) {
+  return raw(`<span class="mk-kn">${n}</span>${label}`);
+}
+
 export function marketingHome(rq: Rq): Res {
   const signupOpen = mkSignupOpen();
   const thanks = rq.query.get('walkthrough') === 'thanks';
@@ -77,16 +131,18 @@ export function marketingHome(rq: Rq): Res {
 ${mkHeader()}
 
 <section class="mk-hero" id="top">
+  <div class="mk-hero-clip" aria-hidden="true"></div>
   <div class="mk-wrap mk-hero-in">
     <div class="mk-hero-copy">
-      <div class="mk-kicker">Property management software for independent operators</div>
-      <h1>Autonomous property management.</h1>
-      <p class="mk-sub">The complete operating platform — leasing, payments, accounting, facilities, and resident services on one system of record, operated by AI agents under human approval.</p>
+      <div class="mk-kicker">Property management software for buildings of 10–100 units</div>
+      <h1>Autonomous property management<span class="mk-dot">.</span></h1>
+      <p class="mk-sub">AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft queued for the operator’s approval, on one system of record built for small multifamily.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Explore the live demo</a>
         ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="#walkthrough">Book a walkthrough</a>`}
       </div>
       <div class="mk-hero-note">Portfolios import from Buildium, AppFolio, or spreadsheets in a single afternoon.</div>
+      <a class="mk-scrollcue" href="#segment" aria-label="Continue to the next section"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></a>
     </div>
   </div>
   <div class="mk-wrap mk-vigrow" aria-hidden="true">
@@ -110,10 +166,39 @@ ${mkHeader()}
   </div>
 </section>
 
+<section class="mk-band mk-band-alt" id="segment">
+  <div class="mk-wrap">
+    <div class="mk-kicker">${kick('01', 'The staffing dead zone')}</div>
+    <h2 class="mk-h2">Built for the middle of the market.</h2>
+    <p class="mk-lead">A 50-unit building generates a full-time manager’s workload on a part-time manager’s budget. Enterprise platforms set unit minimums above it, landlord apps stop short of real accounting — so the middle mostly manages itself. StayLeased is built for exactly this segment.</p>
+    <div class="mk-stats">
+      ${EVIDENCE.map((e) => html`<div class="mk-stat"><b>${statNum(e.n)}</b><span>${e.body}</span><i>${e.src}</i></div>`)}
+    </div>
+  </div>
+</section>
+
+<section class="mk-band" id="agents">
+  <div class="mk-wrap">
+    <div class="mk-kicker">${kick('02', 'The agents')}</div>
+    <h2 class="mk-h2">The staff a small building can’t carry, as software.</h2>
+    <p class="mk-lead">Roles, not modules. Each agent holds one job, drafts into the approval queue, and acts only within configured authority.</p>
+    <div class="mk-grid3">
+      ${AGENTS.map((a) => html`<div class="mk-card mk-agent">
+        <span class="mk-agent-ico">${raw(agentIcon(a.ico))}</span>
+        <div class="mk-agent-role">${a.role}</div>
+        <h3>${a.name}</h3><p>${a.blurb}</p>
+      </div>`)}
+    </div>
+    <div class="mk-inline-cta"><a class="mk-btn mk-btn-solid" href="/login">Observe the agents in the live demo</a></div>
+  </div>
+</section>
+
 <section class="mk-band mk-band-alt" id="platform">
   <div class="mk-wrap">
-    <h2 class="mk-h2">Everything in one place.</h2>
-    <p class="mk-lead">One shared database. A lead becomes a lease, then a ledger entry, then a renewal — no re-entry, no integrations, no sync.</p>
+    <div class="mk-kicker">${kick('03', 'The system of record')}</div>
+    <h2 class="mk-h2">Agents that work on the records, not beside them.</h2>
+    <p class="mk-lead">An agent is only as reliable as the records under it. StayLeased agents read the live system — the vacancy, the price, the ledger balance, the work-order history — and their approved actions post straight back to it. No sync, no re-keying, no second bill for an AI layer.</p>
+    <div class="mk-suites-label">The record the agents maintain</div>
     <div class="mk-suites">
       ${SUITES.map((s2) => html`<a class="mk-suite" href="${s2.href}">
         <h3>${s2.name}</h3>
@@ -124,29 +209,20 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="agents">
+<section class="mk-band" id="why">
   <div class="mk-wrap">
-    <h2 class="mk-h2">Purpose-built agents for every workflow.</h2>
-    <p class="mk-lead">Each agent owns one function, drafts into the approval queue, and acts only within configured authority.</p>
-    <div class="mk-grid3">
-      ${AGENTS.map((a) => html`<div class="mk-card"><h3>${a.name}</h3><p>${a.blurb}</p></div>`)}
-    </div>
-    <div class="mk-inline-cta"><a class="mk-btn mk-btn-solid" href="/login">Observe the agents in the live demo</a></div>
-  </div>
-</section>
-
-<section class="mk-band mk-band-alt" id="why">
-  <div class="mk-wrap">
+    <div class="mk-kicker">${kick('04', 'Architecture')}</div>
     <h2 class="mk-h2">A different architecture.</h2>
     <p class="mk-lead">Legacy platforms hold the records; the work stays manual. AI point tools automate one task and need a platform underneath. StayLeased is both layers in one system.</p>
     <div class="mk-compare">
       <table>
-        <thead><tr><th></th><th>Legacy platforms</th><th>AI point solutions</th><th class="mkc-us">StayLeased</th></tr></thead>
+        <thead><tr><th scope="col"><span class="sr-only">Capability</span></th><th scope="col">Legacy platforms</th><th scope="col">AI point solutions</th><th scope="col" class="mkc-us">StayLeased</th></tr></thead>
         <tbody>
-          <tr><td>Complete system of record</td><td>✓</td><td>—</td><td class="mkc-us">✓</td></tr>
+          <tr><td>Complete system of record</td><td>${raw(CHECK)}</td><td>—</td><td class="mkc-us">${raw(CHECK)}</td></tr>
           <tr><td>Agents that do the daily work</td><td>—</td><td>One function</td><td class="mkc-us">Every function</td></tr>
-          <tr><td>Approval-first governance &amp; audit trail</td><td>—</td><td>—</td><td class="mkc-us">✓</td></tr>
-          <tr><td>Priced for portfolios under 100 units</td><td>Per-unit minimums</td><td>Enterprise contracts</td><td class="mkc-us">✓</td></tr>
+          <tr><td>Approval-first governance &amp; audit trail</td><td>—</td><td>—</td><td class="mkc-us">${raw(CHECK)}</td></tr>
+          <tr><td>Published pricing</td><td>Quote-only, 50-unit minimums</td><td>Enterprise contracts</td><td class="mkc-us">Published</td></tr>
+          <tr><td>Built for</td><td>400+-unit portfolios</td><td>NMHC Top 50 operators</td><td class="mkc-us">10–100-unit buildings</td></tr>
           <tr><td>Implementation</td><td>Weeks</td><td>Integration project</td><td class="mkc-us">One afternoon</td></tr>
         </tbody>
       </table>
@@ -154,8 +230,9 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="how">
+<section class="mk-band mk-band-alt" id="how">
   <div class="mk-wrap">
+    <div class="mk-kicker">${kick('05', 'Getting started')}</div>
     <h2 class="mk-h2">Operational in an afternoon.</h2>
     <p class="mk-lead">Implementation is a data import, not a project.</p>
     <div class="mk-steps">
@@ -170,7 +247,7 @@ ${mkHeader()}
 <section class="mk-band" id="ask">
   <div class="mk-wrap mk-ask-grid">
     <div class="mk-ask-copy">
-      <div class="mk-kicker mk-kicker-ai">Ask StayLeased${aiLive ? ' · powered by Claude' : ''}</div>
+      <div class="mk-kicker mk-kicker-ai">${kick('06', 'Ask StayLeased')}${aiLive ? ' · powered by Claude' : ''}</div>
       <h2 class="mk-h2">Operational questions, answered from the records.</h2>
       <p class="mk-lead">Occupancy, delinquency, expirations, work orders, vendor spend — answered from live portfolio data, every response logged.</p>
       <div class="mk-cta-row"><a class="mk-btn mk-btn-solid" href="/login">Use the full assistant in the demo</a></div>
@@ -195,7 +272,7 @@ ${mkHeader()}
 <section class="mk-band mk-band-alt" id="newtoai">
   <div class="mk-wrap mk-ask-grid">
     <div>
-      <div class="mk-kicker">The approval model</div>
+      <div class="mk-kicker">${kick('07', 'The approval model')}</div>
       <h2 class="mk-h2">Approval-first by design.</h2>
       <p class="mk-lead" style="margin-bottom:22px">Agents read what arrives, draft the response, and queue it for approval. Nothing reaches a prospect or resident without sign-off, and every figure comes from the live system.</p>
       <div class="mk-cta-row" style="margin-top:24px">
@@ -217,6 +294,7 @@ ${mkHeader()}
 
 <section class="mk-band" id="automation">
   <div class="mk-wrap">
+    <div class="mk-kicker">${kick('08', 'Autonomy')}</div>
     <h2 class="mk-h2">Three levels of autonomy.</h2>
     <p class="mk-lead">Set per property and per function; expanded only by explicit authorization.</p>
     <div class="mk-levels">
@@ -228,9 +306,9 @@ ${mkHeader()}
   </div>
 </section>
 
-
 <section class="mk-band mk-dark" id="governance">
   <div class="mk-wrap">
+    <div class="mk-kicker">${kick('09', 'Governance')}</div>
     <h2 class="mk-h2">Governance and oversight.</h2>
     <p class="mk-lead">One governance framework for every agent. Every action — human or AI — on the record.</p>
     <ul class="mk-checks">
@@ -244,31 +322,51 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="solutions">
+<section class="mk-band" id="verification">
   <div class="mk-wrap">
+    <div class="mk-kicker">${kick('10', 'Verification')}</div>
+    <h2 class="mk-h2">Verification, not claims.</h2>
+    <p class="mk-lead">Software that asks to run a building should not ask for faith. Everything on this page can be checked directly.</p>
+    <div class="mk-verify">
+      ${VERIFY.map((v) => v.href
+        ? html`<a class="mk-vitem" href="${v.href}"><span class="mk-vck" aria-hidden="true"></span><span class="mk-vbody"><b>${v.head}</b><span>${v.body}</span></span><span class="mk-varrow" aria-hidden="true">→</span></a>`
+        : html`<div class="mk-vitem"><span class="mk-vck" aria-hidden="true"></span><span class="mk-vbody"><b>${v.head}</b><span>${v.body}</span></span></div>`)}
+    </div>
+  </div>
+</section>
+
+<section class="mk-band mk-band-alt" id="solutions">
+  <div class="mk-wrap">
+    <div class="mk-kicker">${kick('11', 'Who it’s for')}</div>
     <h2 class="mk-h2">Built for independent operators.</h2>
-    <p class="mk-lead">Enterprise software is built for institutions. StayLeased is built for the owners and small firms that run most of America's rental housing.</p>
+    <p class="mk-lead">Enterprise software is built for institutions. StayLeased is built for the owners and small firms that run most of America’s rental housing.</p>
     <div class="mk-grid3">
       ${SOLUTIONS.map((s2) => html`<div class="mk-card"><h3>${s2.name}</h3><p>${s2.body}</p></div>`)}
     </div>
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="pricing">
+<section class="mk-band" id="pricing">
   <div class="mk-wrap">
+    <div class="mk-kicker">${kick('12', 'Pricing')}</div>
     <h2 class="mk-h2">Straightforward pricing.</h2>
     <p class="mk-lead">No quotation process and no implementation fees.</p>
     <div class="mk-price-row">
       <div class="mk-price">
         <div class="mk-price-tag">Early access</div>
         <div class="mk-price-big">Free</div>
-        <p>The complete platform for early-access partners. Records remain the operator's property — export anytime. Invitation required.</p>
+        <p>The complete platform for early-access partners. Records remain the operator’s property — export anytime. Invitation required.</p>
         <a class="mk-btn mk-btn-solid" href="#walkthrough">Request an invitation</a>
       </div>
       <div class="mk-price">
         <div class="mk-price-tag">What it replaces</div>
         <div class="mk-price-big">$300–800<span>/mo</span></div>
         <p>Typical monthly software spend for a small portfolio on legacy platforms.</p>
+        <ul class="mk-price-list">
+          <li>Platform subscription, priced per unit</li>
+          <li>Transaction and e-payment fees on top</li>
+          <li>AI, if offered at all, as a separate contract</li>
+        </ul>
       </div>
     </div>
   </div>
@@ -439,7 +537,7 @@ ${mkFooter()}
     if (!autoOn || !askMsgs) return;
     autoIdx = i % askChips.length;
     markChip(autoIdx);
-    ask(askChips[autoIdx].textContent.trim(), askMsgs, 'demo', { clear: !first ? true : askMsgs.childElementCount > 0 }, function () {
+    ask(askChips[autoIdx].textContent.trim(), askMsgs, 'demo', { clear: !first ? true : askMsgs.childElementCount > 0 }, function (ok) {
       if (!autoOn) return;
       autoTimer = setTimeout(function () { playCycle(autoIdx + 1, false); }, reduce ? 4200 : 2600);
     });
@@ -494,9 +592,9 @@ ${mkFooter()}
   return htmlRes(`<!doctype html>${html`<html lang="en"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>StayLeased — Autonomous Property Management</title>
-<meta name="description" content="Property management software that does the work: answers your leads, collects rent, handles maintenance calls, and keeps real books. Built for independent landlords and small management companies, 10–500 units." />
+<meta name="description" content="Property management software that does the work: AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft under the operator's approval. Built for buildings of 10–100 units." />
 <meta property="og:title" content="StayLeased — Autonomous Property Management" />
-<meta property="og:description" content="Autonomous property management for independent landlords. Upload your rent roll and be running in an afternoon — every AI action waits for your approval." />
+<meta property="og:description" content="AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft queued for the operator's approval. Built for 10–100-unit buildings." />
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
 ${raw(`<script>${THEME_BOOT_JS}</script>`)}
@@ -525,4 +623,3 @@ export function homepageRoutes(r: Router): void {
     return redirect('/?walkthrough=thanks#walkthrough');
   });
 }
-

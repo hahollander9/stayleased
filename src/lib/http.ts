@@ -97,7 +97,7 @@ export function badRequest(msg = 'Bad request'): Res {
 }
 
 export function errorPage(status: number, msg: string, detail?: string): Res {
-  const mark = `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#2563eb" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V9.5a7 7 0 0 1 14 0V21"/><path d="M3.5 21h17"/><circle cx="12" cy="12" r="1.6"/><path d="M12 13.6V17"/></svg>`;
+  const mark = `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V9.5a7 7 0 0 1 14 0V21"/><path d="M3.5 21h17"/><circle cx="12" cy="12" r="1.6"/><path d="M12 13.6V17"/></svg>`;
   const heads: Record<number, string> = { 400: 'Bad request', 403: 'Access denied', 404: 'Page not found', 500: 'Something went wrong' };
   const head = heads[status] || 'Error';
   const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${status} · StayLeased</title><link rel="stylesheet" href="/assets/theme.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"></head><body class="err-page"><div class="err-box"><a class="err-brand" href="/">${mark}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></a><div class="err-code">${status}</div><h1 class="err-head">${esc(head)}</h1><p>${esc(msg)}</p>${detail ? `<pre class="err-detail">${esc(detail)}</pre>` : ''}<div class="err-actions"><a class="btn" href="javascript:history.back()">Go back</a> <a class="btn btn-ghost" href="/">Home</a></div></div></body></html>`;

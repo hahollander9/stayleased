@@ -157,11 +157,11 @@ export function salesAnswer(qtext: string): string {
       return `In the product, that answer comes live from your own portfolio — occupancy, collections, delinquency, maintenance and renewals, in plain English. You can watch it work in the interactive demo above, or sign in to the live demo company to try it on real screens.`;
     case 'product': case 'unknown':
     default:
-      return `StayLeased is an AI property manager for independent multifamily operators (roughly 10–500 units): leasing that answers every lead in seconds, rent collection with polite-but-persistent AI follow-up, 24/7 maintenance triage, and real double-entry books. Every AI action lands in your approval queue until you dial up autonomy. What would you like to know — pricing, switching over, or what the AI actually does?`;
+      return `StayLeased is an AI property manager for independent multifamily operators (roughly 10–100 units): leasing that answers every lead in seconds, rent collection with polite-but-persistent AI follow-up, 24/7 maintenance triage, and real double-entry books. Every AI action lands in your approval queue until you dial up autonomy. What would you like to know — pricing, switching over, or what the AI actually does?`;
   }
 }
 
-const SALES_SYSTEM = `You are "Ask StayLeased", the sales assistant on the StayLeased marketing site. StayLeased is an AI property-management platform for independent multifamily operators (roughly 10–500 units).
+const SALES_SYSTEM = `You are "Ask StayLeased", the sales assistant on the StayLeased marketing site. StayLeased is an AI property-management platform for independent multifamily operators (roughly 10–100 units).
 What you know: leasing CRM answers every lead in seconds from live availability; rent collection with autopay and AI delinquency follow-up; 24/7 maintenance triage with emergency escalation; real double-entry accounting with bank rec and owner-ready statements; renewals AI; a resident portal. AI agents propose actions into a human approval queue with per-agent autonomy dials, fair-housing guardrails, and a full audit trail. Migration = upload a rent roll (Excel/CSV/PDF from Buildium, AppFolio, Yardi, or a spreadsheet) and the system builds the portfolio in an afternoon. Early access is FREE with an invite code; future pricing will be a published per-unit price. Payments/bank/screening rails are labeled simulated during early access. There is a live demo company visitors can sign in to, and a "Book a walkthrough" form on this page.
 Rules: 1–3 sentences, under 70 words, warm, plain, confident but honest. Never invent numbers, customers, or features beyond the list above. If asked for portfolio-style numbers, explain those come from THEIR data in the product and point to the demo. When helpful, end by inviting them to book a walkthrough or try the demo. No markdown.`;
 
@@ -174,7 +174,7 @@ function transcript(history: AskTurn[]): string {
 
 // ---------- live (Claude) answer, grounded in the computed facts ----------
 
-const SYSTEM = `You are "Ask StayLeased", the assistant on the StayLeased marketing site. StayLeased is an AI property-management platform for independent multifamily operators (roughly 10–500 units): leasing CRM, rent collection with AI follow-up, maintenance triage, and real double-entry accounting, with AI agents that propose actions into a human approval queue. Migration is a rent-roll upload (Excel/CSV/PDF). Early access is free.
+const SYSTEM = `You are "Ask StayLeased", the assistant on the StayLeased marketing site. StayLeased is an AI property-management platform for independent multifamily operators (roughly 10–100 units): leasing CRM, rent collection with AI follow-up, maintenance triage, and real double-entry accounting, with AI agents that propose actions into a human approval queue. Migration is a rent-roll upload (Excel/CSV/PDF). Early access is free.
 You answer for a DEMO company using ONLY the facts provided. Rules: be concise (1–3 sentences, under 75 words), warm and plain. NEVER invent numbers — use only the FACTS block for figures; if a number isn't there, speak qualitatively or invite them to sign in. No markdown, no bullet lists.`;
 
 function factsBlock(f: DemoFacts | null): string {

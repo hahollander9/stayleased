@@ -30,10 +30,19 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   assert.match(body, /Autonomous property management/);
   assert.match(body, /Property management software that does the work/i);
   assert.match(body, /Operational in an afternoon\./);
-  assert.match(body, /Everything in one place\./);
+  // the differentiation build (2026-08-05): segment evidence band, records
+  // band (the retired "Everything in one place" recast as mechanism), the
+  // agents-as-staff h2, and the verification band
+  assert.match(body, /Built for the middle of the market\./);
+  assert.match(body, /of rental inquiries arrive outside office hours/);
+  assert.match(body, /Terner Center/);
+  assert.match(body, /Agents that work on the records, not beside them\./);
+  assert.match(body, /The staff a small building can’t carry, as software\./);
+  assert.match(body, /Verification, not claims\./);
+  assert.match(body, /Live demo, open to anyone/);
+  assert.ok(!/Everything in one place\./.test(body), 'retired category-wallpaper headline stays gone');
   assert.match(body, /Approval-first by design\./);
   assert.match(body, /Three levels of autonomy\./);
-  assert.match(body, /Purpose-built agents for every workflow\./);
   assert.match(body, /Governance and oversight\./);
   assert.match(body, /Built for independent operators/);
   assert.match(body, /Straightforward pricing/);

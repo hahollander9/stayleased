@@ -7,7 +7,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf
 const INK = rgb(0.11, 0.14, 0.19);
 const MUTED = rgb(0.42, 0.46, 0.52);
 const LINE = rgb(0.88, 0.9, 0.92);
-const ACCENT = rgb(0.145, 0.388, 0.922); // StayLeased brand #2563eb
+const ACCENT = rgb(0.016, 0.471, 0.341); // StayLeased brand emerald #047857
 
 export interface PdfTableCol {
   label: string;

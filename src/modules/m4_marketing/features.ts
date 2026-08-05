@@ -30,7 +30,7 @@ export interface MkPage {
 }
 
 export const MK_GROUPS: Record<MkPage['group'], { base: string; name: string; kicker: string; lead: string }> = {
-  platform: { base: '/platform', name: 'Platform', kicker: 'Everything in one place', lead: 'Leasing, rent, maintenance, and real books in one login — including a portal your tenants will actually use.' },
+  platform: { base: '/platform', name: 'Platform', kicker: 'The system of record', lead: 'Leasing, rent, maintenance, and real books in one login — including a portal your tenants will actually use.' },
   agents: { base: '/agents', name: 'AI', kicker: 'Help that drafts, you approve', lead: 'AI that answers leads, follows up on rent, sorts maintenance, and drafts renewals — every message starting as a draft in your approval queue. New to AI? Start with the first page.' },
   for: { base: '/for', name: "Who it's for", kicker: 'Built for independent operators', lead: 'StayLeased is designed for the owners and managers who operate most of America’s rental housing — not 20,000-unit institutions.' },
 };
@@ -872,7 +872,7 @@ export const MK_PAGES: MkPage[] = [
     sub: 'One system for every property, owner-ready financials by default, roles for every hat your team wears — and agents doing the follow-up your people never have time for.',
     points: [
       'Every property, one login — with per-property policies where needed',
-      'Owner-ready statements and packages, generated not assembled',
+      'Financial statements and reports, generated not assembled',
       'Roles and permissions for staff, accountants, and vendors',
     ],
     stats: [

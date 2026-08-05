@@ -1,15 +1,20 @@
-/** Marketing site styles v8 — the ONE StayLeased color system, EMERALD
- * (Henry's pick, 2026-08-03): marketing and app share one brand system.
- * Signature = the emerald gradient ramp (#2DD4BF→#059669→#047857) on
- * gradient buttons, kickers, avatars, and the progress bar; teal #2DD4BF/#0D9488
- * is reserved for AI/LIVE signals; deep emerald carries links/dashes/tints.
- * Dark mode runs deep green-black surfaces (#08120D/#0D1A13/
- * #12231A). Light keeps the
- * Entrata-grade cream/paper structure. Motion doctrine (permanent):
- * NOTHING is scroll-scrubbed and nothing moves after its one-shot
- * entrance (typed stagger via --sd from chrome.ts); the only perpetual
- * animation is the 5px LIVE pulse + typing dots. All class names are
- * unchanged from v2 (tests + templates pin them). */
+/** Marketing site styles v9 — the differentiation build (2026-08-05) on the
+ * ONE StayLeased color system, EMERALD (Henry's pick, 2026-08-03): marketing
+ * and app share one brand system. Signature = the emerald gradient ramp
+ * (#2DD4BF→#059669→#047857) on gradient buttons, kickers, avatars, and the
+ * progress bar; teal #2DD4BF/#0D9488 is reserved for AI/LIVE signals; deep
+ * emerald carries links/dashes/tints. Dark mode runs deep green-black
+ * surfaces (#08120D/#0D1A13/#12231A). Light keeps the Entrata-grade
+ * cream/paper structure. v9 adds: the hero clip fix (vignettes straddle the
+ * band boundary un-cropped — the wash is clipped by its own layer, never the
+ * cards), the sourced evidence band (.mk-stats), the agent staff-roster
+ * cards (.mk-agent), the verification band (.mk-verify), the restored dark
+ * governance anchor band (.mk-dark), SVG check glyphs in the comparison
+ * table, and :focus-visible affordances. Motion doctrine (permanent):
+ * NOTHING is scroll-scrubbed and nothing moves after its one-shot entrance
+ * (typed stagger via --sd from chrome.ts); the only perpetual animation is
+ * the 5px LIVE pulse + typing dots. All pre-v9 class names are unchanged
+ * (tests + templates pin them); v9 only adds names. */
 
 export const MARKETING_CSS = `
 @font-face {
@@ -25,7 +30,10 @@ export const MARKETING_CSS = `
 
 :root {
   --paper: #FFFFFF; --paper-2: #F6F2EB; --card: #FFFFFF;
-  --ink: #131519; --ink2: #454A54; --mut: #737884; --faint: #A6AAB4;
+  /* --mut darkened #737884 → #62676F (2026-08-05 a11y audit): small muted
+   * labels (stat sources, role tags, step tags) now clear 4.5:1 on both
+   * paper and cream. Dark theme's --mut was already compliant. */
+  --ink: #131519; --ink2: #454A54; --mut: #62676F; --faint: #A6AAB4;
   --line: #E7E4DD; --line-2: #EFEDE7;
   /* the one StayLeased system — emerald ramp (mirrored in src/ui/theme.css) */
   --accent: #047857; --accent-2: #065F46;
@@ -138,16 +146,24 @@ body.mk-mm-open { overflow: hidden; }
 .mk-btn-ghost { color: var(--ink2); background: transparent; }
 .mk-btn-ghost:hover { color: var(--ink); }
 
-/* hero — centered statement over floating product vignettes */
-.mk-hero { position: relative; overflow: hidden; }
+/* hero — centered statement over floating product vignettes.
+ * overflow stays VISIBLE: the vignette row is pulled over the next band with
+ * a negative margin, and an overflow:hidden here guillotines the cards at
+ * the boundary (the v8 "clipped hero" bug). The brand wash gets its own
+ * absolutely-positioned clip layer instead, so it can bleed past the band
+ * edges without ever cropping content. */
+.mk-hero { position: relative; }
+.mk-hero-clip { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
 .mk-hero-in { position: relative; padding: 84px 40px 0; }
 .mk-hero-copy { max-width: 880px; margin: 0 auto; text-align: center; }
 .mk-hero-copy .mk-cta-row { justify-content: center; }
 .mk-hero-copy .mk-kicker { justify-content: center; }
+/* kickers: solid deep emerald since the 2026-08-05 a11y audit — the v8
+ * gradient's teal start ran 1.7:1 on cream at 12px, far below AA. The
+ * gradient signature lives on where text is large or non-text (buttons,
+ * stat numerals, avatars, progress bar); the dark governance band keeps a
+ * gradient kicker because its floor is ~10:1 on the dark surface. */
 .mk-kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: 22px; }
-@supports (-webkit-background-clip: text) {
-  .mk-kicker { background: var(--grad-wide); -webkit-background-clip: text; background-clip: text; color: transparent; }
-}
 .mk-hero h1 {
   font-size: clamp(46px, 6vw, 84px); line-height: 1.0; letter-spacing: -.035em; font-weight: 640;
   color: var(--ink);
@@ -202,6 +218,124 @@ html[data-theme="dark"] .mk-vig-chip.warn { color: #E3B341; border-color: rgba(2
 .mk-suite .mk-more { margin-top: auto; }
 @media (max-width: 980px) { .mk-suites { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 620px) { .mk-suites { grid-template-columns: 1fr; } }
+.mk-suites-label { font-size: 11.5px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; color: var(--mut); margin: -18px 0 18px; }
+
+/* ---------- v9: the evidence band — the staffing dead zone, in sourced,
+ * checkable numbers. Market data only; every figure carries its source. */
+.mk-stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0; border-top: 1px solid var(--line); margin-top: 46px; }
+.mk-stat { display: flex; flex-direction: column; padding: 26px 26px 6px 0; }
+.mk-stat + .mk-stat { border-left: 1px solid var(--line); padding-left: 26px; }
+.mk-stat b { font-family: var(--display); font-size: clamp(40px, 3.6vw, 54px); font-weight: 620; letter-spacing: -.03em; line-height: 1; margin-bottom: 12px; color: var(--accent); }
+@supports (-webkit-background-clip: text) {
+  /* numerals are large text (40px+), so the AA bar is 3:1 — the text ramp
+   * starts at #0D9488 (3.4:1 on cream) instead of grad-wide's #2DD4BF (1.7) */
+  .mk-stat b { background: linear-gradient(90deg, #0D9488, #059669 45%, #047857); -webkit-background-clip: text; background-clip: text; color: transparent; }
+}
+html[data-theme="dark"] .mk-stat b { background: none; -webkit-background-clip: initial; background-clip: initial; color: var(--accent); }
+.mk-stat span { font-size: 14px; color: var(--ink2); line-height: 1.5; flex: 1; }
+.mk-stat > i { font-style: normal; font-size: 11.5px; font-weight: 600; letter-spacing: .04em; color: var(--mut); margin-top: 14px; padding-top: 10px; border-top: 1px dashed var(--line); }
+@media (max-width: 980px) { .mk-stats { grid-template-columns: 1fr 1fr; border-top: 0; margin-top: 34px; gap: 0; }
+  .mk-stat { border-top: 1px solid var(--line); padding: 22px 22px 6px 0; }
+  .mk-stat + .mk-stat { border-left: 0; padding-left: 0; }
+  .mk-stat:nth-child(even) { border-left: 1px solid var(--line); padding-left: 22px; } }
+@media (max-width: 620px) { .mk-stats { grid-template-columns: 1fr; }
+  .mk-stat:nth-child(even) { border-left: 0; padding-left: 0; } }
+
+/* ---------- v9: agents as a staff roster — role tag over the agent name,
+ * stroke icon in a tinted chip; the grid keeps .mk-card's lift behavior */
+.mk-agent { display: flex; flex-direction: column; align-items: flex-start; }
+.mk-agent-ico { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 11px; color: var(--accent);
+  background: rgba(5,150,105,.09); border: 1px solid rgba(5,150,105,.16); margin-bottom: 16px; transition: transform .3s var(--spring); }
+html[data-theme="dark"] .mk-agent-ico { background: rgba(110,231,183,.08); border-color: rgba(110,231,183,.18); }
+.mk-agent:hover .mk-agent-ico { transform: translateY(-2px) rotate(-4deg); }
+.mk-agent-role { font-size: 11px; font-weight: 700; letter-spacing: .11em; text-transform: uppercase; color: var(--mut); margin-bottom: 6px; }
+.mk-agent h3 { margin-bottom: 6px; }
+
+/* ---------- v9: verification band — the radical-verifiability ledger.
+ * Every row is a claim the visitor can check; linked rows carry an arrow. */
+.mk-verify { max-width: 860px; border-top: 1px solid var(--line); }
+.mk-vitem { display: flex; align-items: flex-start; gap: 16px; padding: 19px 8px 19px 4px; border-bottom: 1px solid var(--line); transition: background .16s ease; }
+a.mk-vitem:hover, a.mk-vitem:focus-visible { background: var(--paper-2); }
+.mk-vck { flex: none; width: 22px; height: 22px; margin-top: 1px; background: var(--accent);
+  -webkit-mask: url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22black%22%20stroke-width=%222%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Ccircle%20cx=%2212%22%20cy=%2212%22%20r=%229.2%22/%3E%3Cpath%20d=%22m8.2%2012.4%202.6%202.6%205-5.6%22/%3E%3C/svg%3E') center / contain no-repeat;
+  mask: url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22black%22%20stroke-width=%222%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Ccircle%20cx=%2212%22%20cy=%2212%22%20r=%229.2%22/%3E%3Cpath%20d=%22m8.2%2012.4%202.6%202.6%205-5.6%22/%3E%3C/svg%3E') center / contain no-repeat; }
+.mk-vbody { flex: 1; }
+.mk-vbody b { display: block; font-size: 15.5px; font-weight: 640; color: var(--ink); margin-bottom: 2px; }
+.mk-vbody span { font-size: 13.5px; color: var(--mut); }
+.mk-varrow { flex: none; align-self: center; font-size: 16px; color: var(--faint); transition: transform .25s var(--ease), color .16s ease; }
+a.mk-vitem:hover .mk-varrow { transform: translateX(4px); color: var(--accent); }
+
+/* ---------- v9: pricing context rows on the replaced-spend card */
+.mk-price-list { list-style: none; padding: 12px 0 0; margin: 4px 0 0; border-top: 1px dashed var(--line); display: grid; gap: 7px; }
+.mk-price-list li { position: relative; padding-left: 18px; font-size: 13px; color: var(--mut); }
+.mk-price-list li::before { content: ''; position: absolute; left: 0; top: 9px; width: 8px; height: 1.5px; background: var(--accent); }
+
+/* ---------- v9: accessibility affordances ---------- */
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
+body.mk :where(a, button, summary, input, select):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+body.mk .mk-btn:focus-visible { outline-offset: 3px; }
+h1, .mk-h2 { text-wrap: balance; }
+.mk-lead { text-wrap: pretty; }
+.mk-band[id], section[id] { scroll-margin-top: 76px; }
+
+/* ---------- v10: the guided-argument layer (2026-08-05) ----------
+ * Numbered kickers turn the page into a 01→12 tour; the evidence numerals
+ * count up exactly once on entry; agent icons draw themselves in; check
+ * glyphs pop with the row that carries them. Everything here is one-shot
+ * and entry-triggered — nothing is scrubbed by scroll position, nothing
+ * moves again after it lands (doctrine, permanent). */
+.mk-kn { display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; color: var(--faint); font-weight: 700; letter-spacing: .08em; padding-right: 10px; margin-right: 10px; border-right: 1px solid var(--line); }
+.mk-dark .mk-kn { color: var(--mut); border-right-color: var(--line); }
+.mk-dot { color: var(--accent); }
+
+/* hero scroll cue — static affordance, springs only under the cursor */
+.mk-scrollcue { display: inline-flex; align-items: center; justify-content: center; width: 42px; height: 42px; margin-top: 34px; border: 1px solid var(--line); border-radius: 50%; color: var(--mut); transition: color .16s ease, border-color .16s ease, transform .3s var(--spring); }
+.mk-scrollcue:hover { color: var(--accent); border-color: var(--accent); transform: translateY(3px); }
+
+/* glass nav — the premium sticky header: translucent + blurred where
+ * supported, the solid paper fallback everywhere else. Height constant. */
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .mk-nav { background: rgba(255,255,255,.76); -webkit-backdrop-filter: blur(14px) saturate(1.5); backdrop-filter: blur(14px) saturate(1.5); }
+  html[data-theme="dark"] .mk-nav { background: rgba(8,18,13,.72); }
+  .mk-mobile { background: var(--paper); } /* the full-screen menu stays solid */
+}
+
+/* count-up numerals: width reserved per-run (inline ch), digits tabular */
+.mk-stat b { font-variant-numeric: tabular-nums; }
+.mk-n { display: inline-block; font: inherit; font-style: normal; color: inherit; }
+
+/* agent icons draw themselves in once, just after their card lands */
+.mk-stag .mk-agent-ico svg path { stroke-dasharray: 1 1; stroke-dashoffset: 1; transition: stroke-dashoffset .8s var(--ease) calc(var(--sd, 0s) + .3s); }
+.vis .mk-stag .mk-agent-ico svg path, .mk-stag.vis .mk-agent-ico svg path { stroke-dashoffset: 0; }
+
+/* check glyphs pop with their row (verification band + governance band) */
+.mk-stag > .mk-vck { opacity: 0; transform: scale(.4); transition: opacity .35s ease calc(var(--sd, 0s) + .2s), transform .55s var(--spring) calc(var(--sd, 0s) + .2s); }
+.vis .mk-stag > .mk-vck, .mk-stag.vis > .mk-vck { opacity: 1; transform: none; }
+.mk-checks > .mk-stag::before { opacity: 0; transform: scale(.35); transition: opacity .35s ease calc(var(--sd, 0s) + .22s), transform .55s var(--spring) calc(var(--sd, 0s) + .22s); }
+.mk-checks.vis > .mk-stag::before, .vis .mk-checks > .mk-stag::before { opacity: 1; transform: none; }
+
+/* card sheen — a gradient border that answers the cursor (hover-only) */
+.mk-card, .mk-suite, .mk-price { position: relative; }
+.mk-card::after, .mk-suite::after, .mk-price::after { content: ''; position: absolute; inset: 0; border-radius: 16px; border: 1px solid transparent; pointer-events: none; opacity: 0; transition: opacity .25s ease;
+  background: linear-gradient(125deg, rgba(45,212,191,.5), rgba(5,150,105,.45) 55%, rgba(4,120,87,.5)) border-box;
+  -webkit-mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0); -webkit-mask-composite: xor;
+  mask: linear-gradient(#fff 0 0) padding-box, linear-gradient(#fff 0 0); mask-composite: exclude; }
+.mk-card:hover::after, .mk-suite:hover::after, .mk-price:hover::after { opacity: 1; }
+html[data-theme="dark"] .mk-card::after, html[data-theme="dark"] .mk-suite::after, html[data-theme="dark"] .mk-price::after {
+  background: linear-gradient(125deg, rgba(45,212,191,.55), rgba(110,231,183,.4) 55%, rgba(16,185,129,.55)) border-box; }
+
+/* hero: a faint static dot grid under the wash, fading out radially */
+.mk-hero-clip::after { content: ''; position: absolute; inset: 0;
+  background-image: radial-gradient(circle at 1px 1px, rgba(4,120,87,.13) 1px, transparent 1.6px); background-size: 26px 26px;
+  -webkit-mask: radial-gradient(58% 64% at 50% 38%, #000 30%, transparent 78%); mask: radial-gradient(58% 64% at 50% 38%, #000 30%, transparent 78%); }
+html[data-theme="dark"] .mk-hero-clip::after { background-image: radial-gradient(circle at 1px 1px, rgba(110,231,183,.10) 1px, transparent 1.6px); }
+
+/* hero primary CTA carries a quiet permanent emerald glow (static) */
+.mk-hero .mk-btn-solid.mk-btn-lg { box-shadow: 0 18px 42px -18px rgba(5,150,105,.45); }
+
+/* the comparison table's StayLeased column header gets its accent cap */
+.mk-compare thead th.mkc-us { position: relative; }
+.mk-compare thead th.mkc-us::after { content: ''; position: absolute; left: 0; right: 0; top: 0; height: 2.5px; background: var(--grad-wide); }
 
 /* legacy product-frame (feature pages) — plain document card now */
 .mk-hero-visual { position: relative; }
@@ -243,11 +377,17 @@ html[data-theme="dark"] .mk-vig-chip.warn { color: #E3B341; border-color: rgba(2
 .mk-compare tbody tr:last-child td { border-bottom: 0; }
 .mk-compare thead th { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); border-bottom: 1px solid var(--line); }
 .mk-compare td:first-child { color: var(--ink); font-weight: 550; max-width: 340px; }
-.mk-compare td:not(:first-child), .mk-compare th:not(:first-child) { text-align: center; width: 17%; }
+.mk-compare td:not(:first-child), .mk-compare th:not(:first-child) { text-align: center; width: 19%; }
 .mk-compare td:not(:first-child) { color: var(--mut); }
-.mk-compare .mkc-us { color: var(--ink); font-weight: 620; background: rgba(4,120,87,.05); }
+.mk-compare .mkc-us { color: var(--ink); font-weight: 620; background: rgba(4,120,87,.055); }
 html[data-theme="dark"] .mk-compare .mkc-us { background: rgba(110,231,183,.08); }
 .mk-compare thead th.mkc-us { color: var(--accent); }
+/* v9: SVG check glyphs — accent in the StayLeased column, muted elsewhere;
+ * the us-column gets hairline flanks so it reads as one continuous rail */
+.mk-compare .mk-ck { vertical-align: -2.5px; color: var(--mut); }
+.mk-compare .mkc-us .mk-ck { color: var(--accent); }
+.mk-compare td.mkc-us, .mk-compare th.mkc-us { border-left: 1px solid rgba(4,120,87,.16); }
+html[data-theme="dark"] .mk-compare td.mkc-us, html[data-theme="dark"] .mk-compare th.mkc-us { border-left-color: rgba(110,231,183,.2); }
 
 /* first-week steps — numbered editorial rows */
 .mk-steps { max-width: 880px; border-top: 1px solid var(--line); }
@@ -295,15 +435,32 @@ html[data-theme="dark"] .mk-compare .mkc-us { background: rgba(110,231,183,.08);
 .mk-card .mk-more { margin-top: 12px; }
 .mk-inline-cta { margin-top: 30px; }
 
-/* governance — same paper as every other section, plain ruled checklist */
-.mk-dark { position: relative; background: var(--paper); color: var(--ink); }
+/* governance — v9: the dark emerald anchor band, the page's gravity well.
+ * The crown-jewel section (no competitor publishes oversight mechanics)
+ * finally looks the part: deep green-black surface in BOTH themes, local
+ * token overrides so every child inherits correct contrast, a static
+ * emerald glow (no drift — doctrine), and check-circle glyphs. In dark
+ * theme the band sits one surface up from the page so it still reads as
+ * an anchor. */
+.mk-dark { position: relative; background: #0A1A12; color: #E9F5EF; overflow: hidden;
+  --ink: #E9F5EF; --ink2: #C4D6CD; --mut: #8CA396; --faint: #5C7266;
+  --line: rgba(163,196,180,.17); --line-2: rgba(163,196,180,.09);
+  --accent: #6EE7B7; --card: rgba(163,196,180,.05); }
+html[data-theme="dark"] .mk-dark { background: #0D1A13; border-top: 1px solid rgba(163,196,180,.12); border-bottom: 1px solid rgba(163,196,180,.12); }
+.mk-dark::before { content: ''; position: absolute; left: 50%; top: -320px; width: 1100px; height: 640px; transform: translateX(-50%); pointer-events: none;
+  background: radial-gradient(50% 55% at 50% 50%, rgba(16,185,129,.13), transparent 70%); }
 .mk-dark .mk-wrap { position: relative; }
 .mk-dark .mk-h2 { color: var(--ink); }
 .mk-dark .mk-lead { color: var(--ink2); }
-.mk-dark .mk-kicker { color: var(--mut); }
-.mk-checks { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 12px 40px; list-style: none; padding: 0; margin: 0; max-width: 860px; }
-.mk-checks li { padding-left: 24px; position: relative; font-size: 15px; color: var(--ink2); }
-.mk-checks li::before { content: '—'; position: absolute; left: 0; top: 0; color: var(--accent); font-weight: 600; }
+.mk-dark .mk-kicker { color: var(--accent); }
+@supports (-webkit-background-clip: text) {
+  .mk-dark .mk-kicker { background: linear-gradient(90deg, #2DD4BF, #6EE7B7); -webkit-background-clip: text; background-clip: text; color: transparent; }
+}
+.mk-checks { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 14px 44px; list-style: none; padding: 0; margin: 0; max-width: 880px; }
+.mk-checks li { padding: 14px 4px 14px 34px; position: relative; font-size: 15px; color: var(--ink2); border-bottom: 1px solid var(--line-2); transition: color .16s ease; }
+.mk-checks li::before { content: ''; position: absolute; left: 0; top: 15px; width: 20px; height: 20px; background: var(--accent);
+  -webkit-mask: url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22black%22%20stroke-width=%222%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Ccircle%20cx=%2212%22%20cy=%2212%22%20r=%229.2%22/%3E%3Cpath%20d=%22m8.2%2012.4%202.6%202.6%205-5.6%22/%3E%3C/svg%3E') center / contain no-repeat;
+  mask: url('data:image/svg+xml;utf8,%3Csvg%20xmlns=%22http://www.w3.org/2000/svg%22%20viewBox=%220%200%2024%2024%22%20fill=%22none%22%20stroke=%22black%22%20stroke-width=%222%22%20stroke-linecap=%22round%22%20stroke-linejoin=%22round%22%3E%3Ccircle%20cx=%2212%22%20cy=%2212%22%20r=%229.2%22/%3E%3Cpath%20d=%22m8.2%2012.4%202.6%202.6%205-5.6%22/%3E%3C/svg%3E') center / contain no-repeat; }
 .mk-checks li:hover { color: var(--ink); }
 .mk-grid5 { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px; }
 .mk-gov { padding: 20px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); }
@@ -530,6 +687,7 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
   .mk-hero-copy > *:nth-child(3) { animation-delay: .26s; }
   .mk-hero-copy > *:nth-child(4) { animation-delay: .38s; }
   .mk-hero-copy > *:nth-child(5) { animation-delay: .5s; }
+  .mk-hero-copy > *:nth-child(6) { animation-delay: .64s; }
   .mk-hero h1 { animation-name: mkH1; }
   .mk-vig { animation: mkVigIn .85s var(--ease) both; }
   .mk-vig:nth-child(1) { animation-delay: .72s; }
@@ -545,11 +703,12 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 @keyframes mkH1 { from { opacity: 0; transform: translateY(22px); filter: blur(10px); } to { opacity: 1; transform: none; filter: none; } }
 @keyframes mkVigIn { from { opacity: 0; transform: rotate(var(--vr)) translateY(calc(var(--vy) + 52px)) scale(.94); } to { opacity: 1; transform: rotate(var(--vr)) translateY(var(--vy)) scale(1); } }
 @keyframes mkItemIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
-/* soft brand wash behind the hero — static, no drift; the ramp's two
- * ends as overlapping fields (cyan left, indigo right) */
-.mk-hero::before { content: ''; position: absolute; left: 50%; top: -240px; width: 1080px; height: 700px; transform: translateX(-50%); pointer-events: none;
+/* soft brand wash behind the hero — static, no drift; the emerald ramp's
+ * two ends as overlapping fields. Lives on the clip layer so it can never
+ * crop the vignette cards. */
+.mk-hero-clip::before { content: ''; position: absolute; left: 50%; top: -240px; width: 1080px; height: 700px; transform: translateX(-50%);
   background: radial-gradient(46% 52% at 36% 44%, rgba(45,212,191,.10), transparent 70%), radial-gradient(50% 56% at 64% 50%, rgba(5,150,105,.10), transparent 72%); }
-html[data-theme="dark"] .mk-hero::before { background: radial-gradient(46% 52% at 36% 44%, rgba(45,212,191,.08), transparent 70%), radial-gradient(50% 56% at 64% 50%, rgba(16,185,129,.11), transparent 72%); }
+html[data-theme="dark"] .mk-hero-clip::before { background: radial-gradient(46% 52% at 36% 44%, rgba(45,212,191,.08), transparent 70%), radial-gradient(50% 56% at 64% 50%, rgba(16,185,129,.11), transparent 72%); }
 
 /* back-to-top */
 #mktop { position: fixed; right: 22px; bottom: 22px; z-index: 70; width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--line); background: var(--card); color: var(--ink); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 12px 26px -14px rgba(20,18,14,.4); opacity: 0; transform: translateY(14px); pointer-events: none; transition: opacity .26s var(--ease), transform .26s var(--ease), border-color .16s ease; }
@@ -591,7 +750,10 @@ html[data-theme="dark"] .mk-hero::before { background: radial-gradient(46% 52% a
   }
   #mktop { transition: opacity .2s ease; }
   .mk-live i, .mk-typing i { animation: none !important; }
-  .mk-theme svg, .mk-chat-launch svg, #mktop svg, .mk-logo svg, .mk-drop-grid a, .mk-foot-grid a, .mk-chat-close { transition: none !important; transform: none !important; }
+  .mk-theme svg, .mk-chat-launch svg, #mktop svg, .mk-logo svg, .mk-drop-grid a, .mk-foot-grid a, .mk-chat-close, .mk-agent-ico, .mk-varrow, .mk-scrollcue { transition: none !important; transform: none !important; }
+  /* v10 one-shot choreography: fully visible and still under reduce */
+  .mk-stag .mk-agent-ico svg path { stroke-dasharray: none !important; stroke-dashoffset: 0 !important; transition: none !important; }
+  .mk-stag > .mk-vck, .mk-checks > .mk-stag::before { opacity: 1 !important; transform: none !important; transition: none !important; }
   .mk-msg { animation: none; }
   .mk-item.open .mk-drop, .mk-mobile.open { animation: none; }
 }

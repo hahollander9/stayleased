@@ -39,7 +39,7 @@ export function logo(size = 22, color = 'currentColor'): Raw {
 /** Two-tone StayLeased wordmark (mark + name). onDark tints the mark + accent
  * for placement on the dark chrome; otherwise it uses the brand accent token. */
 export function wordmark(size = 22, onDark = false): Raw {
-  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#7aa8ff' : 'var(--brand)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
+  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#34D399' : 'var(--brand)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
 }
 
 // ---------- nav registry ----------

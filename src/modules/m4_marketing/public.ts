@@ -27,7 +27,7 @@ export interface Marketing {
 }
 
 export const DEFAULT_MARKETING: Marketing = {
-  theme: '#2563eb',
+  theme: '#047857',
   heroTitle: 'Come home to something better',
   heroSub: 'Thoughtful floorplans, resident-first service, and a location you will love.',
   about: 'Professionally managed homes with responsive maintenance, easy online payments, and a community team that knows your name.',
