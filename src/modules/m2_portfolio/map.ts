@@ -210,7 +210,12 @@ export function mapRoutes(r: Router): void {
   r.get('/map/open/:id', requirePerm('dashboard:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const pid = rq.params.id!;
-    if (!canAccessProperty(ctx, pid)) return forbidden();
+    // Stale history entries and bookmarks outlive the property they point at
+    // (the public demo world can be rebuilt; portfolios change). Recover to
+    // the map with an explanation instead of a dead-end error page.
+    if (!canAccessProperty(ctx, pid)) {
+      return redirect('/map', 'That property is not available — pick one from the map.', 'err');
+    }
     rq.setCookies.push(cookie('sl_prop', pid, { maxAge: 30 * 86400, httpOnly: false }));
     return redirect('/');
   });

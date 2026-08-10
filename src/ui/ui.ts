@@ -102,6 +102,41 @@ const SECTION_TO_TAB: Record<string, string> = {
 };
 const HREF_TO_TAB: Record<string, string> = { '/inbox': 'Messages', '/comms': 'Messages' };
 
+/** Grouped dropdowns (nav consolidation pass): the big tabs organize their
+ * many pages into labeled clusters instead of one flat column, so a menu
+ * reads as a table of contents rather than a wall. Membership is by href
+ * (exact, or prefix at a path boundary); items no group claims — module
+ * Overview links, the conditional Approvals inbox — render first, ungrouped.
+ * Tabs absent here (Residents, Messages) are short enough to stay flat. */
+const TAB_GROUPS: Record<string, [string, string[]][]> = {
+  Leasing: [
+    ['Pipeline', ['/leads', '/tours', '/leasing-center', '/applications']],
+    ['Marketing', ['/marketing', '/leasing/analytics']],
+  ],
+  Financials: [
+    ['Collect', ['/receivables', '/delinquency', '/deposits', '/utilities']],
+    ['Books', ['/ap', '/gl', '/banking', '/statements', '/budgets', '/periods']],
+    ['Capital & owners', ['/reserves', '/owners']],
+  ],
+  Property: [
+    ['Portfolio', ['/map', '/properties', '/units']],
+    ['Risk & programs', ['/insurance', '/student', '/affordable']],
+  ],
+  Operations: [
+    ['Maintenance', ['/workorders', '/myday', '/dispatch', '/turns', '/inspections', '/pm']],
+    ['Purchasing & supply', ['/purchasing', '/inventory', '/vendors']],
+    ['Insight', ['/facilities']],
+  ],
+  Reports: [
+    ['Analytics', ['/reports', '/dashboards', '/pricing']],
+    ['AI', ['/ai', '/ask']],
+  ],
+};
+
+function inGroup(href: string, prefix: string): boolean {
+  return href === prefix || href.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`);
+}
+
 function tabItems(ctx: Ctx): Map<string, NavItem[]> {
   const out = new Map<string, NavItem[]>();
   for (const [sec, items] of navSections) {
@@ -147,10 +182,28 @@ function moduleBar(ctx: Ctx, active: string): Raw {
     const items = tabs.get(label) || [];
     if (!items.length) return null;
     const act = items.some((i) => itemActive(active, i));
+    const link = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`;
+    const groups = TAB_GROUPS[label];
+    let menuBody: Raw;
+    if (!groups) {
+      menuBody = html`${items.map(link)}`;
+    } else {
+      const claimed = new Set<NavItem>();
+      const buckets = groups.map(([g, prefixes]) => ({
+        g,
+        list: items.filter((i) => {
+          const hit = prefixes.some((p) => inGroup(i.href, p));
+          if (hit) claimed.add(i);
+          return hit;
+        }),
+      })).filter((b) => b.list.length);
+      const head = items.filter((i) => !claimed.has(i));
+      menuBody = html`${head.map(link)}${buckets.map((b) => html`<span class="mgroup" role="presentation">${b.g}</span>${b.list.map(link)}`)}`;
+    }
     return html`<div class="mtab ${act ? 'active' : ''}">
       <button class="mtab-btn" data-toggle="#mt-${idx}" aria-haspopup="true">${TAB_ICONS[label]}${label}${CARET}</button>
       <div class="menu mmenu" id="mt-${idx}">
-        ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}
+        ${menuBody}
       </div>
     </div>`;
   }))}</nav>`;

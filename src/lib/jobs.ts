@@ -136,6 +136,13 @@ export function advanceBusinessDate(orgId: string, toDate: string): { days: numb
   assertDate(toDate);
   const org = q1<{ business_date: string }>('SELECT business_date FROM orgs WHERE id=?', orgId);
   if (!org) throw new Error('org not found');
+  // The public demo shares one world: without a ceiling, any visitor can
+  // time-machine it years ahead and wreck every later sales demo. Two months
+  // past today is plenty to show rent cycles and renewals.
+  if (orgKind(orgId) === 'demo') {
+    const cap = addDays(liveToday(), 62);
+    if (toDate > cap) throw new Error(`the demo clock can jump at most two months past today (through ${cap})`);
+  }
   let current = org.business_date;
   if (toDate <= current) throw new Error(`target ${toDate} must be after current business date ${current}`);
   let days = 0;

@@ -380,6 +380,14 @@ small, .small { font-size: 12px; }
 .menu a:hover, .menu button:hover { background: rgba(255, 255, 255, .06); text-decoration: none; transform: translateX(2px); }
 .menu .menu-head { padding: 7px 10px 4px; font-size: 11px; color: var(--muted); }
 .menu hr { border: 0; border-top: 1px solid var(--line-2); margin: 5px 0; }
+/* grouped module dropdowns: labeled clusters inside a tall menu */
+.menu .mgroup {
+  display: block; margin: 6px 4px 1px; padding: 7px 6px 3px;
+  font-size: 10.5px; font-weight: 700; letter-spacing: .09em; text-transform: uppercase;
+  color: var(--muted); border-top: 1px solid var(--line-2);
+}
+.menu .mgroup:first-child { border-top: 0; margin-top: 0; padding-top: 5px; }
+.mmenu { min-width: 232px; }
 
 .impersonation {
   background: rgba(251, 191, 36, .1); color: #fcd34d; border-bottom: 1px solid rgba(251, 191, 36, .25); padding: 6px 18px; font-size: 12.5px;

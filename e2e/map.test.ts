@@ -64,3 +64,15 @@ test('gate: opening a property from the map lands on its dashboard', async () =>
   await page.waitForLoadState('networkidle');
   await page.close();
 });
+
+test('regression: /map/open with a stale or foreign property id recovers to the map, not an error page', async () => {
+  const page = await newPage(browser);
+  await login(page, base, 'admin@summitridge.demo');
+  await page.goto(`${base}/map/open/prp_gone_after_reseed`, { waitUntil: 'networkidle' });
+  // graceful recovery: back on the map with a flash, never a 403/404 error page
+  assert.match(page.url(), /\/map$/, 'lands back on /map');
+  const body = (await page.textContent('body')) || '';
+  assert.doesNotMatch(body, /Access denied|Page not found|Something went wrong/);
+  assert.match(body, /not available|no longer available/i, 'explains what happened');
+  await page.close();
+});
