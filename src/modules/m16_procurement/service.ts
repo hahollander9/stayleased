@@ -2,7 +2,7 @@ import { q, q1, insert, run, val, tx, update, j } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, fmtDate } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
-import { can, sysCtx } from '../../lib/auth.ts';
+import { can, sysCtx, assertPerm } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting } from '../../lib/settings.ts';
@@ -43,6 +43,69 @@ export function ensureCatalog(orgId: string): void {
   }
 }
 
+// ---------- vendor price agreements (accountant-feedback build) ----------
+
+/** Negotiated per-vendor price for a catalog item, if one is in effect on `onDate`. */
+export function agreedPrice(orgId: string, vendorId: string, catalogItemId: string, onDate: string): number | null {
+  const a = q1<any>(
+    `SELECT price_cents FROM vendor_price_agreements
+     WHERE org_id=? AND vendor_id=? AND catalog_item_id=? AND active=1
+       AND effective_date<=? AND (expires_date IS NULL OR expires_date>=?)`,
+    orgId, vendorId, catalogItemId, onDate, onDate,
+  );
+  return a ? (a.price_cents as number) : null;
+}
+
+export function upsertPriceAgreement(
+  ctx: Ctx,
+  input: { vendorId: string; catalogItemId: string; priceCents: number; effectiveDate?: string; expiresDate?: string | null },
+): string {
+  assertPerm(ctx, 'vendors:manage');
+  if (!Number.isInteger(input.priceCents) || input.priceCents <= 0) throw new Error('agreed price must be positive');
+  if (!q1('SELECT id FROM vendors WHERE id=? AND org_id=?', input.vendorId, ctx.orgId)) throw new Error('vendor not found');
+  if (!q1('SELECT id FROM catalog_items WHERE id=? AND org_id=?', input.catalogItemId, ctx.orgId)) throw new Error('catalog item not found');
+  const effective = input.effectiveDate || ctx.businessDate;
+  const existing = q1<any>(
+    'SELECT id FROM vendor_price_agreements WHERE org_id=? AND vendor_id=? AND catalog_item_id=?',
+    ctx.orgId, input.vendorId, input.catalogItemId,
+  );
+  if (existing) {
+    run(
+      'UPDATE vendor_price_agreements SET price_cents=?, effective_date=?, expires_date=?, active=1 WHERE id=?',
+      input.priceCents, effective, input.expiresDate ?? null, existing.id,
+    );
+    audit(ctx, 'vendor_price_agreement', existing.id as string, 'update', null, { priceCents: input.priceCents, effective, expires: input.expiresDate ?? null });
+    return existing.id as string;
+  }
+  const aid = id('vpa');
+  insert('vendor_price_agreements', {
+    id: aid, org_id: ctx.orgId, vendor_id: input.vendorId, catalog_item_id: input.catalogItemId,
+    price_cents: input.priceCents, effective_date: effective, expires_date: input.expiresDate ?? null,
+    active: 1, created_by: ctx.userId || null, created_at: nowIso(),
+  });
+  emit(ctx, 'po.price_agreement', 'vendor_price_agreement', aid, { priceCents: input.priceCents });
+  audit(ctx, 'vendor_price_agreement', aid, 'create', null, { priceCents: input.priceCents, effective, expires: input.expiresDate ?? null });
+  return aid;
+}
+
+export function endPriceAgreement(ctx: Ctx, agreementId: string): void {
+  assertPerm(ctx, 'vendors:manage');
+  if (!q1('SELECT id FROM vendor_price_agreements WHERE id=? AND org_id=?', agreementId, ctx.orgId)) throw new Error('agreement not found');
+  run('UPDATE vendor_price_agreements SET active=0 WHERE id=?', agreementId);
+  audit(ctx, 'vendor_price_agreement', agreementId, 'end');
+}
+
+export function listPriceAgreements(ctx: Ctx): any[] {
+  return q<any>(
+    `SELECT a.*, v.name AS vendor_name, c.name AS item_name, c.unit, c.unit_price_cents AS catalog_price_cents
+     FROM vendor_price_agreements a
+     JOIN vendors v ON v.id=a.vendor_id
+     JOIN catalog_items c ON c.id=a.catalog_item_id
+     WHERE a.org_id=? AND a.active=1 ORDER BY v.name, c.name`,
+    ctx.orgId,
+  );
+}
+
 // ---------- purchase orders ----------
 
 export interface PoLineInput {
@@ -71,7 +134,17 @@ export function createPo(
   if (!vendor) throw new Error('vendor not found');
   const approved = j<string[]>(vendor.approved_property_ids, []);
   if (approved.length && !approved.includes(input.propertyId)) throw new Error(`${vendor.name} is not on this property's approved vendor list`);
-  const total = input.lines.reduce((s, l) => s + Math.round(l.qty * l.unitPriceCents), 0);
+  // vendor price agreements: a negotiated rate in effect for this vendor+item
+  // overrides whatever unit price the caller supplied (catalog default or manual)
+  let agreementsApplied = 0;
+  const lines = input.lines.map((l) => {
+    if (!l.catalogItemId) return l;
+    const agreed = agreedPrice(ctx.orgId, input.vendorId, l.catalogItemId, ctx.businessDate);
+    if (agreed == null || agreed === l.unitPriceCents) return l;
+    agreementsApplied++;
+    return { ...l, unitPriceCents: agreed };
+  });
+  const total = lines.reduce((s, l) => s + Math.round(l.qty * l.unitPriceCents), 0);
   const poId = id('po');
   tx(() => {
     insert('purchase_orders', {
@@ -80,7 +153,7 @@ export function createPo(
       needed_by: input.neededBy || null, source: input.source || 'manual', source_id: input.sourceId ?? null,
       total_cents: total, created_by: ctx.userName, created_at: nowIso(),
     });
-    for (const l of input.lines) {
+    for (const l of lines) {
       insert('purchase_order_lines', {
         id: id('pol'), org_id: ctx.orgId, po_id: poId, catalog_item_id: l.catalogItemId ?? null,
         description: l.description, qty: l.qty, unit_price_cents: l.unitPriceCents,
@@ -89,7 +162,7 @@ export function createPo(
       });
     }
   });
-  audit(ctx, 'purchase_order', poId, 'create', null, { totalCents: total, vendor: vendor.name });
+  audit(ctx, 'purchase_order', poId, 'create', null, { totalCents: total, vendor: vendor.name, agreementsApplied });
   return poId;
 }
 

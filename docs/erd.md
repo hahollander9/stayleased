@@ -1,11 +1,11 @@
 # Entity-relationship overview
 
-Generated from `src/db/schema.sql` by `npm run gen:docs`. 120 tables.
+Generated from `src/db/schema.sql` by `npm run gen:docs`. 134 tables.
 Conventions: TEXT ids with type prefixes (`usr_`, `prp_`…), money INTEGER cents, dates TEXT `YYYY-MM-DD`, timestamps ISO-8601 UTC, JSON in TEXT columns. Every org-owned table carries `org_id`.
 
 ## orgs
 
-- columns: `id`, `name`, `slug`, `business_date`, `created_at`
+- columns: `id`, `name`, `slug`, `business_date`, `kind`, `created_at`
 
 ## portfolios
 
@@ -74,7 +74,7 @@ Conventions: TEXT ids with type prefixes (`usr_`, `prp_`…), money INTEGER cent
 
 ## properties
 
-- columns: `id`, `org_id`, `portfolio_id`, `name`, `slug`, `type`, `address1`, `city`, `state`, `zip`, `timezone`, `phone`, `email`, `year_built`, `fiscal_year_start_month`, `operating_bank_account_id`, `deposit_bank_account_id`, `status`, `marketing`, `created_at`
+- columns: `id`, `org_id`, `portfolio_id`, `name`, `slug`, `type`, `address1`, `city`, `state`, `zip`, `timezone`, `phone`, `email`, `year_built`, `lat`
 - references: org_id → orgs
 
 ## buildings
@@ -104,7 +104,7 @@ Conventions: TEXT ids with type prefixes (`usr_`, `prp_`…), money INTEGER cent
 
 ## leases
 
-- columns: `id`, `org_id`, `property_id`, `unit_id`, `household_name`, `status`, `start_date`, `end_date`, `move_in_date`, `move_out_date`, `notice_date`, `mtm_since`, `rent_cents`, `deposit_cents`, `deposit_alternative`, `term_months`, `application_id`, `renewal_of_lease_id`, `template_id`, `packet_file_id`, `esign_request_id`, `bed_label`, `created_at`
+- columns: `id`, `org_id`, `property_id`, `unit_id`, `household_name`, `status`, `start_date`, `end_date`, `move_in_date`, `move_out_date`, `notice_date`, `mtm_since`, `rent_cents`, `deposit_cents`, `deposit_alternative`, `term_months`, `application_id`, `renewal_of_lease_id`, `template_id`, `packet_file_id`, `esign_request_id`, `bed_label`, `billing_start_date`, `created_at`
 - references: property_id → properties; unit_id → units
 
 ## lease_charges
@@ -530,4 +530,64 @@ Conventions: TEXT ids with type prefixes (`usr_`, `prp_`…), money INTEGER cent
 ## user_dashboards
 
 - columns: `id`, `org_id`, `user_id`, `layout`, `updated_at`
+
+## ai_actions
+
+- columns: `id`, `org_id`, `property_id`, `agent`, `entity`, `entity_id`, `title`, `input`, `output`, `confidence`, `autonomy`, `status`, `guardrail_note`, `decided_by`, `decided_at`, `executed_at`, `result`, `created_at`
+
+## roommate_profiles
+
+- columns: `id`, `org_id`, `property_id`, `application_id`, `person_name`, `answers`, `created_at`
+
+## income_certs
+
+- columns: `id`, `org_id`, `property_id`, `unit_id`, `lease_id`, `kind`, `status`, `due_date`, `household_size`, `household_income_cents`, `ami_pct`, `checklist`, `completed_at`, `completed_by`, `created_at`
+
+## rent_limits
+
+- columns: `id`, `org_id`, `ami_pct`, `beds`, `max_rent_cents`
+
+## waitlist_entries
+
+- columns: `id`, `org_id`, `property_id`, `position`, `name`, `email`, `phone`, `household_size`, `income_cents`, `preferences`, `status`, `skip_reason`, `created_at`
+
+## pcs_breaks
+
+- columns: `id`, `org_id`, `property_id`, `lease_id`, `orders_file_id`, `report_date`, `termination_date`, `note`, `created_by`, `created_at`
+
+## import_batches
+
+- columns: `id`, `org_id`, `kind`, `filename`, `property_id`, `new_property_name`, `preset`, `headers`, `mapping`, `rows`, `staged`, `as_of`, `status`, `summary`, `created_by`, `created_at`, `applied_at`
+
+## platform_leads
+
+- columns: `id`, `name`, `email`, `company`, `units`, `note`, `source`, `created_at`
+
+## reserve_plans
+
+- columns: `id`, `org_id`, `property_id`, `monthly_cents`, `target_cents`, `start_period`, `active`, `created_by`, `created_at`
+- references: property_id → properties
+
+## reserve_draws
+
+- columns: `id`, `org_id`, `property_id`, `amount_cents`, `purpose`, `status`, `requested_by`, `decided_by`, `decided_at`, `je_accrual_id`, `je_cash_id`, `created_at`
+- references: property_id → properties
+
+## owners
+
+- columns: `id`, `org_id`, `name`, `kind`, `email`, `phone`, `notes`, `active`, `created_at`
+
+## property_owners
+
+- columns: `id`, `org_id`, `owner_id`, `property_id`, `pct`, `created_at`
+- references: owner_id → owners; property_id → properties
+
+## statement_packets
+
+- columns: `id`, `org_id`, `name`, `property_id`, `basis`, `shared`, `created_by`, `created_at`
+
+## vendor_price_agreements
+
+- columns: `id`, `org_id`, `vendor_id`, `catalog_item_id`, `price_cents`, `effective_date`, `expires_date`, `active`, `created_by`, `created_at`
+- references: vendor_id → vendors; catalog_item_id → catalog_items
 

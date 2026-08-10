@@ -164,15 +164,15 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'accounting', group: 'platform', label: 'Accounting',
     title: 'Real double-entry books. Not a payments app with categories.',
-    sub: 'A full general ledger under everything — cash and accrual side by side, bank reconciliation, AP, budgets, period close, and owner-ready statements — kept current automatically by the operation itself.',
+    sub: 'A full general ledger under everything — cash and accrual side by side, bank reconciliation, AP, budgets, replacement reserves, period close, and owner-ready statements — kept current automatically by the operation itself.',
     points: [
       'Every operational event posts as a balanced journal entry, instantly',
       'Dual-basis: cash and accrual views of the same truth',
-      'Bank reconciliation, AP with approvals, budgets, and period locks',
+      'Bank reconciliation, AP approvals, replacement reserves, and period locks',
     ],
     stats: [
       { b: 'Books by default', s: 'Rent, fees, deposits, and bills post themselves — correctly' },
-      { b: 'Owner-ready output', s: 'P&L, balance sheet, GL detail, and statements on demand' },
+      { b: 'Owner-ready output', s: 'Statement packets, owner statements, and GL detail on demand' },
       { b: 'Clean conversions', s: 'Opening balances and billing-start dates prevent double-billing on migration' },
     ],
     features: [
@@ -180,26 +180,71 @@ export const MK_PAGES: MkPage[] = [
       { t: 'Cash + accrual, together', b: 'Both bases maintained simultaneously — see cash truth for yourself and accrual truth for your CPA without keeping two sets of anything.' },
       { t: 'Accounts payable', b: 'Vendor bills with coding, approval workflow, and payment tracking; costs land on the right property and account every time.' },
       { t: 'Bank reconciliation', b: 'Statement-to-ledger reconciliation with matching and adjustment workflows, so the books tie to the bank — the test most small-operator books fail.' },
+      { t: 'Statement packets', b: 'Save a statement pull once — scope and basis — and reopen it as one page: trailing-12 income statement, balance sheet, and cash flow together, with CSV and PDF a click away.' },
+      { t: 'Replacement reserves', b: 'A funding plan per property moves money to a designated reserve monthly, on the books; draws route through approval. The roof fund exists visibly, instead of living in a spreadsheet.' },
+      { t: 'Owner statements', b: 'Ownership percentages per property produce per-owner statements: each owner’s share of operating results across everything they hold, consolidated — equity income without the side spreadsheet.' },
       { t: 'Budgets & variance', b: 'Property budgets with budget-vs-actual reporting, so “how are we doing” has a number.' },
-      { t: 'Periods & close', b: 'Monthly periods you can close and lock. Prior months stop moving under you, and year-end stops being archaeology.' },
+      { t: 'Periods & close', b: 'Monthly periods you can close and lock. Postings into a closed month are blocked, reopening is permissioned and audited, and the numbers stakeholders received stay the numbers.' },
     ],
     mock: {
       kpis: [['$1.24M', 'YTD revenue'], ['100%', 'Entries balanced'], ['3', 'Bills awaiting approval'], ['Jun', 'Period closed']],
       feed: [
         ['GL', 'July rent run posted · 187 balanced entries'],
         ['Bank rec', 'operating account reconciled to statement · $0 variance'],
-        ['AP', 'Askew Plumbing bill approved · scheduled for payment'],
+        ['Reserves', 'monthly funding posted · roof-project draw approved'],
       ],
     },
     faq: [
       { q: 'I migrated mid-year — are my books usable?', a: 'Yes. Conversion accounting brings prior balances in as opening balances (not fake transactions), and each lease’s billing start date guarantees StayLeased never re-bills a month your old system already billed.' },
       { q: 'Will my CPA accept these books?', a: 'Your CPA gets a real GL: chart of accounts, journal detail, trial balance, P&L and balance sheet on either basis, exportable. It’s the same double-entry structure they’d build themselves.' },
+      { q: 'How do I pull statements for stakeholders without redoing the setup every month?', a: 'Save the pull as a statement packet — scope and basis remembered. From then on it’s one click: trailing-12 income statement, balance sheet, and cash flow on one page, exportable as CSV or PDF for a lender, board, or owner.' },
       { q: 'Do I have to be an accountant to use this?', a: 'No — the operation does the accounting. You collect rent and approve bills; the entries, basis handling, and reports happen underneath. The accounting screens are there when you (or your CPA) want them.' },
     ],
     related: [
       { label: 'Rent collection', href: '/platform/rent-collection' },
       { label: 'Reports', href: '/platform/reports' },
       { label: 'Growing portfolios', href: '/for/growing-portfolios' },
+    ],
+  },
+  {
+    slug: 'purchasing', group: 'platform', label: 'Purchasing & payables',
+    title: 'Vendor spend, from request to reconciled payment.',
+    sub: 'Purchase orders priced from an internal catalog and negotiated vendor agreements, amount-routed approvals, receiving, two- and three-way invoice matching, 1099s, and spend analytics — purchasing that ends in books that tie.',
+    points: [
+      'An internal catalog with negotiated per-vendor pricing on every PO',
+      'Approval chains routed by amount before money is committed',
+      'Invoices matched against PO and receipt before they can be paid',
+    ],
+    stats: [
+      { b: 'Agreed prices, enforced', s: 'POs price from vendor agreements automatically — no rate drift' },
+      { b: 'Coded at the source', s: 'Every line lands on the right GL account, property, and project' },
+      { b: 'Matched before paid', s: '2/3-way matching with a tolerance-driven exception queue' },
+    ],
+    features: [
+      { t: 'Internal catalog', b: 'A priced catalog of the materials the operation actually buys — filters, paint, appliances, locks — with units, GL coding, and preferred vendors built in. Ordering is picking, not retyping.' },
+      { t: 'Vendor price agreements', b: 'Negotiate a rate once and the system enforces it: any PO for that vendor and item prices at the agreed rate automatically, for as long as the agreement runs.' },
+      { t: 'Approval chains by amount', b: 'Small orders clear at the property; larger ones route up an amount-based chain before commitment. The threshold is a setting, not a habit.' },
+      { t: 'Receiving & matching', b: 'Full or partial receiving restocks inventory, and vendor invoices match against PO and receipt — with a tolerance-driven exception queue for the ones that don’t.' },
+      { t: 'Vendor records & 1099s', b: 'W-9s, COIs, payment terms, payment history, and year-end 1099 summaries live in the same place the money moves.' },
+      { t: 'Spend analytics', b: 'Where the money went — by category, vendor, and property. The consolidated vendor view that turns scattered purchasing into negotiating leverage.' },
+    ],
+    mock: {
+      kpis: [['12', 'Open POs'], ['100%', 'Lines GL-coded'], ['2', 'Match exceptions'], ['$48.2k', 'Month vendor spend']],
+      feed: [
+        ['PO', 'filter pre-buy approved · priced from vendor agreement'],
+        ['Receiving', 'partial receipt posted · inventory restocked'],
+        ['Match', 'invoice 7% over PO · queued as an exception'],
+      ],
+    },
+    faq: [
+      { q: 'What is an “agreed price” on a PO?', a: 'A vendor price agreement: a negotiated rate for a catalog item with an effective window. When a PO uses that vendor and item, the agreed price is applied automatically and the PO routes through the same amount-based approval chain as everything else.' },
+      { q: 'Can property managers order without finance losing control?', a: 'Yes — that is what amount-routed approval is for. Orders under the threshold clear immediately; anything larger routes to an approver before it becomes a commitment.' },
+      { q: 'Does purchasing hit the books?', a: 'Approved invoices post as balanced journal entries with property and project dimensions, payments run through AP, and bank reconciliation ties it out. Purchasing is a front door to the same ledger, not a side system.' },
+    ],
+    related: [
+      { label: 'Accounting', href: '/platform/accounting' },
+      { label: 'Maintenance & turns', href: '/platform/maintenance' },
+      { label: 'Reports', href: '/platform/reports' },
     ],
   },
   {
@@ -400,7 +445,7 @@ export const MK_PAGES: MkPage[] = [
     },
     faq: [
       { q: 'Are these reports real-time?', a: 'They read your live operating records at run time. A payment posted a minute ago appears in the report you run now — there is no overnight sync because there is nothing to sync.' },
-      { q: 'Can owners get their own package?', a: 'Generate owner-ready financial packages per property on a schedule. A dedicated read-only owner login is on the roadmap; today most operators send the scheduled package.' },
+      { q: 'Can owners get their own package?', a: 'Yes. Define owners and their ownership percentages, and each owner gets a consolidated statement of their share of operating results — equity income — across every property they hold, exportable as CSV or PDF. A dedicated read-only owner login is on the roadmap; today most operators send the exported package.' },
       { q: 'What if the report I need doesn’t exist?', a: 'Build it: choose the dataset and columns, filter and group, save and schedule. If it’s a common ask, tell us — the catalog grows from operator requests.' },
     ],
     related: [

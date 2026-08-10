@@ -12,6 +12,7 @@ export const COA: [string, string, AcctType, string?][] = [
   // code, name, type, control marker
   ['1010', 'Cash — Operating', 'asset', 'cash'],
   ['1020', 'Cash — Security Deposits', 'asset', 'deposit_cash'],
+  ['1030', 'Replacement Reserves — Cash', 'asset'],
   ['1050', 'Payments Clearing (Undeposited)', 'asset', 'clearing'],
   ['1100', 'Accounts Receivable — Residents', 'asset', 'ar'],
   ['1200', 'Prepaid Expenses', 'asset'],
@@ -109,6 +110,19 @@ export function ensureCoa(orgId: string): void {
   for (const [event_key, description, dr, cr] of POSTING_RULES) {
     insert('posting_rules', { id: id('prl'), org_id: orgId, event_key, description, dr_code: dr, cr_code: cr });
   }
+}
+
+/** Backfill one standard account into an org that predates it (ensureCoa
+ * bails once any chart exists, so codes added to COA later — like 1030
+ * Replacement Reserves — need this to reach existing orgs). Idempotent. */
+export function ensureAccount(orgId: string, code: string): void {
+  if (q1('SELECT id FROM gl_accounts WHERE org_id=? AND code=?', orgId, code)) return;
+  const idx = COA.findIndex(([c]) => c === code);
+  if (idx < 0) throw new Error(`unknown standard account ${code}`);
+  const [, name, type, control] = COA[idx]!;
+  insert('gl_accounts', {
+    id: id('gla'), org_id: orgId, code, name, type, is_control: control || null, active: 1, sort: idx,
+  });
 }
 
 // new orgs get the standard chart automatically

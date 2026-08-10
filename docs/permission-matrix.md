@@ -51,6 +51,11 @@ Portal roles (RESIDENT, VENDOR, APPLICANT, GUARANTOR) have no staff permissions;
 | `ap:pay` | ● | ● | · | · | · | · | · | · | ● | · |
 | `banking:view` | ● | ● | ● | · | · | · | · | · | ● | · |
 | `banking:reconcile` | ● | ● | · | · | · | · | · | · | ● | · |
+| `reserves:view` | ● | ● | ● | ● | · | · | · | · | ● | · |
+| `reserves:manage` | ● | ● | · | · | · | · | · | · | ● | · |
+| `reserves:approve` | ● | ● | ● | · | · | · | · | · | ● | · |
+| `owners:view` | ● | ● | ● | · | · | · | · | · | ● | · |
+| `owners:manage` | ● | ● | · | · | · | · | · | · | ● | · |
 | `budgets:view` | ● | ● | ● | ● | · | · | · | · | ● | · |
 | `budgets:manage` | ● | ● | ● | · | · | · | · | · | ● | · |
 | `workorders:view` | ● | ● | ● | ● | ● | · | ● | ● | ● | · |
@@ -94,12 +99,12 @@ Portal roles (RESIDENT, VENDOR, APPLICANT, GUARANTOR) have no staff permissions;
 ## Role intents
 
 - **Platform Admin** — every permission (platform operations)
-- **Org Admin** — 83 permissions
-- **Regional Manager** — 68 permissions
-- **Property Manager** — 57 permissions
+- **Org Admin** — 88 permissions
+- **Regional Manager** — 71 permissions
+- **Property Manager** — 58 permissions
 - **Assistant Manager** — 29 permissions
 - **Leasing Agent** — 17 permissions
 - **Maintenance Supervisor** — 21 permissions
 - **Maintenance Tech** — 7 permissions
-- **Accountant** — 42 permissions
+- **Accountant** — 47 permissions
 - **Marketing Manager** — 14 permissions

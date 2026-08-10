@@ -11,6 +11,7 @@ import {
   ensureCatalog, createPo, submitPo, approvePo, acknowledgePo, receivePo,
   ocrInvoiceFromPo, matchInvoice, decideMatchException, submitPoInvoice,
   remittanceAdvice, ten99Summary, ten99Pdf, spendAnalytics,
+  listPriceAgreements, upsertPriceAgreement, endPriceAgreement,
 } from './service.ts';
 
 /** M16 screens: PO pipeline + detail (approve/receive), match exception queue,
@@ -48,6 +49,7 @@ export function routes(r: Router): void {
       actions: html`
         <a class="btn btn-ghost" href="/purchasing/exceptions">Match exceptions ${exceptions ? html`<span class="badge badge-warn">${exceptions}</span>` : ''}</a>
         <a class="btn btn-ghost" href="/purchasing/spend">Spend analytics</a>
+        <a class="btn btn-ghost" href="/purchasing/agreements">Price agreements</a>
         <a class="btn btn-ghost" href="/purchasing/1099">1099</a>
         <a class="btn" href="/purchasing/new">New PO</a>`,
       content: html`
@@ -261,6 +263,60 @@ export function routes(r: Router): void {
       headers: { 'content-type': 'application/pdf', 'content-disposition': `inline; filename="1099-summary-${year}.pdf"` },
       body: bytes,
     };
+  });
+
+  // ---------- vendor price agreements ----------
+  r.get('/purchasing/agreements', requirePerm('pos:create'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    ensureCatalog(ctx.orgId);
+    const rows = listPriceAgreements(ctx);
+    const vendors = q<any>('SELECT id, name FROM vendors WHERE org_id=? AND active=1 ORDER BY name', ctx.orgId);
+    const catalog = q<any>('SELECT * FROM catalog_items WHERE org_id=? AND active=1 ORDER BY category, name', ctx.orgId);
+    return shell(rq, {
+      title: 'Vendor price agreements',
+      active: '/purchasing',
+      subtitle: 'Negotiated pricing, enforced — POs for these vendor + item pairs always price at the agreed rate',
+      actions: html`<a class="btn btn-ghost" href="/purchasing">Back to purchasing</a>`,
+      content: html`
+        ${card('Agreements in effect', tbl(
+          [{ label: 'Vendor' }, { label: 'Item' }, { label: 'Catalog price', num: true }, { label: 'Agreed price', num: true }, { label: 'Effective' }, { label: 'Expires' }, { label: '' }],
+          rows.map((a) => ({
+            cells: [
+              a.vendor_name, `${a.item_name} (per ${a.unit})`, usd(a.catalog_price_cents), html`<b>${usd(a.price_cents)}</b>`,
+              fmtDate(a.effective_date), a.expires_date ? fmtDate(a.expires_date) : 'open-ended',
+              can(ctx, 'vendors:manage')
+                ? html`<form method="post" action="/purchasing/agreements/${a.id}/end" style="display:inline"><button class="btn btn-sm btn-ghost">End</button></form>`
+                : '',
+            ],
+          })),
+          { empty: 'No agreements yet — negotiate a rate once and record it below; every PO after that enforces it.' },
+        ), { flush: true })}
+        ${when(can(ctx, 'vendors:manage'), () => card('Record a negotiated price', html`
+          <form method="post" action="/purchasing/agreements">
+            ${field('Vendor', select('vendor', vendors.map((v): [string, string] => [v.id, v.name]), '', { required: true, blank: 'Choose…' }))}
+            ${field('Catalog item', select('item', catalog.map((c): [string, string] => [c.id, `${c.name} — catalog ${usd(c.unit_price_cents)}/${c.unit}`]), '', { required: true, blank: 'Choose…' }))}
+            ${field('Agreed unit price', input('price', { placeholder: 'e.g. 49.00', required: true }))}
+            ${field('Expires (optional)', input('expires', { type: 'date' }), 'Leave blank for open-ended')}
+            <button class="btn">Save agreement</button>
+          </form>`))}
+        <p class="small muted">When a PO line uses one of these vendor + item pairs, the agreed price is applied automatically at creation and the PO routes through the normal amount-based approval chain.</p>`,
+    });
+  });
+
+  r.post('/purchasing/agreements', requirePerm('vendors:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    upsertPriceAgreement(ctx, {
+      vendorId: String(rq.body.vendor || ''),
+      catalogItemId: String(rq.body.item || ''),
+      priceCents: parseUsd(String(rq.body.price || '')),
+      expiresDate: String(rq.body.expires || '') || null,
+    });
+    return redirect('/purchasing/agreements', 'Agreement saved — future POs price at the agreed rate.');
+  });
+
+  r.post('/purchasing/agreements/:id/end', requirePerm('vendors:manage'), (rq) => {
+    endPriceAgreement(rq.ctx as Ctx, rq.params.id!);
+    return redirect('/purchasing/agreements', 'Agreement ended — POs fall back to catalog pricing.');
   });
 
   // ---------- PO detail ----------

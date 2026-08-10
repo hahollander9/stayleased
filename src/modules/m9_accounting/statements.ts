@@ -215,7 +215,7 @@ export interface CashFlow {
   closing: number;
 }
 
-const CASH_CODES = new Set(['1010', '1020']);
+const CASH_CODES = new Set(['1010', '1020', '1030']);
 
 export function cashFlow(ctx: Ctx, opts: { propertyId?: string | null; from: string; to: string; basis: Basis }): CashFlow {
   // classify each JE touching cash by its counter-account mix

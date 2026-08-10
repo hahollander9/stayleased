@@ -7,6 +7,9 @@ import { createInvoice, submitInvoice, approveInvoice, createPaymentRun } from '
 import { ensureBankAccounts, importAllFeeds, createRecon, autoMatch, postAdjustment, completeRecon } from '../modules/m9_accounting/banking.ts';
 import { closePeriod, createRecurringJe, runRecurringJes } from '../modules/m9_accounting/close.ts';
 import { seedFromActuals, approveBudget, budgetVsActual } from '../modules/m9_accounting/budgets.ts';
+import { upsertReservePlan, fundDueReserves, requestReserveDraw, decideReserveDraw } from '../modules/m9_accounting/reserves.ts';
+import { createOwner, setOwnershipShare } from '../modules/m9_accounting/owners.ts';
+import { createPacket } from '../modules/m9_accounting/packets.ts';
 import type { SeedCtx } from './seed.ts';
 import { log } from './seed.ts';
 
@@ -227,6 +230,50 @@ export async function seedAccounting(s2: SeedCtx): Promise<void> {
     lines: [{ glAccount: '5050', description: 'Pest control service', amountCents: 21500 }],
   });
   log('live AP queue: 1 pending approval, 1 draft');
+
+  // ---------- replacement reserves + owners + statement packets (accountant feedback) ----------
+  // Runs BEFORE the bank feed import so funding/draw transfers get mirrored
+  // into the feed as JE txns and every month still reconciles to zero.
+  {
+    for (const p of props.slice(0, 3)) {
+      const u = units.get(p.id) || 100;
+      upsertReservePlan(ctx, {
+        propertyId: p.id,
+        monthlyCents: u * 2500, // $25/unit/month
+        targetCents: u * 2500 * 36, // three years of funding
+        startPeriod: monthKey(addMonths(s.businessDate, -13)),
+      });
+    }
+    const fundedMonths = fundDueReserves(ctx, s.businessDate);
+    // an approved historical draw tied to the roof project…
+    const drawCtx = sysCtx(s.orgId, addDays(s.businessDate, -34));
+    const roofDraw = requestReserveDraw(drawCtx, {
+      propertyId: foundry.id, amountCents: 1200000,
+      purpose: 'Roof replacement — Building B (reserve-funded portion)',
+    });
+    decideReserveDraw(drawCtx, roofDraw, true);
+    // …and one pending draw for the live approval queue
+    requestReserveDraw(ctx, {
+      propertyId: cardinal.id, amountCents: 385000,
+      purpose: 'Water heater replacements — units 204 and 311',
+    });
+    log(`replacement reserves: 3 plans, ${fundedMonths} funding months, 1 approved draw, 1 pending`);
+
+    // owners + ownership shares → per-owner equity-income statements
+    const bluestone = createOwner(ctx, { name: 'Bluestone Holdings LLC', kind: 'entity', email: 'ownerships@bluestoneholdings.demo' });
+    const alvarez = createOwner(ctx, { name: 'Rosa Alvarez', kind: 'individual', email: 'rosa.alvarez@example.demo' });
+    const chen = createOwner(ctx, { name: 'Marcus Chen', kind: 'individual' });
+    setOwnershipShare(ctx, { ownerId: bluestone, propertyId: summit.id, pct: 60 });
+    setOwnershipShare(ctx, { ownerId: chen, propertyId: summit.id, pct: 40 });
+    setOwnershipShare(ctx, { ownerId: bluestone, propertyId: foundry.id, pct: 45 });
+    setOwnershipShare(ctx, { ownerId: alvarez, propertyId: cardinal.id, pct: 100 });
+    log('owners: 3 owners holding shares across 3 properties');
+
+    // statement packets — the saved stakeholder pulls
+    createPacket(ctx, { name: 'Monthly board packet — consolidated', propertyId: null, basis: 'accrual' });
+    createPacket(ctx, { name: `Lender packet — ${foundry.name}`, propertyId: foundry.id, basis: 'cash' });
+    log('statement packets: 2 saved pulls (board consolidated, lender per-property)');
+  }
 
   // ---------- bank feed + reconciliations through LAST month ----------
   importAllFeeds(s.orgId, s.businessDate);

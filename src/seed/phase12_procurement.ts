@@ -3,7 +3,7 @@ import { addDays } from '../lib/dates.ts';
 import { sysCtx } from '../lib/auth.ts';
 import {
   ensureCatalog, createPo, submitPo, acknowledgePo, receivePo,
-  ocrInvoiceFromPo, submitPoInvoice,
+  ocrInvoiceFromPo, submitPoInvoice, upsertPriceAgreement,
 } from '../modules/m16_procurement/service.ts';
 import { createPaymentRun } from '../modules/m9_accounting/ap.ts';
 import type { SeedCtx } from './seed.ts';
@@ -130,6 +130,25 @@ export function seedProcurement(s: SeedCtx): void {
     propertyId: prop('foundry-lofts'), vendorId: vendorBy('cleaning').id, memo: 'quarterly deep-clean supplies (draft)',
     lines: mkLines([[item('office'), 4]]),
   });
+
+  // ---------- vendor price agreements (accountant feedback) ----------
+  // Seeded AFTER the historical pipeline so earlier PO totals stay untouched;
+  // the demo PO below is created with agreements in effect, so its lines
+  // price at the agreed rate instead of catalog.
+  upsertPriceAgreement(sysCtx(s.orgId, addDays(s.businessDate, -60)), {
+    vendorId: vendorBy('hvac').id, catalogItemId: item('filter').id,
+    priceCents: 4900, effectiveDate: addDays(s.businessDate, -60), // catalog $54.00 → agreed $49.00
+  });
+  upsertPriceAgreement(sysCtx(s.orgId, addDays(s.businessDate, -60)), {
+    vendorId: vendorBy('painting').id, catalogItemId: item('paint').id,
+    priceCents: 13600, effectiveDate: addDays(s.businessDate, -60), // catalog $145.00 → agreed $136.00
+  });
+  const agreedPoId = createPo(ctx, {
+    propertyId: prop('summit-ridge'), vendorId: vendorBy('hvac').id,
+    memo: 'winter filter pre-buy — agreed pricing', lines: mkLines([[item('filter'), 8]]),
+  });
+  submitPo(ctx, agreedPoId); // under threshold → auto-approves at the agreed rate
+  log('vendor price agreements: 2 negotiated rates; 1 PO priced from agreement');
 
   const total = val<number>('SELECT COUNT(*) FROM purchase_orders WHERE org_id=?', s.orgId) || 0;
   log(`purchasing pipeline: ${total} POs (paid, exception, pending approval, awaiting ack, partial, draft)`);

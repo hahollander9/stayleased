@@ -33,6 +33,7 @@ export const MK_NAV: MkNavGroup[] = [
       ['Leasing CRM', '/platform/leasing-crm', 'Every lead answered in seconds; tours booked while you sleep'],
       ['Maintenance & turns', '/platform/maintenance', 'Requests triaged 24/7, vendors dispatched with approval'],
       ['Accounting', '/platform/accounting', 'Real double-entry books, bank rec, financial statements'],
+      ['Purchasing & payables', '/platform/purchasing', 'Catalog POs, agreed vendor pricing, matching, 1099s'],
       ['Leases & e-sign', '/platform/leases-esign', 'Templates, packets, renewals, and signatures'],
       ['Applications & screening', '/platform/applications-screening', 'Applicant portal, criteria, and decisioning'],
       ['Property sites & listings', '/platform/property-sites', 'A leasing website per property with live pricing'],

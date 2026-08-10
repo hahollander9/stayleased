@@ -1988,3 +1988,84 @@ CREATE TABLE IF NOT EXISTS platform_leads (
   source TEXT NOT NULL DEFAULT 'homepage',
   created_at TEXT NOT NULL
 );
+
+-- ---------- Phase 19: accountant feedback — reserves, owners, statement packets, vendor price agreements ----------
+
+CREATE TABLE IF NOT EXISTS reserve_plans (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  property_id TEXT NOT NULL REFERENCES properties(id),
+  monthly_cents INTEGER NOT NULL,
+  target_cents INTEGER, -- NULL = no cap
+  start_period TEXT NOT NULL, -- YYYY-MM of first funding month
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_reserve_plan_prop ON reserve_plans(org_id, property_id);
+
+CREATE TABLE IF NOT EXISTS reserve_draws (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  property_id TEXT NOT NULL REFERENCES properties(id),
+  amount_cents INTEGER NOT NULL,
+  purpose TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'pending_approval', -- pending_approval|approved|denied
+  requested_by TEXT,
+  decided_by TEXT,
+  decided_at TEXT,
+  je_accrual_id TEXT,
+  je_cash_id TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reserve_draws ON reserve_draws(org_id, property_id, status);
+
+CREATE TABLE IF NOT EXISTS owners (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  kind TEXT NOT NULL DEFAULT 'individual', -- individual|entity
+  email TEXT,
+  phone TEXT,
+  notes TEXT,
+  active INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_owners_org ON owners(org_id, active);
+
+CREATE TABLE IF NOT EXISTS property_owners (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL REFERENCES owners(id),
+  property_id TEXT NOT NULL REFERENCES properties(id),
+  pct REAL NOT NULL, -- ownership percentage, 0 < pct <= 100
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_prop_owner ON property_owners(owner_id, property_id);
+CREATE INDEX IF NOT EXISTS idx_prop_owner_prop ON property_owners(org_id, property_id);
+
+CREATE TABLE IF NOT EXISTS statement_packets (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  property_id TEXT, -- NULL = consolidated (all properties)
+  basis TEXT NOT NULL DEFAULT 'accrual',
+  shared INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_packets_org ON statement_packets(org_id);
+
+CREATE TABLE IF NOT EXISTS vendor_price_agreements (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  vendor_id TEXT NOT NULL REFERENCES vendors(id),
+  catalog_item_id TEXT NOT NULL REFERENCES catalog_items(id),
+  price_cents INTEGER NOT NULL,
+  effective_date TEXT NOT NULL,
+  expires_date TEXT, -- NULL = open-ended
+  active INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_vpa ON vendor_price_agreements(org_id, vendor_id, catalog_item_id);

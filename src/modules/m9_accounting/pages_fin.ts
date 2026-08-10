@@ -11,6 +11,7 @@ import { ensureBankAccounts, importAllFeeds, createRecon, autoMatch, postAdjustm
 import { closeChecklist, closePeriod, reopenPeriod, periodGrid, submitManualJe, decidePendingJe, createRecurringJe } from './close.ts';
 import { balanceSheet, incomeStatement, t12, cashFlow, toCsv, type Basis } from './statements.ts';
 import { createBudget, setBudgetLine, approveBudget, budgetVsActual, seedFromActuals, spread, type SpreadCurve } from './budgets.ts';
+import { createPacket, deletePacket, getPacket, listPackets, packetData, packetScopeName, packetCsv, packetPdf } from './packets.ts';
 import { projectCommitments } from '../m16_procurement/service.ts';
 
 /** M9 complete — banking & reconciliation, period close, budgets, financial
@@ -612,7 +613,23 @@ export function routes(r: Router): void {
           ${field(kind === 'bs' ? 'As of' : 'Period end', input('asof', { type: 'date', value: asOf }))}
           ${when(kind === 'is' || kind === 'cf', () => field('Period start', input('from', { type: 'date', value: from })))}
         </form>
-        ${body}`,
+        ${body}
+        ${card('Saved statement packets', html`
+          ${tbl(
+            [{ label: 'Packet' }, { label: 'Scope' }, { label: 'Basis' }, { label: 'Visibility' }],
+            listPackets(ctx).map((pk) => ({
+              href: `/statements/packets/${pk.id}`,
+              cells: [pk.name, pk.property_id ? (pk.property_name || 'Property') : 'Consolidated — all properties', pk.basis, pk.shared ? 'shared' : 'private'],
+            })),
+            { empty: 'No packets yet — save the current settings once and the monthly stakeholder pull becomes one click.' },
+          )}
+          <form method="post" action="/statements/packets/new" class="toolbar">
+            <input type="hidden" name="property" value="${propId}">
+            <input type="hidden" name="basis" value="${basis}">
+            ${field('Save current scope + basis as a packet', input('name', { placeholder: 'e.g. Monthly board packet' }))}
+            <label class="small"><input type="checkbox" name="shared" value="1" checked> Shared with the team</label>
+            <button class="btn">Save packet</button>
+          </form>`)}`,
     });
   });
 
@@ -652,6 +669,95 @@ export function routes(r: Router): void {
       status: 200,
       headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="${kind}-${asOf}.csv"` },
       body: toCsv(rows),
+    };
+  });
+
+  // ============================== STATEMENT PACKETS (M9.11) ==============================
+  r.post('/statements/packets/new', requirePerm('gl:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const pid = createPacket(ctx, {
+      name: String(rq.body.name || ''),
+      propertyId: String(rq.body.property || '') || null,
+      basis: (String(rq.body.basis) === 'cash' ? 'cash' : 'accrual') as Basis,
+      shared: rq.body.shared === '1',
+    });
+    return redirect(`/statements/packets/${pid}`, 'Packet saved — this pull is now one click.');
+  });
+
+  r.post('/statements/packets/:id/delete', requirePerm('gl:view'), (rq) => {
+    deletePacket(rq.ctx as Ctx, rq.params.id!);
+    return redirect('/statements', 'Packet deleted.');
+  });
+
+  r.get('/statements/packets/:id', requirePerm('gl:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const packet = getPacket(ctx, rq.params.id!);
+    if (!packet) return notFound('Packet not found');
+    const to = rq.query.get('to') || ctx.businessDate;
+    const d = packetData(ctx, packet, to);
+    const lineTbl = (title: string, lines: { code: string; name: string; amount: number }[], totalLabel: string, total: number): Child => card(title, tbl(
+      [{ label: 'Account' }, { label: 'Amount', num: true }],
+      lines.map((l) => ({ cells: [html`<span class="mono">${l.code}</span> ${l.name}`, usd(l.amount)] })),
+      { foot: [html`<b>${totalLabel}</b>`, html`<b>${usd(total)}</b>`] },
+    ), { flush: true });
+    const isOwner = !packet.created_by || packet.created_by === ctx.userId || can(ctx, 'admin:settings');
+    return shell(rq, {
+      title: packet.name,
+      active: '/statements',
+      subtitle: html`${packetScopeName(packet)} · ${d.basis} basis · trailing 12 months to ${fmtDate(to)}`,
+      actions: html`
+        <a class="btn btn-ghost" href="/statements/packets/${packet.id}/export.csv?to=${to}">Download CSV</a>
+        <a class="btn btn-ghost" href="/statements/packets/${packet.id}/export.pdf?to=${to}">Download PDF</a>
+        ${when(isOwner, () => html`<form method="post" action="/statements/packets/${packet.id}/delete" style="display:inline"><button class="btn btn-ghost">Delete</button></form>`)}`,
+      content: html`
+        ${kpis([
+          { label: 'Income (T12)', value: usd(d.is.totalIncome) },
+          { label: 'NOI (T12)', value: usd(d.is.noi), tone: d.is.noi >= 0 ? 'ok' : 'bad' },
+          { label: 'Total assets', value: usd(d.bs.totals.assets) },
+          { label: 'Closing cash', value: usd(d.cf.closing) },
+        ])}
+        <form method="get" class="toolbar" data-autosubmit>
+          ${field('Trailing 12 months to', input('to', { type: 'date', value: to }))}
+        </form>
+        <div class="cols">
+          ${lineTbl('Income — trailing 12 months', d.is.income, 'Total income', d.is.totalIncome)}
+          ${lineTbl('Expenses — trailing 12 months', d.is.expenses, 'Total expenses', d.is.totalExpenses)}
+        </div>
+        <div class="cols">
+          ${lineTbl('Assets', d.bs.assets, 'Total assets', d.bs.totals.assets)}
+          <div>
+            ${lineTbl('Liabilities', d.bs.liabilities, 'Total liabilities', d.bs.totals.liabilities)}
+            ${lineTbl('Equity', d.bs.equity, 'Total equity', d.bs.totals.equity)}
+          </div>
+        </div>
+        ${lineTbl('Cash flow — operating', d.cf.operating, 'Net operating cash', d.cf.operating.reduce((s, l) => s + l.amount, 0))}
+        ${when(d.cf.investing.length, () => lineTbl('Cash flow — investing', d.cf.investing, 'Net investing cash', d.cf.investing.reduce((s, l) => s + l.amount, 0)))}
+        ${when(d.cf.financing.length, () => lineTbl('Cash flow — financing', d.cf.financing, 'Net financing cash', d.cf.financing.reduce((s, l) => s + l.amount, 0)))}
+        <p class="small muted">One saved pull — income statement, balance sheet, and cash flow, same scope and basis every month. The CSV export includes the month-by-month T-12 grid.</p>`,
+    });
+  });
+
+  r.get('/statements/packets/:id/export.csv', requirePerm('gl:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const packet = getPacket(ctx, rq.params.id!);
+    if (!packet) return notFound('Packet not found');
+    const to = rq.query.get('to') || ctx.businessDate;
+    return {
+      status: 200,
+      headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="packet-${to}.csv"` },
+      body: packetCsv(ctx, packet, to),
+    };
+  });
+
+  r.get('/statements/packets/:id/export.pdf', requirePerm('gl:view'), async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const packet = getPacket(ctx, rq.params.id!);
+    if (!packet) return notFound('Packet not found');
+    const to = rq.query.get('to') || ctx.businessDate;
+    return {
+      status: 200,
+      headers: { 'content-type': 'application/pdf', 'content-disposition': `inline; filename="packet-${to}.pdf"` },
+      body: await packetPdf(ctx, packet, to),
     };
   });
 

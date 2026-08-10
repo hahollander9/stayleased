@@ -2,6 +2,7 @@ import { q, q1, val, j } from '../../lib/db.ts';
 import { addMonths, monthKey, fmtMonth } from '../../lib/dates.ts';
 import { registerReport, propScope, type ReportResult, type ReportCol } from './engine.ts';
 import { balanceSheet, incomeStatement, t12, cashFlow } from '../m9_accounting/statements.ts';
+import { ownerStatement } from '../m9_accounting/owners.ts';
 import { closeChecklist } from '../m9_accounting/close.ts';
 import { budgetVsActual } from '../m9_accounting/budgets.ts';
 import { ten99Summary, projectCommitments } from '../m16_procurement/service.ts';
@@ -497,6 +498,101 @@ registerReport({
       ],
       rows,
       note: `Close checklist for ${fmtMonth(p.month!)} — a period closes only when every item clears.`,
+    };
+  },
+});
+
+// ---------- accountant-feedback additions: reserves + owner statements ----------
+
+registerReport({
+  key: 'reserve_activity',
+  name: 'Replacement Reserve Activity',
+  category: 'Accounting',
+  describe: 'Reserve funding, draws, and balances per property over a period.',
+  params: [
+    { ...PROP, allowAll: true },
+    { key: 'from', kind: 'from', default: (ctx) => `${monthKey(addMonths(ctx.businessDate, -11))}-01` },
+    { key: 'to', kind: 'to' },
+  ],
+  perm: 'reserves:view',
+  run(ctx, p): ReportResult {
+    const props = q<any>(`SELECT id, name FROM properties WHERE org_id=? ORDER BY name`, ctx.orgId);
+    const sum = (propId: string, extra: string, ...params: unknown[]): number =>
+      Number(val<number>(
+        `SELECT COALESCE(SUM(jl.debit_cents - jl.credit_cents),0)
+         FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
+         WHERE jl.org_id=? AND je.basis='accrual' AND jl.account_code='1030' AND je.property_id=? ${extra}`,
+        ctx.orgId, propId, ...params,
+      ) || 0);
+    const rows = props.map((prop) => {
+      const opening = sum(prop.id, 'AND je.date < ?', p.from);
+      const funding = sum(prop.id, `AND je.source_kind='reserve_funding' AND je.date >= ? AND je.date <= ?`, p.from, p.to);
+      const draws = -sum(prop.id, `AND je.source_kind='reserve_draw' AND je.date >= ? AND je.date <= ?`, p.from, p.to);
+      const closing = sum(prop.id, 'AND je.date <= ?', p.to);
+      const plan = q1<any>(`SELECT monthly_cents, active FROM reserve_plans WHERE org_id=? AND property_id=?`, ctx.orgId, prop.id);
+      return {
+        property: prop.name,
+        monthly: plan?.active ? plan.monthly_cents : 0,
+        opening, funding, draws, closing,
+        __href: '/reserves',
+      };
+    });
+    return {
+      cols: [
+        { key: 'property', label: 'Property' },
+        { key: 'monthly', label: 'Monthly plan', kind: 'money' },
+        { key: 'opening', label: 'Opening', kind: 'money', total: true },
+        { key: 'funding', label: 'Funding', kind: 'money', total: true },
+        { key: 'draws', label: 'Draws', kind: 'money', total: true },
+        { key: 'closing', label: 'Closing', kind: 'money', total: true },
+      ],
+      rows: p.property === 'all' ? rows : rows.filter((r) => {
+        const prop = props.find((x) => x.id === p.property);
+        return prop ? r.property === prop.name : true;
+      }),
+      note: `Designated reserve cash (GL 1030), ${p.from} to ${p.to}. Funding transfers post monthly by plan; draws release funds to operating after approval.`,
+    };
+  },
+});
+
+registerReport({
+  key: 'owner_equity_income',
+  name: 'Owner Equity Income',
+  category: 'Accounting',
+  describe: "Each owner's share of trailing-12 operating results across their holdings.",
+  params: [{ key: 'to', kind: 'to' }, BASIS],
+  perm: 'owners:view',
+  run(ctx, p): ReportResult {
+    const rows: ReportResult['rows'] = [];
+    for (const o of q<any>(`SELECT id FROM owners WHERE org_id=? AND active=1 ORDER BY name`, ctx.orgId)) {
+      const st = ownerStatement(ctx, o.id as string, { to: p.to!, basis: p.basis as any });
+      for (const r of st.rows) {
+        rows.push({
+          owner: st.owner.name,
+          property: r.propertyName,
+          share: `${r.pct}%`,
+          income: r.income,
+          expenses: r.expenses,
+          equity_income: r.equityIncome,
+          capital: r.capitalShare,
+          reserves: r.reserveShare,
+          __href: `/owners/${o.id}`,
+        });
+      }
+    }
+    return {
+      cols: [
+        { key: 'owner', label: 'Owner' },
+        { key: 'property', label: 'Property' },
+        { key: 'share', label: 'Share' },
+        { key: 'income', label: 'Income', kind: 'money', total: true },
+        { key: 'expenses', label: 'Expenses', kind: 'money', total: true },
+        { key: 'equity_income', label: 'Equity income', kind: 'money', total: true },
+        { key: 'capital', label: 'Capital activity', kind: 'money', total: true },
+        { key: 'reserves', label: 'Reserves (share)', kind: 'money', total: true },
+      ],
+      rows,
+      note: `Trailing 12 months to ${p.to}, ${p.basis} basis. Equity income is the owner's percentage share of each property's operating result.`,
     };
   },
 });
