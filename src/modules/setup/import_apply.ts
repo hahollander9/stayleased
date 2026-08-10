@@ -6,6 +6,7 @@ import { emit } from '../../lib/events.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { canAccessProperty } from '../../lib/auth.ts';
 import { createCharge } from '../m8_receivables/service.ts';
+import { ensurePortalAccess } from '../people/portal.ts';
 import { postBothBases } from '../m9_accounting/service.ts';
 import { ensureBankAccounts } from '../m9_accounting/banking.ts';
 import {
@@ -249,6 +250,8 @@ export interface ApplySummary {
   vendors: number;
   balancesCents: number;
   depositsCents: number;
+  /** portal logins created + invite emails sent to imported primary residents */
+  portalInvites?: number;
   skipped: number;
 }
 
@@ -359,6 +362,10 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
             role: ti === 0 ? 'primary' : 'co', created_at: nowIso(),
           });
           summary.residents++;
+          // imported residents are residents: portal login + invite, day one
+          if (ti === 0 && plan.email && ensurePortalAccess(ctx, rid).invited) {
+            summary.portalInvites = (summary.portalInvites || 0) + 1;
+          }
         });
         summary.leases++;
 
@@ -500,6 +507,9 @@ export function applyResidents(ctx: Ctx, batch: BatchRow): ApplySummary {
         id: id('hm'), org_id: ctx.orgId, lease_id: lease.id, resident_id: rid, role, created_at: nowIso(),
       });
       summary.residents++;
+      if (row.rec.email && role !== 'occupant' && ensurePortalAccess(ctx, rid).invited) {
+        summary.portalInvites = (summary.portalInvites || 0) + 1;
+      }
     }
     run('UPDATE import_batches SET status=?, applied_at=?, summary=? WHERE id=?', 'applied', nowIso(), js(summary), batch.id);
     audit(ctx, 'import_batch', batch.id, 'apply', null, summary as unknown as Record<string, unknown>);

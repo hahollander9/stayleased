@@ -418,7 +418,10 @@ export function routes(r: Router): void {
   });
 
   // ---------- message console ----------
-  r.get('/dev/messages', devOnly, requirePerm('dev:console'), (rq) => {
+  // The outbox is a RECORD, not a simulator: live orgs need to read what the
+  // platform generated for their residents (portal invites carry the one-time
+  // passwords) until the live email/SMS rails ship. Only /dev/sim stays demo-only.
+  r.get('/dev/messages', requirePerm('dev:console'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const channel = rq.query.get('channel') || '';
     const template = rq.query.get('template') || '';
@@ -434,7 +437,9 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Message console',
       active: '/dev/messages',
-      subtitle: `Outbox simulator — nothing actually sends. ${total} message${total === 1 ? '' : 's'} captured.`,
+      subtitle: ctx.orgKind === 'live'
+        ? `Your outbox record — live email/SMS rails are not on yet, so nothing sends externally; every message the platform generates (portal invites with one-time passwords included) is captured here. ${total} message${total === 1 ? '' : 's'}.`
+        : `Outbox simulator — nothing actually sends. ${total} message${total === 1 ? '' : 's'} captured.`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Channel', select('channel', [['email', 'Email'], ['sms', 'SMS']], channel, { blank: 'All channels' }))}
@@ -458,7 +463,7 @@ export function routes(r: Router): void {
     });
   });
 
-  r.get('/dev/messages/:id', devOnly, requirePerm('dev:console'), (rq) => {
+  r.get('/dev/messages/:id', requirePerm('dev:console'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound('Message not found');

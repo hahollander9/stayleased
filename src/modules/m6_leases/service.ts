@@ -5,6 +5,7 @@ import { nowIso, addDays, addMonths, fmtDate, monthKey, diffDays } from '../../l
 import { usd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { sysCtx, hashPassword , tempPassword } from '../../lib/auth.ts';
+import { sendPortalInvite } from '../people/portal.ts';
 import { emit, on } from '../../lib/events.ts';
 import { getSetting } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
@@ -405,14 +406,18 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
       for (const a of applicants) {
         if (a.kind === 'occupant' && !a.first_name) continue;
         let userId: string | null = null;
+        let issuedOneTime: string | null = null;
         if (['primary', 'co'].includes(a.kind) && a.email) {
           const existing = q1<any>('SELECT id FROM users WHERE email=?', a.email);
           userId = existing?.id || null;
           if (!userId) {
             userId = id('usr');
+            // the credential must reach the resident — generate, hash, and
+            // send it in the portal invite below (it was previously discarded)
+            issuedOneTime = ctx.orgKind === 'live' ? tempPassword() : 'demo1234';
             insert('users', {
               id: userId, org_id: ctx.orgId, email: a.email, name: `${a.first_name} ${a.last_name}`.trim() || a.email,
-              kind: 'resident', password_hash: hashPassword(ctx.orgKind === 'live' ? tempPassword() : 'demo1234'), active: 1, created_at: nowIso(),
+              kind: 'resident', password_hash: hashPassword(issuedOneTime), active: 1, created_at: nowIso(),
             });
           }
         }
@@ -427,6 +432,13 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
           id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid,
           role: a.kind === 'primary' ? 'primary' : a.kind === 'co' ? 'co' : a.kind, created_at: nowIso(),
         });
+        if (issuedOneTime && a.email) {
+          sendPortalInvite(ctx, {
+            residentId: rid, email: a.email, firstName: a.first_name || 'there',
+            name: `${a.first_name} ${a.last_name}`.trim() || a.email,
+            propertyId: lease.property_id, oneTime: issuedOneTime,
+          });
+        }
       }
     } else if (lease.renewal_of_lease_id) {
       // carry the household forward

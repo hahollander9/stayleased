@@ -1,7 +1,9 @@
 import { html, raw, when } from '../../lib/html.ts';
 import { redirect, notFound, type Router, type Rq } from '../../lib/http.ts';
-import { requirePerm, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
-import { q, q1, val, j } from '../../lib/db.ts';
+import { requirePerm, propFilter, canAccessProperty, can, hashPassword, tempPassword, type Ctx } from '../../lib/auth.ts';
+import { q, q1, val, run, j } from '../../lib/db.ts';
+import { audit } from '../../lib/audit.ts';
+import { ensurePortalAccess } from './portal.ts';
 import { fmtDate, diffDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import {
@@ -95,13 +97,20 @@ export function routes(r: Router): void {
       subtitle: html`${statusBadge(undefined, res.kind)} ${res.email || ''}`,
       content: html`
         <div class="grid cols-2">
-          ${card('Contact & profile', dl([
+          ${card('Contact & profile', html`${dl([
             ['Email', res.email || '—'],
             ['Phone', res.phone || '—'],
             ['Employer', res.employer || '—'],
             ['Monthly income', res.monthly_income_cents ? usd(res.monthly_income_cents) : '—'],
             ['Portal account', res.user_id ? statusBadge('active', 'enabled') : statusBadge(undefined, 'none')],
-          ]))}
+          ])}
+          ${when(can(ctx, 'residents:manage'), () => html`<div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;align-items:center">
+            ${res.user_id
+              ? html`<form method="post" action="/residents/${res.id}/portal-reset" data-confirm="Generate a new one-time portal password for this resident?"><button class="btn btn-ghost btn-sm">Reset portal password</button></form>`
+              : res.email
+                ? html`<form method="post" action="/residents/${res.id}/portal-invite"><button class="btn btn-sm">Create portal access & send invite</button></form>`
+                : html`<span class="muted small">Add an email to enable portal access.</span>`}
+          </div>`)}`)}
           ${card('Household extras', html`
             ${dl([
               ['Pets', pets.length ? pets.map((x) => `${x.name} (${x.species}${x.breed ? ` · ${x.breed}` : ''})`).join(', ') : 'None'],
@@ -128,6 +137,36 @@ export function routes(r: Router): void {
   });
 
   // ---------- leases ----------
+  // portal access from the resident record — create+invite, or rotate the
+  // credential and show it once (the m1 staff-reset pattern, for residents)
+  r.post('/residents/:id/portal-invite', requirePerm('residents:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const res = q1<any>('SELECT * FROM residents WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!res || !canAccessProperty(ctx, res.property_id)) return notFound('Resident not found');
+    const out = ensurePortalAccess(ctx, res.id);
+    if (!out.userId) return redirect(`/residents/${res.id}`, 'This resident has no email on file — add one first.', 'err');
+    return redirect(
+      `/residents/${res.id}`,
+      out.invited
+        ? 'Portal access created — the invite (with the one-time password) is in your Message Console.'
+        : 'That email already had a portal account — linked it to this resident.',
+    );
+  });
+
+  r.post('/residents/:id/portal-reset', requirePerm('residents:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const res = q1<any>('SELECT * FROM residents WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!res || !canAccessProperty(ctx, res.property_id)) return notFound('Resident not found');
+    if (!res.user_id) return redirect(`/residents/${res.id}`, 'No portal account yet — create one first.', 'err');
+    const pw = ctx.orgKind === 'live' ? tempPassword() : 'demo1234';
+    run('UPDATE users SET password_hash=? WHERE id=?', hashPassword(pw), res.user_id);
+    audit(ctx, 'user', String(res.user_id), 'password_reset', null, { via: 'resident_page' });
+    return redirect(
+      `/residents/${res.id}`,
+      ctx.orgKind === 'live' ? `Portal password reset. One-time password (shown only now): ${pw}` : 'Portal password reset to demo1234.',
+    );
+  });
+
   r.get('/leases', requirePerm('leases:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const pf = propFilter(ctx, 'l.property_id');

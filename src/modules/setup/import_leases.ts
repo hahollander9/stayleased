@@ -14,6 +14,7 @@ import { postBothBases } from '../m9_accounting/service.ts';
 import { shell, card, field, input, select, statusBadge } from '../../ui/ui.ts';
 import { moneyToCents, toIsoDate, splitName } from './mapping.ts';
 import { ensureOpeningEquityAccount, type BatchRow } from './import_apply.ts';
+import { ensurePortalAccess } from '../people/portal.ts';
 
 /** Lease-PDF onboarding: drop in the signed leases; the system reads them.
  * Digital PDFs are text-extracted locally; with the live AI configured the
@@ -215,7 +216,7 @@ export function leasePdfRoutes(r: Router): void {
       }
     });
 
-    let leases = 0, residents = 0, units = 0, skipped = 0, depositsCents = 0;
+    let leases = 0, residents = 0, units = 0, skipped = 0, depositsCents = 0, portalInvites = 0;
     const problems: string[] = [];
     tx(() => {
       ensureOpeningEquityAccount(ctx.orgId);
@@ -286,6 +287,8 @@ export function leasePdfRoutes(r: Router): void {
           });
           insert('household_members', { id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid, role: ti === 0 ? 'primary' : 'co', created_at: nowIso() });
           residents++;
+          // primary tenant from the lease PDF gets portal access + invite
+          if (ti === 0 && d.fields.email && ensurePortalAccess(ctx, rid).invited) portalInvites++;
         });
         if (depositCents > 0) depositTotal += depositCents;
         leases++;
@@ -306,9 +309,9 @@ export function leasePdfRoutes(r: Router): void {
       run('UPDATE import_batches SET status=?, applied_at=?, summary=?, staged=? WHERE id=?', 'applied', nowIso(), js({ leases, residents, units, skipped }), js(drafts), batch.id);
       audit(ctx, 'import_batch', batch.id, 'apply', null, { leases, residents, units, skipped });
     });
-    emit(ctx, 'import.applied', 'import_batch', batch.id, { kind: 'lease_pdf', leases, residents, units, skipped });
+    emit(ctx, 'import.applied', 'import_batch', batch.id, { kind: 'lease_pdf', leases, residents, units, skipped, portalInvites });
     const problemNote = problems.length ? ` ${problems.join(' ')}` : '';
-    return redirect(`/properties/${pid}`, `Imported ${leases} lease${leases === 1 ? '' : 's'} (${residents} resident${residents === 1 ? '' : 's'}${units ? `, ${units} new unit${units === 1 ? '' : 's'}` : ''}${depositsCents ? `, $${(depositsCents / 100).toLocaleString('en-US')} deposits held` : ''}).${problemNote}`);
+    return redirect(`/properties/${pid}`, `Imported ${leases} lease${leases === 1 ? '' : 's'} (${residents} resident${residents === 1 ? '' : 's'}${units ? `, ${units} new unit${units === 1 ? '' : 's'}` : ''}${depositsCents ? `, $${(depositsCents / 100).toLocaleString('en-US')} deposits held` : ''}${portalInvites ? `, ${portalInvites} portal invite${portalInvites === 1 ? '' : 's'} sent` : ''}).${problemNote}`);
   });
 }
 

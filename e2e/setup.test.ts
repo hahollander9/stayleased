@@ -23,12 +23,13 @@ test('top module bar renders the module tabs', async () => {
   const page = await newPage(browser);
   await login(page, base, 'admin@summitridge.demo');
   const bar = await page.locator('.modulebar').first().textContent();
-  // Small-operator chrome: seven tabs. Marketing is not a top-level tab —
-  // its pages (CMS/Syndication) live inside the Leasing dropdown.
+  // Small-operator chrome: the top-level TABS (the .mtab-btn labels, not the
+  // dropdown contents — group headers like "Marketing" may appear inside menus).
+  const tabs = (await page.locator('.modulebar .mtab-btn').allTextContents()).map((t) => t.trim());
   for (const tab of ['Dashboard', 'Leasing', 'Residents', 'Financials', 'Property', 'Operations', 'Messages', 'Reports']) {
-    assert.match(bar || '', new RegExp(tab), `module bar should contain ${tab}`);
+    assert.ok(tabs.some((t) => t.includes(tab)), `module bar should contain ${tab} (got: ${tabs.join(', ')})`);
   }
-  assert.doesNotMatch(bar || '', /Marketing/, 'Marketing must not be a top-level tab (merged into Leasing)');
+  assert.ok(!tabs.some((t) => t.includes('Marketing')), 'Marketing must not be a top-level tab (merged into Leasing)');
   assert.match(bar || '', /Websites \(CMS\)/, 'Leasing dropdown should carry the CMS page');
   const brand = await page.locator('.brand').first().textContent();
   assert.match(brand || '', /StayLeased/);

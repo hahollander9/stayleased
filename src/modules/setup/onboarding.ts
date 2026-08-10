@@ -49,7 +49,7 @@ export function onboardingSteps(ctx: Ctx): Step[] {
     },
     {
       key: 'residents', title: 'Bring in residents & leases', done: leases > 0 && residents > 0,
-      desc: 'From the same rent roll upload, or drop in your signed lease PDFs and let AI extract tenants, rents, dates and deposits for your review.',
+      desc: 'From the same rent roll upload, or drop in your signed lease PDFs and let AI extract tenants, rents, dates and deposits for your review. Primary residents with an email get portal logins and invites automatically (copies land in your Message Console).',
       links: [['/setup/import?tab=rentroll', 'Upload rent roll'], ['/setup/import?tab=leases', 'Upload lease PDFs']],
     },
     {
