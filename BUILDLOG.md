@@ -205,3 +205,13 @@
 **Verified:** tsc clean · unit 183/183 (2 new; accounting flake reran green per runbook) · e2e map 3/3 (incl. new regression) · navmenus 5/5 · smoke+hubs+finfeatures 12/12 · grouped menus eyeballed via screenshot at 1440px (labels, hairlines, contrast).
 
 **Next:** demo-org scheduled reset job (the real sales-call reliability fix — needs seed refactor for org-scoped rebuild); consider surfacing "viewing one property — back to all properties" affordance after /map/open sets scope.
+
+## 2026-08-10 — AI reasoning everywhere: rationale on every action, causal answers in Ask, stage-move reasons
+
+**Built:** (1) **`rationale` on every AI action** (schema + migration + framework): each propose() site now records the plain-language why — leasing replies (intent read + grounding units + tour logic), maintenance triage (keyword → category/priority rule that fired), payments outreach (dunning-ladder tone grading + plan-bounds reasoning), plan proposals (bounds math), renewal outreach (matrix + personalization), counter evaluation (band floor arithmetic), call analysis (signals → flags), and every Ask answer. The /ai review queue renders it as a bordered **Why:** line on each pending card; history rows carry a Why subline + full text on hover. (2) **Ask StayLeased reasoning lane**: analytical phrasing ("why…", "what's driving…", "should we…") no longer gets a snapshot dodge — deterministic explainers reconstruct the 30-day occupancy story (move-ins/outs vs notice pipeline, with the lever to pull) and the month-over-month collections story from point-in-time metrics and lease dates; the live model only rephrases (fallback = the analysis itself), numbers never invented; the receipts table stays attached (`matched: occupancy+why`). (3) **Stage moves carry reasons**: implicit lead transitions (new→contacted on first outreach, →touring on tour booking) now go through setLeadStatus with a reason, so the timeline reads "Status → touring (tour booked for Aug 11 10:00)" instead of silently flipping.
+
+**Investigated first (live, in Henry's Chrome):** Ask verified WORKING on stayleased.com in both lanes — structured ("why is occupancy down" → occupancy handler table) and freeform ("what should i focus on today" → live-model answer grounded in FACTS, POST /ask.json 200). The reported "doesn't work" is answered by the reasoning lane (why-questions got table dodges) + the demo-world flapping documented 2026-08-10 (deploy-window transitional data).
+
+**Verified:** tsc clean · unit 187/187 (4 new in `tests/ai_reasoning.test.ts`) · e2e ai+askdock+crm+smoke 21/21.
+
+**Next:** rationale on the dashboard AI-at-work feed rows (currently links into the queue, which shows Why); demo-org scheduled reset (still the open sales-reliability fix).

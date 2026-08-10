@@ -86,6 +86,7 @@ export function analyzeCall(ctx: Ctx, callId: string): CallAnalysis | null {
     entityId: callId,
     title: `Call analyzed: ${a.sentiment}, ${a.tags.join('/') || 'general'}${a.missedOpportunity ? ' — MISSED OPPORTUNITY' : ''}`,
     input: { duration: call.duration_seconds, direction: call.direction },
+    rationale: `Transcript signals read as ${a.sentiment}${a.tags.length ? ` on ${a.tags.join('/')}` : ''}; ${a.actionItems.length} follow-up${a.actionItems.length === 1 ? '' : 's'} extracted${a.missedOpportunity ? '; flagged a missed opportunity because a pricing/availability question went unanswered on the call' : ''}.`,
     output: {
       kind: 'noop.analysis',
       summary: a.summary, sentiment: a.sentiment, tags: a.tags,

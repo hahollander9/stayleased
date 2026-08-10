@@ -1870,6 +1870,7 @@ CREATE TABLE IF NOT EXISTS ai_actions (
   autonomy TEXT NOT NULL, -- dial at decision time: draft|approve|auto
   status TEXT NOT NULL DEFAULT 'proposed', -- proposed|approved|rejected|executed|auto_executed
   guardrail_note TEXT,
+  rationale TEXT, -- why the agent chose this, in plain language — shown wherever the action appears
   decided_by TEXT,
   decided_at TEXT,
   executed_at TEXT,

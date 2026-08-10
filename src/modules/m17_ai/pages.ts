@@ -133,6 +133,7 @@ export function routes(r: Router): void {
               <div style="border:1px solid var(--line-2);border-radius:10px;padding:10px;background:var(--surface-2);max-height:220px;overflow:auto">${raw(String(output.draft))}</div>`)}
             ${when(output.tour, () => html`<p class="small">📅 Will also book: <b>${(output.tour as any).date} at ${(output.tour as any).startTime}</b></p>`)}
             ${when(output.installments, () => html`<p class="small">Plan: ${(output.installments as any[]).map((i) => `${fmtDate(i.dueDate)} — $${(i.amountCents / 100).toFixed(2)}`).join(' · ')}</p>`)}
+            ${when(a.rationale, () => html`<p class="small" style="border-left:2px solid var(--accent);padding-left:8px;margin:8px 0"><b>Why:</b> ${a.rationale}</p>`)}
             ${when(a.guardrail_note, () => html`<p class="small" style="color:var(--warn)">🛡 ${a.guardrail_note}</p>`)}
             <p class="small muted">Confidence ${Math.round(a.confidence * 100)}% · dial at proposal: ${a.autonomy} · saw: ${Object.keys(input).slice(0, 5).join(', ')}</p>
           </div>
@@ -156,7 +157,7 @@ export function routes(r: Router): void {
       history.map((a) => ({
         cells: [
           a.created_at.slice(5, 16).replace('T', ' '), agentBadge(a.agent),
-          html`<span title="${a.title}">${a.title.slice(0, 60)}</span>`,
+          html`<span title="${a.title}${a.rationale ? ` — Why: ${a.rationale}` : ''}">${a.title.slice(0, 60)}${when(a.rationale, () => html`<span class="small muted" style="display:block">Why: ${String(a.rationale).slice(0, 90)}${String(a.rationale).length > 90 ? '…' : ''}</span>`)}</span>`,
           a.prop || '—', flowStepper(a, true), statusBadge(a.status, a.status.replaceAll('_', ' ')),
           a.decided_by || (a.status === 'auto_executed' ? 'autonomous' : '—'),
           html`<span class="small muted">${(a.result || '—').slice(0, 50)}</span>`,

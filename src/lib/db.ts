@@ -53,6 +53,7 @@ export function db(): DatabaseSync {
     "ALTER TABLE leases ADD COLUMN billing_start_date TEXT", // migration conversion: recurring billing begins here (opening balance covers everything before)
     "ALTER TABLE properties ADD COLUMN lat REAL", // portfolio map location
     "ALTER TABLE properties ADD COLUMN lng REAL",
+    "ALTER TABLE ai_actions ADD COLUMN rationale TEXT", // accountant/ops feedback: the why behind every AI decision, everywhere it appears
   ];
   for (const m of MIGRATIONS) {
     try {

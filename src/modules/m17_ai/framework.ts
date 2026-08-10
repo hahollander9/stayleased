@@ -63,6 +63,11 @@ export interface Proposal {
   output: ActionOutput;
   confidence?: number; // 0..1
   guardrailNote?: string;
+  /** Plain-language why: what the agent saw and the rule or judgment that led
+   * to exactly this action. Rendered wherever the action appears — the
+   * approval queue, history, dashboards — so supervision never means
+   * reverse-engineering a decision. */
+  rationale?: string;
 }
 
 type Executor = (ctx: Ctx, action: any, output: ActionOutput) => string; // returns result note
@@ -102,6 +107,7 @@ export function propose(ctx: Ctx, p: Proposal): { id: string; status: string; au
     id: aid, org_id: ctx.orgId, property_id: p.propertyId || null, agent: p.agent,
     entity: p.entity || null, entity_id: p.entityId || null, title: p.title,
     input: js(p.input), output: js(p.output), confidence: p.confidence ?? 0.9,
+    rationale: p.rationale || null,
     autonomy, status: 'proposed', guardrail_note: killed ? `${p.guardrailNote ? p.guardrailNote + ' · ' : ''}AI paused (global kill switch) — held as draft` : (p.guardrailNote || null),
     decided_by: null, decided_at: null, executed_at: null, result: null, created_at: nowIso(),
   });

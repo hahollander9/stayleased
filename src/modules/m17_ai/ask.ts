@@ -1,6 +1,6 @@
 import { q, q1, val } from '../../lib/db.ts';
 import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
-import { addMonths, monthKey, fmtMonth, fmtDate } from '../../lib/dates.ts';
+import { addDays, addMonths, monthKey, fmtMonth, fmtDate } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { propFilter, can } from '../../lib/auth.ts';
@@ -203,6 +203,73 @@ const HANDLERS: Handler[] = [
   },
 ];
 
+// ---------- reasoning lane: WHY answers, not table dodges ----------
+//
+// "Why is occupancy down?" deserves an explanation, not a snapshot. These
+// explainers reconstruct the story deterministically from point-in-time
+// metrics and lease dates — real causes with real numbers — and the live
+// model (when present) only rephrases them; it never invents figures.
+
+const ANALYTICAL = /\bwhy\b|\bexplain\b|what.?s (driving|behind|going on with)|\breason\b|how come|should (we|i)\b|what happened (to|with)/i;
+
+const pctOf = (n: number, d: number): number => (d ? Math.round((n / d) * 1000) / 10 : 0);
+
+/** 30-day occupancy story: direction, move-ins/outs, notice pipeline, and the lever. */
+export function explainOccupancy(ctx: Ctx, prop: { id: string; name: string } | null): string {
+  const pf = propFilter(ctx, 'id');
+  const props = prop ? [prop] : q<any>(`SELECT id, name FROM properties WHERE org_id=?${pf.sql}`, ctx.orgId, ...pf.params);
+  const today = ctx.businessDate;
+  const prior = addDays(today, -30);
+  let occT = 0; let rentT = 0; let occP = 0; let rentP = 0; let notice = 0;
+  for (const p of props) {
+    const a = computeDayMetrics(ctx, p.id, today);
+    const b = computeDayMetrics(ctx, p.id, prior);
+    occT += a.occupied; rentT += a.rentable; notice += a.notice;
+    occP += b.occupied; rentP += b.rentable;
+  }
+  const scopeSql = prop ? ' AND property_id=?' : propFilter(ctx, 'property_id').sql;
+  const scopeParams = prop ? [prop.id] : propFilter(ctx, 'property_id').params;
+  const moveOuts = val<number>(
+    `SELECT COUNT(*) FROM leases WHERE org_id=? AND status='ended' AND COALESCE(move_out_date, end_date) > ? AND COALESCE(move_out_date, end_date) <= ?${scopeSql}`,
+    ctx.orgId, prior, today, ...scopeParams,
+  ) || 0;
+  const moveIns = val<number>(
+    `SELECT COUNT(*) FROM leases WHERE org_id=? AND status IN ('active','month_to_month','notice') AND COALESCE(move_in_date, start_date) > ? AND COALESCE(move_in_date, start_date) <= ?${scopeSql}`,
+    ctx.orgId, prior, today, ...scopeParams,
+  ) || 0;
+  const pT = pctOf(occT, rentT);
+  const pP = pctOf(occP, rentP);
+  const scope = prop ? ` at ${prop.name}` : ' across the portfolio';
+  const dir = pT === pP ? 'held flat at' : pT < pP ? `slipped ${pP}% →` : `improved ${pP}% →`;
+  const lever = pT < pP
+    ? (moveOuts > moveIns
+      ? 'Move-outs outpaced move-ins, so the lever is the notice list: renewal outreach on expiring leases and pre-leasing the units already on notice.'
+      : 'Move-ins kept pace, so the dip traces to units taken offline — check down/model units on the unit board.')
+    : notice
+      ? `Holding it means pre-leasing the ${notice} unit${notice === 1 ? '' : 's'} currently on notice before they go vacant.`
+      : 'Nothing is on notice right now, so the trend has no immediate leak to plug.';
+  return `Occupancy ${dir} ${pT}% over the last 30 days${scope}: ${moveOuts} move-out${moveOuts === 1 ? '' : 's'} against ${moveIns} move-in${moveIns === 1 ? '' : 's'}, with ${notice} unit${notice === 1 ? '' : 's'} on notice. ${lever}`;
+}
+
+/** Month-over-month collections story with the on-time and NSF context. */
+export function explainCollections(ctx: Ctx, prop: { id: string; name: string } | null): string {
+  const mk = monthKey(ctx.businessDate);
+  const prev = monthKey(addMonths(ctx.businessDate, -1));
+  const cur = receivablesStats(ctx, mk, prop?.id || null);
+  const was = receivablesStats(ctx, prev, prop?.id || null);
+  const scope = prop ? ` at ${prop.name}` : '';
+  const dir = cur.collectionRate === was.collectionRate ? 'is holding at' : cur.collectionRate < was.collectionRate ? `is down ${was.collectionRate}% →` : `is up ${was.collectionRate}% →`;
+  const note = cur.collectionRate < was.collectionRate
+    ? 'The gap concentrates in the delinquency list — outreach and payment plans are the lever, and the month usually closes the distance as autopay lands.'
+    : 'On pace — autopay and mid-month catch-up payments usually finish the climb.';
+  return `The collection rate ${dir} ${cur.collectionRate}% for ${fmtMonth(mk)}${scope} (${usd(cur.collected)} collected of ${usd(cur.billed)} billed); ${cur.onTimePct}% of rent arrived on time and the NSF rate is ${cur.nsfRate}%. ${note}`;
+}
+
+const EXPLAINERS: Record<string, (ctx: Ctx, prop: { id: string; name: string } | null) => string> = {
+  occupancy: explainOccupancy,
+  collections: explainCollections,
+};
+
 export function askStayLeased(ctx: Ctx, question: string): AskAnswer {
   let answer: AskAnswer | null = null;
   for (const h of HANDLERS) {
@@ -229,6 +296,9 @@ export function askStayLeased(ctx: Ctx, question: string): AskAnswer {
     input: { question },
     output: { kind: 'noop.analysis', matched: answer.matched, summary: answer.summary },
     confidence: answer.matched === 'fallback' ? 0.5 : 0.95,
+    rationale: answer.matched === 'fallback'
+      ? 'No data handler matched the phrasing; suggested the closest reports instead of guessing.'
+      : `Matched the “${answer.matched}” data handler and answered from live records within the asker's permissions.`,
   });
   return answer;
 }
@@ -290,11 +360,31 @@ export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[
   for (const h of HANDLERS) {
     const hit = h(ctx, question);
     if (hit) {
+      // Analytical phrasing ("why…", "what's driving…") gets the story, not
+      // just the snapshot: a deterministic causal analysis leads the answer,
+      // the live model may rephrase it, and the table stays for receipts.
+      let final = hit;
+      let live = false;
+      const explain = ANALYTICAL.test(question) ? EXPLAINERS[hit.matched] : undefined;
+      if (explain) {
+        const why = explain(ctx, contextProperty(ctx, question));
+        const polished = await llmGenerate({
+          system: STAFF_SYSTEM,
+          prompt: `${orgFactsBlock(ctx)}\n\nDeterministic analysis (authoritative — keep every number exactly):\n${why}\n\nStaff asked: "${question}"\n\nRewrite the analysis as a warm 2–3 sentence answer.`,
+          fallback: why,
+          maxTokens: 220,
+        });
+        final = { ...hit, summary: (polished.text || why).trim().slice(0, 900), matched: `${hit.matched}+why` };
+        live = polished.live;
+      }
       propose(ctx, {
         agent: 'ask', title: `Q: ${question.slice(0, 70)}`,
-        input: { question }, output: { kind: 'noop.analysis', matched: hit.matched, summary: hit.summary }, confidence: 0.95,
+        input: { question }, output: { kind: 'noop.analysis', matched: final.matched, summary: final.summary }, confidence: 0.95,
+        rationale: explain
+          ? `Analytical question → the “${hit.matched}” explainer reconstructed the 30-day story from point-in-time metrics and lease dates; numbers are deterministic, phrasing ${live ? 'polished by the live model' : 'deterministic'}.`
+          : `Matched the “${hit.matched}” data handler and answered from live records within the asker's permissions.`,
       });
-      return { ...hit, live: false, conversational: false };
+      return { ...final, live, conversational: false };
     }
   }
 
@@ -311,6 +401,9 @@ export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[
   propose(ctx, {
     agent: 'ask', title: `Q: ${question.slice(0, 70)}`,
     input: { question }, output: { kind: 'noop.analysis', matched: res.live ? 'conversation' : 'smalltalk', summary }, confidence: 0.7,
+    rationale: res.live
+      ? 'No data handler matched → conversational answer from the live model, grounded only in the FACTS block (it may not invent figures).'
+      : 'No data handler matched and no live model is configured → deterministic conversational reply pointing at the structured questions.',
   });
   return {
     title: 'Ask StayLeased', summary, links: [], matched: res.live ? 'conversation' : 'smalltalk',

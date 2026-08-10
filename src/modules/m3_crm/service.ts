@@ -127,7 +127,8 @@ export function messageLead(ctx: Ctx, leadId: string, channel: 'email' | 'sms', 
   }
   leadEvent(ctx, leadId, channel === 'email' ? 'email_out' : 'sms_out', `${subject ? subject + ' — ' : ''}${body.slice(0, 120)}`);
   completeNextTask(ctx, leadId);
-  if (lead.status === 'new') update('leads', leadId, { status: 'contacted' });
+  // stage moves always carry their reason — visible on the lead timeline
+  if (lead.status === 'new') setLeadStatus(ctx, leadId, 'contacted', `first ${channel === 'email' ? 'email' : 'text'} sent`);
 }
 
 // ---------- tours (M3.3) ----------
@@ -167,7 +168,8 @@ export function bookTour(
     agent_user_id: opts.agentUserId || (ctx.kind === 'staff' ? ctx.userId : null), status: 'scheduled', created_at: nowIso(),
   });
   leadEvent(ctx, lead.id, 'tour_scheduled', `${(opts.type || 'in_person').replaceAll('_', ' ')} tour booked for ${fmtDate(opts.date)} ${opts.startTime}`);
-  if (lead.status === 'new' || lead.status === 'contacted') update('leads', lead.id, { status: 'touring' });
+  // stage moves always carry their reason — visible on the lead timeline
+  if (lead.status === 'new' || lead.status === 'contacted') setLeadStatus(ctx, lead.id, 'touring', `tour booked for ${fmtDate(opts.date)} ${opts.startTime}`);
   completeNextTask(ctx, lead.id);
   if (!opts.skipConfirmation && lead.email) {
     sendEmail(ctx, {

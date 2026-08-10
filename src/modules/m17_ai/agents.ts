@@ -101,6 +101,11 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
     intent.wantsHuman ? 'low confidence: prospect asked for a person — held for staff even on autonomous' : null,
     fh.ok ? null : `fair-housing guardrail rewrote ${fh.flags.length} phrase(s): ${[...new Set(fh.flags.map((f) => f.category))].join(', ')}`,
   ].filter(Boolean);
+  const askedFor = [
+    intent.asksAvailability ? 'availability' : null, intent.asksPrice ? 'pricing' : null,
+    intent.asksPets ? 'pet policy' : null, intent.wantsTour ? 'a tour' : null,
+  ].filter(Boolean).join(', ') || 'a general question';
+  const rationale = `Prospect asked about ${askedFor}; reply grounded in ${units.length ? `${units.length} vacant-ready unit${units.length === 1 ? '' : 's'} (${units.map((u) => u.unit_number).join(', ')}) with live 12-month quotes` : 'live availability (nothing move-in ready, first-look list offered)'}${tour ? `; tour slot held for ${fmtDate(tomorrow)} ${slots[0]} because openings existed` : ''}${oh ? '; handled after hours so the lead is not lost overnight' : ''}${intent.wantsHuman ? '; held for staff because the prospect asked for a person' : ''}.`;
   return propose(ctx, {
     agent: 'leasing',
     propertyId: lead.property_id,
@@ -108,6 +113,7 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
     entityId: leadId,
     title: `${oh ? 'After-hours reply' : 'Reply'} to ${lead.first_name} ${lead.last_name}${tour ? ' + book tour' : ''}${intent.wantsHuman ? ' — HUMAN REQUESTED' : ''}`,
     input: { message, intent, afterHours: oh, groundedUnits: units.map((u) => u.unit_number), fairHousingFlags: fh.flags },
+    rationale,
     output: {
       kind: 'leasing.send_reply',
       draft,
@@ -172,6 +178,7 @@ export function triageRequest(ctx: Ctx, woId: string): { id: string; status: str
     entityId: woId,
     title: `Triage: ${wo.summary.slice(0, 40)} → ${category}/${priority}${emergency ? ' 🚨' : ''}`,
     input: { summary: wo.summary, description: wo.description, currentCategory: wo.category, currentPriority: wo.priority },
+    rationale: `Keyed off “${text.trim().slice(0, 60)}” → category ${category}; priority ${priority} ${emergency ? `because emergency keywords matched (${keywords})` : priority === 'high' ? 'because the no-hot-water/leak/lockout rule matched' : 'because no urgency markers matched'}; ${tip ? 'known trivial-fix pattern, so a troubleshooting tip goes to the resident before a truck rolls' : question ? 'the description is too thin to dispatch, so a clarifying question goes out first' : 'dispatch-ready as written'}.`,
     output: {
       kind: 'maintenance.apply_triage',
       woId, category, priority, note,
@@ -258,6 +265,7 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
     entityId: leaseId,
     title: `${tone[0]!.toUpperCase()}${tone.slice(1)} outreach — ${lease.household_name} (${usd(bal)}, ${days}d)`,
     input: { balanceCents: bal, daysPastDue: days, tone },
+    rationale: `${usd(bal)} open at ${days} days past due → tone graded “${tone}” by the dunning ladder${planEligible ? '; an installment plan is offered because the balance clears the org plan bounds' : ''}; the dispute path is always embedded${banned ? '; the threat filter scrubbed a flagged phrase' : ''}.`,
     output: { kind: 'payments.send_outreach', draft: cleanDraft, subject: `About your ${lease.prop_name} account`, leaseId, residentId: contact?.id },
     confidence: 0.9,
     guardrailNote: `compliance: dispute path embedded; threat filter ${banned ? 'TRIGGERED and scrubbed' : 'clean'}; tone graded ${tone} at ${days} days`,
@@ -277,6 +285,7 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
       entityId: leaseId,
       title: `Plan proposal — ${lease.household_name}: ${n} × ~${usd(per)} biweekly`,
       input: { balanceCents: bal, bounds },
+      rationale: `Splits ${usd(bal)} into ${n} biweekly installments of ~${usd(per)} — the gentlest schedule that stays inside org bounds (≤${bounds.maxInstallments} installments, each ≥ ${usd(bounds.minInstallmentCents)}).`,
       output: { kind: 'payments.create_plan', leaseId, installments, totalCents: bal, draft: `${n} biweekly installments of ~${usd(per)} starting ${fmtDate(installments[0]!.dueDate)}` },
       confidence: 0.85,
       guardrailNote: `within org bounds: ≤${bounds.maxInstallments} installments, each ≥ ${usd(bounds.minInstallmentCents)}`,
@@ -345,6 +354,7 @@ export function draftRenewalOutreach(ctx: Ctx, leaseId: string): { id: string; s
     entityId: leaseId,
     title: `Renewal outreach — ${lease.household_name} (ends ${lease.end_date}, ${streak}mo on-time streak)`,
     input: { streak, rating, options },
+    rationale: `Lease ends ${fmtDate(lease.end_date)}; options priced from the renewal matrix; the message is personalized on the household's ${streak}-month on-time streak${rating ? ` and ${Math.round(rating * 10) / 10}★ maintenance feedback` : ''} because retention beats a turn.`,
     output: { kind: 'renewals.send_outreach', draft, subject: `Let's keep ${lease.unit_number} yours 🏡`, leaseId, residentId: contact?.id },
     confidence: 0.9,
   });
@@ -390,6 +400,9 @@ export function evaluateCounter(ctx: Ctx, leaseId: string, counterCents: number,
       ? `Counter ${usd(counterCents)} on ${lease.unit_number} — WITHIN band, accept?`
       : `Counter ${usd(counterCents)} on ${lease.unit_number} — below floor ${usd(floor)}, escalate`,
     input: { counterCents, offered, floor, termMonths, maxDiscountPct },
+    rationale: withinBounds
+      ? `Counter ${usd(counterCents)} sits inside the delegated band — the floor is ${usd(floor)} (offered ${usd(offered)} minus the ${maxDiscountPct}% max discount) — and accepting beats an est. ${turnCost} turn.`
+      : `Counter ${usd(counterCents)} is below the delegated floor of ${usd(floor)} (offered ${usd(offered)} minus ${maxDiscountPct}%), so policy routes it to the property manager instead of committing.`,
     output: withinBounds
       ? { kind: 'renewals.accept_counter', draft: assessment, leaseId, offerId: offer?.id, termMonths, counterCents }
       : { kind: 'renewals.escalate', draft: assessment, leaseId, offerId: offer?.id, counterCents },
