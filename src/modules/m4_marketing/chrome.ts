@@ -268,6 +268,23 @@ const CHROME_JS = `
     });
   }
 
+  // ---------- chat panel: keep \`inert\` in lockstep with aria-hidden ----------
+  // The homepage's Ask widget marks #mkchat-panel aria-hidden while closed, but
+  // aria-hidden alone leaves its input and buttons in the tab order (axe
+  // aria-hidden-focus). \`inert\` takes them out of focus and the a11y tree while
+  // hidden and restores them when open. The homepage owns the open/close toggle
+  // (it flips aria-hidden); we mirror hidden → inert here — including the closed
+  // initial state — so the fix holds wherever the panel renders.
+  var chatPanel = document.getElementById('mkchat-panel');
+  if (chatPanel) {
+    var syncInert = function () {
+      if (chatPanel.getAttribute('aria-hidden') === 'true') chatPanel.setAttribute('inert', '');
+      else chatPanel.removeAttribute('inert');
+    };
+    syncInert();
+    new MutationObserver(syncInert).observe(chatPanel, { attributes: true, attributeFilter: ['aria-hidden'] });
+  }
+
   // ---------- light / dark theme toggle ----------
   document.addEventListener('click', function (e) {
     var b = e.target.closest('[data-theme-toggle]');

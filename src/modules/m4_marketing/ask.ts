@@ -195,6 +195,9 @@ export async function askStayLeased(qtext: string, mode: 'demo' | 'sales' = 'dem
     prompt: `${mode === 'demo' ? factsBlock(f) + '\n\n' : ''}${transcript(history)}Visitor asks: "${qtext}"\n\nAnswer:`,
     fallback,
     maxTokens: 220,
+    // Public, unauthenticated endpoint: bill against the isolated public budget
+    // so it can never draw down the authenticated product's daily token cap.
+    audience: 'public',
   });
   const answer = (res.text || fallback).trim();
   return { answer: answer.length > 700 ? answer.slice(0, 700) : answer, live: res.live };

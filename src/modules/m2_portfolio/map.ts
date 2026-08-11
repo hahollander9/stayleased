@@ -83,9 +83,11 @@ const MAP_JS = `
   else if (bounds.length > 1) map.fitBounds(bounds, { paddingTopLeft: [390, 90], paddingBottomRight: [90, 90], maxZoom: 13 });
   else map.setView([39.5, -98.35], 4); // continental view when nothing is placeable
 
-  // side panel → fly to the property and open its panel
+  // side panel → fly to the property and open its panel. Rows are
+  // role="button" tabindex="0", so keyboard users get the same action: Enter
+  // and Space activate, and Space is prevented from scrolling the page.
   document.querySelectorAll('[data-map-prop]').forEach(function (row) {
-    row.addEventListener('click', function () {
+    function activate() {
       var id = row.getAttribute('data-map-prop');
       var m = markers[id];
       if (!m) return;
@@ -93,6 +95,10 @@ const MAP_JS = `
       var ll = m.getLatLng();
       if (reduce) { map.setView(ll, Math.max(map.getZoom(), 13)); m.openPopup(); }
       else { map.flyTo(ll, Math.max(map.getZoom(), 13), { duration: 1.1, easeLinearity: 0.18 }); setTimeout(function () { m.openPopup(); }, 1150); }
+    }
+    row.addEventListener('click', activate);
+    row.addEventListener('keydown', function (e) {
+      if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') { e.preventDefault(); activate(); }
     });
   });
 })();

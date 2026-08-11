@@ -4,6 +4,7 @@ import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
 import { q, q1 } from '../../lib/db.ts';
 import { fmtDate, fmtMonth } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
+import { v } from '../../lib/validate.ts';
 import { shell, card, tbl, statusBadge, field, select, input, registerNav, kpis } from '../../ui/ui.ts';
 import { toCsv, type Basis } from './statements.ts';
 import { Pdf } from '../../lib/pdf.ts';
@@ -18,6 +19,17 @@ registerNav('Money', { href: '/reserves', label: 'Reserves', perm: 'reserves:vie
 registerNav('Money', { href: '/owners', label: 'Owners', perm: 'owners:view', match: ['/owners'] });
 
 const pctFmt = (n: number): string => `${Math.round(n * 100) / 100}%`;
+
+/** Ownership % from raw form input → a validated number in [0, 100]. Rejects
+ * NaN / non-numeric / out-of-range before it can feed owner-distribution math
+ * (empty means 0 = remove the share, matching the form's behavior). Exported
+ * for tests. */
+export function parseSharePct(input: unknown): { ok: true; value: number } | { ok: false; message: string } {
+  const res = v.number({ min: 0, max: 100 }).default(0).safe(input);
+  return res.ok
+    ? { ok: true, value: res.value }
+    : { ok: false, message: 'Enter an ownership percentage between 0 and 100.' };
+}
 
 export function routes(r: Router): void {
   // ============================== RESERVES ==============================
@@ -197,10 +209,12 @@ export function routes(r: Router): void {
 
   r.post('/owners/share', requirePerm('owners:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const pct = parseSharePct(rq.body.pct);
+    if (!pct.ok) return redirect('/owners', pct.message, 'err');
     setOwnershipShare(ctx, {
       ownerId: String(rq.body.owner || ''),
       propertyId: String(rq.body.property || ''),
-      pct: Number(rq.body.pct || 0),
+      pct: pct.value,
     });
     return redirect('/owners', 'Ownership updated.');
   });

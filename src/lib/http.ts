@@ -1,4 +1,5 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
+import { randomBytes } from 'node:crypto';
 import { esc, Raw } from './html.ts';
 import { env } from './env.ts';
 
@@ -67,7 +68,7 @@ export function redirect(to: string, flash?: string, kind: 'ok' | 'err' = 'ok'):
   const headers: Record<string, string | string[]> = { location: to };
   if (flash) {
     headers['set-cookie'] = [
-      `sl_fl=${encodeURIComponent(kind + '|' + flash)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30`,
+      `sl_fl=${encodeURIComponent(kind + '|' + flash)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30${env('MODE') === 'production' ? '; Secure' : ''}`,
     ];
   }
   return { status: 303, headers, body: '' };
@@ -100,7 +101,7 @@ export function errorPage(status: number, msg: string, detail?: string): Res {
   const mark = `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V9.5a7 7 0 0 1 14 0V21"/><path d="M3.5 21h17"/><circle cx="12" cy="12" r="1.6"/><path d="M12 13.6V17"/></svg>`;
   const heads: Record<number, string> = { 400: 'Bad request', 403: 'Access denied', 404: 'Page not found', 500: 'Something went wrong' };
   const head = heads[status] || 'Error';
-  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${status} · StayLeased</title><link rel="stylesheet" href="/assets/theme.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"></head><body class="err-page"><div class="err-box"><a class="err-brand" href="/">${mark}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></a><div class="err-code">${status}</div><h1 class="err-head">${esc(head)}</h1><p>${esc(msg)}</p>${detail ? `<pre class="err-detail">${esc(detail)}</pre>` : ''}<div class="err-actions"><a class="btn" href="javascript:history.back()">Go back</a> <a class="btn btn-ghost" href="/">Home</a></div></div></body></html>`;
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${status} · StayLeased</title><link rel="stylesheet" href="/assets/theme.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"></head><body class="err-page"><div class="err-box"><a class="err-brand" href="/">${mark}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></a><div class="err-code">${status}</div><h1 class="err-head">${esc(head)}</h1><p>${esc(msg)}</p>${detail ? `<pre class="err-detail">${esc(detail)}</pre>` : ''}<div class="err-actions"><a class="btn" href="/" data-back>Go back</a> <a class="btn btn-ghost" href="/">Home</a></div></div><script>var b=document.querySelector('[data-back]');if(b)b.addEventListener('click',function(e){e.preventDefault();history.back();});</script></body></html>`;
   return { status, headers: { 'content-type': 'text/html; charset=utf-8' }, body };
 }
 
@@ -233,6 +234,19 @@ function parseCookies(header: string | undefined): Record<string, string> {
   return out;
 }
 
+/** Real client IP. Behind Render's proxy every socket is the proxy, collapsing
+ * all users into one rate-limit bucket; the original client is the leftmost
+ * X-Forwarded-For entry. Falls back to the socket address for direct connections. */
+function clientIp(req: IncomingMessage): string {
+  const xff = req.headers['x-forwarded-for'];
+  const fwd = Array.isArray(xff) ? xff[0] : xff;
+  if (fwd) {
+    const first = fwd.split(',')[0]?.trim();
+    if (first) return first;
+  }
+  return req.socket.remoteAddress || '0.0.0.0';
+}
+
 export function cookie(
   name: string,
   value: string,
@@ -240,6 +254,9 @@ export function cookie(
 ): string {
   const parts = [`${name}=${encodeURIComponent(value)}`, `Path=${opts.path || '/'}`, 'SameSite=Lax'];
   if (opts.httpOnly !== false) parts.push('HttpOnly');
+  // Secure in production so session/switcher/impersonation cookies never ride
+  // plain HTTP; left off in dev so local http://localhost still works.
+  if (env('MODE') === 'production') parts.push('Secure');
   if (opts.expire) parts.push('Max-Age=0');
   else if (opts.maxAge) parts.push(`Max-Age=${opts.maxAge}`);
   return parts.join('; ');
@@ -275,7 +292,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: AppOption
       body: {},
       uploads: [],
       cookies: parseCookies(req.headers.cookie as string | undefined),
-      ip: req.socket.remoteAddress || '0.0.0.0',
+      ip: clientIp(req),
       setCookies: [],
     };
 
@@ -333,9 +350,11 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: AppOption
   } catch (e) {
     const err = e as Error;
     if (opts.onError && r) opts.onError(err, r);
-    const dev = env('MODE') !== 'production';
+    // Fail-safe: only leak a stack when explicitly opted in AND not in
+    // production, so a forgotten MODE=production never exposes internals.
+    const showStack = env('MODE') !== 'production' && env('DEBUG_ERRORS') === '1';
     try {
-      send(res, r, errorPage(500, 'Something went wrong.', dev ? String(err.stack || err.message) : undefined));
+      send(res, r, errorPage(500, 'Something went wrong.', showStack ? String(err.stack || err.message) : undefined));
     } catch {
       /* socket gone */
     }
@@ -353,8 +372,24 @@ function send(res: ServerResponse, r: Rq | null, out: Res): void {
   headers['x-content-type-options'] = 'nosniff';
   headers['x-frame-options'] = 'SAMEORIGIN';
   headers['referrer-policy'] = 'same-origin';
+  let body = out.body;
+  // HTML responses get a per-response nonce + strict CSP. Every <script (inline,
+  // src=, and type=application/json alike) gets the nonce so the app's own
+  // scripts keep running while injected/inline attacker scripts are blocked.
+  // style-src keeps 'unsafe-inline' because the UI leans on style="" attributes;
+  // img-src allows https: so Leaflet's tile CDNs load. JSON/file/redirect
+  // responses are left untouched.
+  if (typeof body === 'string' && String(headers['content-type'] || '').includes('text/html')) {
+    const nonce = randomBytes(16).toString('base64');
+    // literal string search + function replacer: the nonce is inserted verbatim
+    // and never interpreted as a $-replacement pattern (regex/injection-safe).
+    body = body.replaceAll('<script', () => `<script nonce="${nonce}"`);
+    headers['content-security-policy'] =
+      `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; ` +
+      `img-src 'self' data: blob: https:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`;
+  }
   res.writeHead(out.status, headers);
-  res.end(out.body);
+  res.end(body);
 }
 
 /** read+clear flash cookie; returns [kind, message] */
@@ -367,7 +402,3 @@ export function takeFlash(r: Rq): [string, string] | null {
 }
 
 /** pagination helper: parse ?page= and build offset */
-export function pageParams(r: Rq, perPage = 50): { page: number; limit: number; offset: number } {
-  const page = Math.max(1, parseInt(r.query.get('page') || '1', 10) || 1);
-  return { page, limit: perPage, offset: (page - 1) * perPage };
-}

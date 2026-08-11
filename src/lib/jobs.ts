@@ -3,6 +3,7 @@ import { id } from './ids.ts';
 import { nowIso, addDays, assertDate } from './dates.ts';
 import { sysCtx, type Ctx } from './auth.ts';
 import { emit, deliverWebhooks } from './events.ts';
+import { log } from './log.ts';
 
 /** Jobs & scheduling (§3.1): a jobs registry + in-process scheduler. All
  * recurring behavior is driven by the simulated business date — every job
@@ -94,7 +95,7 @@ export function runJob(ctx: Ctx, key: string, date: string): { status: string; s
   } catch (e) {
     status = 'error';
     summary = (e as Error).message;
-    console.error(`[job ${key}] ${date}:`, (e as Error).stack);
+    log.error('job_failed', e, { job: key, date });
   }
   const ms = Date.now() - start;
   run(
@@ -188,7 +189,7 @@ export function syncLiveOrgClocks(): number {
         advanceBusinessDate(org.id, today);
         advanced++;
       } catch (e) {
-        console.error(`[clock] org ${org.id}:`, (e as Error).message);
+        log.error('clock_advance', e, { orgId: org.id });
       }
     }
   }
@@ -204,10 +205,12 @@ export function startPoller(intervalMs = 60000): { stop: () => void } {
       const orgs = q<{ id: string; business_date: string }>('SELECT id, business_date FROM orgs');
       for (const org of orgs) {
         runJobsForDay(org.id, org.business_date);
-        void deliverWebhooks(sysCtx(org.id));
+        // fire-and-forget, but a rejected webhook delivery must not become an
+        // unhandledRejection that escapes this synchronous try/catch (CODE-1).
+        deliverWebhooks(sysCtx(org.id)).catch((e) => log.error('webhook_deliver', e, { orgId: org.id }));
       }
     } catch (e) {
-      console.error('[poller]', (e as Error).message);
+      log.error('poller', e);
     }
   }, intervalMs);
   return { stop: () => clearInterval(t as unknown as number) };

@@ -29,6 +29,16 @@ export function verifyPassword(pw: string, stored: string): boolean {
   return test.length === ref.length && timingSafeEqual(test, ref);
 }
 
+let dummyHash: string | undefined;
+/** Timing-equalizer for the login miss path (SEC-11). When the submitted email
+ * matches no user, the handler skips verifyPassword and returns fast — that
+ * timing gap tells an attacker which emails are registered. Call this on the
+ * miss path so a missing user does the same scrypt work as a wrong password. */
+export function dummyVerify(): void {
+  if (!dummyHash) dummyHash = hashPassword('stayleased-timing-equalizer');
+  verifyPassword('stayleased-timing-equalizer-miss', dummyHash);
+}
+
 // ---------- sessions ----------
 
 const SESSION_COOKIE = 'sl_s';
@@ -126,8 +136,20 @@ export function can(ctx: Ctx, perm: string): boolean {
   return ctx.perms.has(perm);
 }
 
+/** Thrown by assertPerm. `.message` is user-safe (call sites surface it in
+ * flash banners), while the denied perm code rides on `.perm` for logging —
+ * so we no longer leak internal permission strings to end users. */
+export class PermError extends Error {
+  readonly perm: string;
+  constructor(perm: string) {
+    super("You don't have permission to do that.");
+    this.name = 'PermError';
+    this.perm = perm;
+  }
+}
+
 export function assertPerm(ctx: Ctx, perm: string): void {
-  if (!can(ctx, perm)) throw new Error(`permission denied: ${perm}`);
+  if (!can(ctx, perm)) throw new PermError(perm);
 }
 
 /** Does this ctx have access to the given property? Always verifies the
@@ -153,11 +175,6 @@ export function propFilter(ctx: Ctx, col = 'property_id'): { sql: string; params
 }
 
 /** like propFilter but ignores the UI switcher (for org-wide jobs/reports) */
-export function scopeFilter(ctx: Ctx, col = 'property_id'): { sql: string; params: string[] } {
-  if (ctx.allProperties) return { sql: '', params: [] };
-  if (!ctx.propertyIds.length) return { sql: ' AND 1=0', params: [] };
-  return { sql: ` AND ${col} IN (${ctx.propertyIds.map(() => '?').join(',')})`, params: ctx.propertyIds };
-}
 
 /** system context for jobs/seed (full org access, no user) */
 export function sysCtx(orgId: string, businessDate?: string): Ctx {

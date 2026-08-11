@@ -40,7 +40,8 @@ export interface RentRollRow {
 
 /** the rent roll as of date D — one row per lease in possession at D */
 export function rentRollAsOf(ctx: Ctx, propertyId: string | null, d: string): RentRollRow[] {
-  const params: unknown[] = [ctx.orgId];
+  // :d occurs 3× in posSql and binds before the optional property filter
+  const params: unknown[] = [ctx.orgId, d, d, d];
   let pSql = '';
   if (propertyId) { pSql = ' AND l.property_id=?'; params.push(propertyId); }
   const leases = q<any>(
@@ -49,7 +50,7 @@ export function rentRollAsOf(ctx: Ctx, propertyId: string | null, d: string): Re
      LEFT JOIN floorplans f ON f.id=u.floorplan_id
      JOIN properties p ON p.id=l.property_id
      WHERE ${posSql()}${pSql}
-     ORDER BY p.name, u.unit_number`.replaceAll(':d', `'${d.replaceAll("'", '')}'`),
+     ORDER BY p.name, u.unit_number`.replaceAll(':d', '?'),
     ...params,
   );
   return leases.map((l) => ({
@@ -85,14 +86,13 @@ const GOOD_PAYMENT_AT = `p.received_date <= :d AND (p.status IN ('pending','sett
 
 /** open balance as of D: active charges dated ≤ D minus good payments received ≤ D */
 export function leaseBalanceAsOf(ctx: Ctx, leaseId: string, d: string): number {
-  const dd = d.replaceAll("'", '');
   const charges = val<number>(
     `SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND lease_id=? AND status='active' AND date <= ?`,
-    ctx.orgId, leaseId, dd,
+    ctx.orgId, leaseId, d,
   ) || 0;
   const payments = val<number>(
-    `SELECT COALESCE(SUM(p.amount_cents),0) FROM payments p WHERE p.org_id=? AND p.lease_id=? AND ${GOOD_PAYMENT_AT}`.replaceAll(':d', `'${dd}'`),
-    ctx.orgId, leaseId,
+    `SELECT COALESCE(SUM(p.amount_cents),0) FROM payments p WHERE p.org_id=? AND p.lease_id=? AND ${GOOD_PAYMENT_AT}`.replaceAll(':d', '?'),
+    ctx.orgId, leaseId, d, d, // GOOD_PAYMENT_AT binds :d twice
   ) || 0;
   return charges - payments;
 }
@@ -111,15 +111,14 @@ export function occupancyAt(ctx: Ctx, propertyId: string, d: string): OccupancyA
   const rentable = val<number>(
     `SELECT COUNT(*) FROM units WHERE property_id=? AND status NOT IN ('model','down')`, propertyId,
   ) || 0;
-  const dd = d.replaceAll("'", '');
   const occupied = val<number>(
-    `SELECT COUNT(DISTINCT l.unit_id) FROM leases l WHERE ${posSql()} AND l.property_id=?`.replaceAll(':d', `'${dd}'`),
-    ctx.orgId, propertyId,
+    `SELECT COUNT(DISTINCT l.unit_id) FROM leases l WHERE ${posSql()} AND l.property_id=?`.replaceAll(':d', '?'),
+    ctx.orgId, d, d, d, propertyId, // posSql :d ×3, then property filter
   ) || 0;
   const notice = val<number>(
-    `SELECT COUNT(DISTINCT l.unit_id) FROM leases l WHERE ${posSql()} AND l.property_id=? AND l.notice_date IS NOT NULL AND l.notice_date <= '${dd}'
-       AND NOT EXISTS (SELECT 1 FROM leases n WHERE n.unit_id=l.unit_id AND n.id != l.id AND n.status NOT IN ('draft','canceled') AND n.start_date > '${dd}')`.replaceAll(':d', `'${dd}'`),
-    ctx.orgId, propertyId,
+    `SELECT COUNT(DISTINCT l.unit_id) FROM leases l WHERE ${posSql()} AND l.property_id=? AND l.notice_date IS NOT NULL AND l.notice_date <= ?
+       AND NOT EXISTS (SELECT 1 FROM leases n WHERE n.unit_id=l.unit_id AND n.id != l.id AND n.status NOT IN ('draft','canceled') AND n.start_date > ?)`.replaceAll(':d', '?'),
+    ctx.orgId, d, d, d, propertyId, d, d, // posSql :d ×3, property, notice_date, start_date
   ) || 0;
   const vacant = Math.max(0, rentable - occupied);
   return {
@@ -146,7 +145,8 @@ export interface AgingAsOfRow {
 
 /** delinquency aging as of D — FIFO application of good payments to charges by due date */
 export function agingAsOf(ctx: Ctx, propertyId: string | null, d: string): AgingAsOfRow[] {
-  const params: unknown[] = [ctx.orgId];
+  // :d (as c.date) binds after org_id and before the optional property filter
+  const params: unknown[] = [ctx.orgId, d];
   let pSql = '';
   if (propertyId) { pSql = ' AND l.property_id=?'; params.push(propertyId); }
   // a receivable outlives possession: include any lease that had activity by D
@@ -155,13 +155,12 @@ export function agingAsOf(ctx: Ctx, propertyId: string | null, d: string): Aging
     `SELECT l.id, l.household_name, l.property_id, u.unit_number, p.name AS property_name
      FROM leases l JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=l.property_id
      WHERE l.org_id=? AND l.status IN ('active','month_to_month','notice','ended','renewed')
-       AND EXISTS (SELECT 1 FROM charges c WHERE c.lease_id=l.id AND c.date <= '${d.replaceAll("'", '')}')${pSql}`,
+       AND EXISTS (SELECT 1 FROM charges c WHERE c.lease_id=l.id AND c.date <= ?)${pSql}`,
     ...params,
   );
-  const dd = d.replaceAll("'", '');
   const out: AgingAsOfRow[] = [];
   for (const l of leases) {
-    const bal = leaseBalanceAsOf(ctx, l.id, dd);
+    const bal = leaseBalanceAsOf(ctx, l.id, d);
     if (bal <= 0) continue;
     // per-charge applied amount as of D, from actual application rows (mirrors the live workbench, date-bounded)
     const openCharges = q<any>(
@@ -171,8 +170,8 @@ export function agingAsOf(ctx: Ctx, propertyId: string | null, d: string): Aging
          WHERE pa.charge_id=c.id) AS applied
        FROM charges c
        WHERE c.org_id=? AND c.lease_id=? AND c.status='active' AND c.amount_cents>0 AND c.date <= ?
-       ORDER BY c.due_date`.replaceAll(':d', `'${dd}'`),
-      ctx.orgId, l.id, dd,
+       ORDER BY c.due_date`.replaceAll(':d', '?'),
+      d, d, ctx.orgId, l.id, d, // GOOD_PAYMENT_AT (:d ×2) is in the SELECT subquery, ahead of the WHERE binds
     );
     const row: AgingAsOfRow = {
       lease_id: l.id, household_name: l.household_name, unit_number: l.unit_number,
@@ -186,7 +185,7 @@ export function agingAsOf(ctx: Ctx, propertyId: string | null, d: string): Aging
       const open = Math.min(c.amount_cents - c.applied, remaining);
       if (open <= 0) continue;
       remaining -= open;
-      const age = Math.round((Date.parse(dd) - Date.parse(c.due_date)) / 86400000);
+      const age = Math.round((Date.parse(d) - Date.parse(c.due_date)) / 86400000);
       if (age <= 0) row.current += open;
       else if (age <= 30) row.d1_30 += open;
       else if (age <= 60) row.d31_60 += open;

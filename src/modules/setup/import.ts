@@ -68,7 +68,7 @@ function extractJson(text: string): Record<string, unknown> | null {
 
 /** Ask the live brain to map leftover columns. Only fills gaps — heuristic
  * matches always win — and never invents fields. No key configured → no-op. */
-async function aiAssistMapping(headers: string[], samples: string[][], mapping: Mapping, kind: ImportKind): Promise<Mapping> {
+async function aiAssistMapping(headers: string[], samples: string[][], mapping: Mapping, kind: ImportKind, orgId: string): Promise<Mapping> {
   if (!llmStatus().live) return mapping;
   const fields = fieldsFor(kind);
   const unmappedCols = headers.map((_, i) => i).filter((i) => mapping.cols[i] === undefined);
@@ -82,7 +82,7 @@ async function aiAssistMapping(headers: string[], samples: string[][], mapping: 
     prompt: `Canonical fields: ${unclaimed.map((f) => `${f.key} (${f.label})`).join(', ')}\n\nUnmapped columns:\n${colDesc}\n\nJSON only:`,
     fallback: '{}',
     maxTokens: 300,
-    cacheKey: `map:${kind}:${headers.join('|')}`,
+    cacheKey: `map:${orgId}:${kind}:${headers.join('|')}`,
   });
   const parsed = extractJson(res.text) || {};
   const valid = new Set(unclaimed.map((f) => f.key));
@@ -165,7 +165,7 @@ export function routes(r: Router): void {
       // Whole-sheet AI reading first: the model sees the entire grid and plans
       // the read (header, columns, skip rows, property sections). Deterministic
       // code executes the plan; heuristics remain the fallback and the tiebreak.
-      const plan = await aiPlanSpreadsheet({ ...sheet, rows: sheet.rows.slice(0, MAX_ROWS + 40) }, kind).catch(() => null);
+      const plan = await aiPlanSpreadsheet({ ...sheet, rows: sheet.rows.slice(0, MAX_ROWS + 40) }, kind, ctx.orgId).catch(() => null);
 
       const headerIdx = findHeaderRow(sheet.rows, kind);
       const hHeaders = (sheet.rows[headerIdx] || []).map((h) => String(h));
@@ -179,7 +179,7 @@ export function routes(r: Router): void {
         mapping = aiRead.mapping;
       } else {
         if (!hRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found under the header.', 'err');
-        hMapping = await aiAssistMapping(hHeaders, hRows, hMapping, kind);
+        hMapping = await aiAssistMapping(hHeaders, hRows, hMapping, kind, ctx.orgId);
         headers = hHeaders;
         dataRows = hRows;
         mapping = hMapping;
@@ -338,7 +338,7 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
     ['rentroll', 'Rent roll (everything)', html`
       ${card('Upload your rent roll — the whole portfolio in one file', html`
         <p class="muted" style="margin-top:0">${KINDS[0]!.blurb} Works with exports from ${hjoin(PRESETS.map((p) => html`<b>${p.name}</b>`), raw(', ').s)} or any spreadsheet.
-        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span>` : html` <span class="muted small">(Automatic AI document reading is offline here — columns are matched by name; PDFs need the live AI)</span>`}</p>
+        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span> <span class="muted small">Documents are sent to Anthropic's Claude API for reading; no data is used for training.</span>` : html` <span class="muted small">(Automatic AI document reading is offline here — columns are matched by name; PDFs need the live AI)</span>`}</p>
         ${uploader('rent_roll')}
         <div class="callout info" style="margin-top:10px">No file handy? <a href="/setup/import/template?kind=rent_roll">Download the Excel template</a> — or try the sample to see the flow.</div>
       `)}

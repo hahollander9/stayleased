@@ -139,6 +139,3 @@ export function notify(ctx: Ctx, key: string, target: NotifyTarget, vars: Templa
   }
 }
 
-export const fmtMoneyVar = usd;
-export const fmtDateVar = fmtDate;
-export const escVar = esc;

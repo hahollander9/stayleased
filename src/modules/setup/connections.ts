@@ -108,7 +108,7 @@ function platformStatusCard(ctx: Ctx): Raw {
         ? html`${statusBadge('ok', 'Persistent')} <span class="muted small">${dbPath()} — customer data survives restarts and deploys.</span>`
         : html`${statusBadge('pending', 'Image-local')} <span class="muted small">The database lives inside the app image and resets on redeploy — fine for a demo, not for customers. Point STAYLEASED_DB at a mounted disk (e.g. /data/stayleased.db).</span>`],
       ['AI brain', ai.live
-        ? html`${statusBadge('ok', 'Live')} <span class="muted small">${ai.model} · ${ai.spentToday.toLocaleString('en-US')} of ${ai.dailyCap.toLocaleString('en-US')} daily output tokens used. Ask, document reading and mapping assist run on live Claude; agent drafts use the deterministic engine.</span>`
+        ? html`${statusBadge('ok', 'Live')} <span class="muted small">${ai.model} · ${ai.spentToday.toLocaleString('en-US')} of ${ai.dailyCap.toLocaleString('en-US')} daily token budget used. Ask, document reading and mapping assist run on live Claude; agent drafts use the deterministic engine.</span>`
         : html`${statusBadge('pending', 'Demo brain')} <span class="muted small">Demonstration mode. Enable the live AI connection on the server to put Ask, document reading and mapping assist on live Claude.</span>`],
       ['Self-serve signup', signupOpen
         ? html`${statusBadge('ok', 'Open (invite code)')} <span class="muted small">/signup accepts new companies with your invite code.</span>`

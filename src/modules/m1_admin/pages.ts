@@ -13,7 +13,7 @@ import { getSetting, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts'
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
 import { receiveInbound } from '../../lib/sim/messaging.ts';
-import { getFile, canDownload } from '../../lib/files.ts';
+import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, pager, checkbox,
@@ -479,7 +479,12 @@ export function routes(r: Router): void {
           ['Sent', fmtTs(m.created_at)], ['Entity', m.entity ? `${m.entity}/${m.entity_id}` : '—'],
         ]))}
         ${card('Rendered message', m.channel === 'email'
-          ? html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff">${raw(m.body)}</div>`
+          ? m.direction === 'in'
+            // Inbound email arrives from the public intake address and is
+            // attacker-controlled — render it as escaped text, never raw HTML
+            // (§SEC-2). raw() stays only for system-generated outbound templates.
+            ? html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff;white-space:pre-wrap">${m.body}</div>`
+            : html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff">${raw(m.body)}</div>`
           : html`<div style="max-width:340px;background:var(--info-soft);border-radius:14px;padding:10px 14px;font-size:14px">${m.body}</div>`)}
         ${m.direction === 'out' && m.person_id ? card('Simulate inbound reply', html`
           <form method="post" action="/dev/messages/${m.id}/reply">
@@ -665,7 +670,10 @@ export function routes(r: Router): void {
     const found = getFile(rq.params.id!);
     if (!found) return notFound('File not found');
     if (!canDownload(rq.ctx as Ctx, found.row)) return forbidden('You do not have access to this file.');
-    const inline = ['application/pdf', 'image/png', 'image/jpeg', 'image/svg+xml'].includes(found.row.mime);
+    // Serve inline only for a narrow, magic-byte-verified set (pdf/png/jpeg).
+    // SVG and any type/byte mismatch download as an attachment so stored markup
+    // can never execute in the viewer's session (§SEC-1).
+    const inline = canServeInline(found.row, found.data);
     return fileRes(found.data, found.row.mime, { filename: found.row.name, inline });
   });
 }

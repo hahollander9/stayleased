@@ -114,4 +114,3 @@ export const NEUTRAL_SCRIPTS = {
 } as const;
 
 /** Standard label appended to AI-generated, resident/prospect-facing copy. */
-export const AI_LABEL = 'Drafted by StayLeased AI · reviewed under fair-housing guardrails';

@@ -1,5 +1,6 @@
 /** Mini validation library (Zod-shaped, environment fallback per DECISIONS.md).
  * Schemas validate + coerce form/API input at every boundary. */
+import { parseUsd } from './money.ts';
 
 export class VError extends Error {
   issues: { path: string; message: string }[];
@@ -97,9 +98,9 @@ export const v = {
       let n: number;
       if (typeof input === 'number') n = Math.round(input);
       else {
-        const s = String(input).replace(/[$,\s]/g, '');
-        if (!/^-?\d*(\.\d{1,2})?$/.test(s) || s === '' || s === '-') fail(path, 'invalid amount');
-        n = Math.round(parseFloat(s) * 100);
+        // single source of truth for decimal->cents (integer-exact); parseUsd throws on garbage
+        try { n = parseUsd(String(input)); }
+        catch { fail(path, 'invalid amount'); n = 0; }
       }
       if (opts?.min !== undefined && n < opts.min) fail(path, `min ${opts.min / 100}`);
       if (opts?.max !== undefined && n > opts.max) fail(path, `max ${opts.max / 100}`);

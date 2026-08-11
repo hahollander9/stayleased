@@ -1,4 +1,4 @@
-import { q, q1, val, insert, run, js } from '../../lib/db.ts';
+import { q, q1, val, insert, run, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addDays } from '../../lib/dates.ts';
 import { sysCtx, type Ctx } from '../../lib/auth.ts';
@@ -131,7 +131,7 @@ export function callRollup(ctx: Ctx, propertyId?: string | null): {
   const tagCount = new Map<string, number>();
   for (const c of calls) {
     if (c.ai_sentiment) sentiment[c.ai_sentiment] = (sentiment[c.ai_sentiment] || 0) + 1;
-    for (const t of JSON.parse(c.ai_tags || '[]') as string[]) tagCount.set(t, (tagCount.get(t) || 0) + 1);
+    for (const t of j<string[]>(c.ai_tags, [])) tagCount.set(t, (tagCount.get(t) || 0) + 1);
   }
   const missed = val<number>(
     `SELECT COUNT(*) FROM ai_actions WHERE org_id=? AND agent='call_analysis' AND title LIKE '%MISSED OPPORTUNITY%'${propertyId ? ' AND property_id=?' : ''}`,

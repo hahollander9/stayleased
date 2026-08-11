@@ -166,13 +166,19 @@ export function routes(r: Router): void {
     const propertyId = unit?.property_id || ctx.currentPropertyId || q1<any>('SELECT id FROM properties WHERE org_id=? LIMIT 1', ctx.orgId)?.id;
     if (!propertyId) return badRequest('no property');
     const lease = unit ? q1<any>(`SELECT * FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') LIMIT 1`, unit.id) : null;
+    // validate enums + required fields at the boundary (was: arbitrary strings stored verbatim)
     const priority = String(rq.body.priority || 'normal');
+    if (!(priority in SLA_HOURS)) return redirect('/workorders/new', 'Invalid priority.', 'err');
+    const category = String(rq.body.category || 'other');
+    if (!WO_CATEGORIES.includes(category)) return redirect('/workorders/new', 'Invalid category.', 'err');
+    const summary = String(rq.body.summary || '').trim();
+    if (!summary) return redirect('/workorders/new', 'A summary is required.', 'err');
     const woId = id('wo');
     insert('work_orders', {
       id: woId, org_id: ctx.orgId, property_id: propertyId, unit_id: unit?.id || null,
       lease_id: lease?.id || null, resident_id: null,
-      category: String(rq.body.category || 'other'), priority, status: 'triaged',
-      summary: String(rq.body.summary || '').trim(), description: rq.body.description || null,
+      category, priority, status: 'triaged',
+      summary, description: rq.body.description || null,
       permission_to_enter: 1, pet_on_premises: 0, source: 'staff',
       sla_hours: SLA_HOURS[priority] ?? 72, sla_due: addDays(ctx.businessDate, Math.ceil((SLA_HOURS[priority] ?? 72) / 24)),
       created_date: ctx.businessDate, created_by: ctx.userId, created_at: nowIso(),

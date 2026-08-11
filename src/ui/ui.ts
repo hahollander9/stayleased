@@ -539,27 +539,57 @@ export function emptyState(title: string, hint?: Child, cta?: Child): Raw {
 
 // ---------- form helpers ----------
 
+/** Stable-per-document control ids so a `<label for>` can bind to its control.
+ * A module counter is sufficient: ids only need to be unique within one
+ * rendered response, and server rendering is synchronous per request. */
+let CTRL_SEQ = 0;
+function ctrlId(): string {
+  return `f${++CTRL_SEQ}`;
+}
+
+/** A labeled form row. The control (already rendered by input()/select()/
+ * textarea(), each of which auto-emits an `id`) is associated with its label
+ * by reading that id back out and pointing `<label for>` at it — clicking the
+ * label focuses the control and screen readers announce the pair (WCAG 1.3.1
+ * / 4.1.2). When the control carries an auto `aria-label` (the bare-select
+ * fallback) it is dropped here, since the visible label is now its accessible
+ * name. DOM shape is otherwise unchanged, so all existing layout/CSS holds. */
 export function field(label: Child, control: Child, hint?: Child): Raw {
-  return html`<div class="field"><label>${label}</label>${control}${when(hint, () => html`<div class="hint">${hint}</div>`)}</div>`;
+  let cs = html`${control}`.s;
+  const m = cs.match(/ id="([^"]*)"/);
+  let ctrl: Child = control;
+  let forAttr = '';
+  if (m) {
+    forAttr = ` for="${esc(m[1])}"`;
+    if (cs.includes(' aria-label="')) {
+      cs = cs.replace(/ aria-label="[^"]*"/, '');
+      ctrl = raw(cs);
+    }
+  }
+  return html`<div class="field"><label${raw(forAttr)}>${label}</label>${ctrl}${when(hint, () => html`<div class="hint">${hint}</div>`)}</div>`;
 }
-export function input(name: string, opts: { value?: Child; type?: string; placeholder?: string; required?: boolean; step?: string; min?: string; max?: string; list?: string; autofocus?: boolean } = {}): Raw {
-  return html`<input name="${name}" type="${opts.type || 'text'}" value="${opts.value ?? ''}" placeholder="${opts.placeholder ?? ''}" ${opts.required ? 'required' : ''} ${opts.step ? raw(`step="${esc(opts.step)}"`) : ''} ${opts.min ? raw(`min="${esc(opts.min)}"`) : ''} ${opts.max ? raw(`max="${esc(opts.max)}"`) : ''} ${opts.list ? raw(`list="${esc(opts.list)}"`) : ''} ${opts.autofocus ? 'autofocus' : ''} />`;
+export function input(name: string, opts: { value?: Child; type?: string; placeholder?: string; required?: boolean; step?: string; min?: string; max?: string; list?: string; autofocus?: boolean; id?: string } = {}): Raw {
+  return html`<input id="${opts.id ?? ctrlId()}" name="${name}" type="${opts.type || 'text'}" value="${opts.value ?? ''}" placeholder="${opts.placeholder ?? ''}" ${opts.required ? 'required' : ''} ${opts.step ? raw(`step="${esc(opts.step)}"`) : ''} ${opts.min ? raw(`min="${esc(opts.min)}"`) : ''} ${opts.max ? raw(`max="${esc(opts.max)}"`) : ''} ${opts.list ? raw(`list="${esc(opts.list)}"`) : ''} ${opts.autofocus ? 'autofocus' : ''} />`;
 }
-export function select(name: string, options: [string, Child][], value?: string | null, opts: { required?: boolean; blank?: string } = {}): Raw {
-  return html`<select name="${name}" ${opts.required ? 'required' : ''}>
+export function select(name: string, options: [string, Child][], value?: string | null, opts: { required?: boolean; blank?: string; id?: string; ariaLabel?: string } = {}): Raw {
+  // Always carry an accessible name: field() strips this when it associates a
+  // visible <label>, so it only survives on bare selects (no visible label),
+  // where an aria-label derived from the field name is the accessible name.
+  const aria = opts.ariaLabel ?? name.replaceAll('_', ' ');
+  return html`<select id="${opts.id ?? ctrlId()}" name="${name}" aria-label="${aria}" ${opts.required ? 'required' : ''}>
     ${opts.blank !== undefined ? html`<option value="">${opts.blank}</option>` : null}
     ${options.map(([v, label]) => html`<option value="${v}" ${value === v ? 'selected' : ''}>${label}</option>`)}
   </select>`;
 }
-export function textarea(name: string, opts: { value?: string; placeholder?: string; required?: boolean; rows?: number } = {}): Raw {
-  return html`<textarea name="${name}" placeholder="${opts.placeholder ?? ''}" ${opts.required ? 'required' : ''} rows="${opts.rows || 4}">${opts.value ?? ''}</textarea>`;
+export function textarea(name: string, opts: { value?: string; placeholder?: string; required?: boolean; rows?: number; id?: string } = {}): Raw {
+  return html`<textarea id="${opts.id ?? ctrlId()}" name="${name}" placeholder="${opts.placeholder ?? ''}" ${opts.required ? 'required' : ''} rows="${opts.rows || 4}">${opts.value ?? ''}</textarea>`;
 }
 export function checkbox(name: string, label: Child, checked?: boolean, value = '1'): Raw {
   return html`<label class="check"><input type="checkbox" name="${name}" value="${value}" ${checked ? 'checked' : ''} /> <span>${label}</span></label>`;
 }
-export function moneyInput(name: string, cents?: number | null, opts: { required?: boolean; placeholder?: string } = {}): Raw {
+export function moneyInput(name: string, cents?: number | null, opts: { required?: boolean; placeholder?: string; id?: string } = {}): Raw {
   const val = cents === undefined || cents === null ? '' : (cents / 100).toFixed(2);
-  return html`<input name="${name}" type="text" inputmode="decimal" value="${val}" placeholder="${opts.placeholder ?? '0.00'}" ${opts.required ? 'required' : ''} />`;
+  return html`<input id="${opts.id ?? ctrlId()}" name="${name}" type="text" inputmode="decimal" value="${val}" placeholder="${opts.placeholder ?? '0.00'}" ${opts.required ? 'required' : ''} />`;
 }
 
 // ---------- history (audit) panel ----------

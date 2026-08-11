@@ -92,11 +92,6 @@ export function fmtDate(d: DateStr | null | undefined): string {
 }
 
 /** "Tue, Mar 4" */
-export function fmtDateShort(d: DateStr | null | undefined): string {
-  if (!d) return '—';
-  const dt = toUtc(d.slice(0, 10));
-  return `${DOW[dt.getUTCDay()]}, ${MONTHS[dt.getUTCMonth()]} ${dt.getUTCDate()}`;
-}
 
 /** "Mar 2026" from a YYYY-MM or date */
 export function fmtMonth(mk: string): string {
@@ -121,9 +116,6 @@ export function fmtTs(iso: string | null | undefined, tz = 'America/Denver'): st
   }
 }
 
-export function dowName(d: DateStr): string {
-  return DOW[toUtc(d).getUTCDay()]!;
-}
 export function dowIdx(d: DateStr): number {
   return toUtc(d).getUTCDay();
 }

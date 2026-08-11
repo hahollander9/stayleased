@@ -38,7 +38,11 @@ export const MARKETING_CSS = `
   /* the one StayLeased system — emerald ramp (mirrored in src/ui/theme.css) */
   --accent: #047857; --accent-2: #065F46;
   --ai: #0D9488;
-  --grad: linear-gradient(135deg, #059669, #047857);
+  /* button gradient — light stop deepened #059669 → #067d52 (2026-08-11 a11y):
+     white label on #059669 was 3.77:1; the lightest pixel now clears 4.5:1
+     (5.17:1 resting, ~4.6:1 under the hover brighten). --grad-wide (the teal
+     signature ramp, non-text/large-text only) is unchanged. */
+  --grad: linear-gradient(135deg, #067d52, #047857);
   --grad-wide: linear-gradient(90deg, #2DD4BF, #059669 50%, #047857);
   --glow: 0 10px 26px -8px rgba(5,150,105,.45);
   --btn-bg: #047857; --btn-ink: #FFFFFF;

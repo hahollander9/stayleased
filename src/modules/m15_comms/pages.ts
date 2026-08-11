@@ -226,13 +226,15 @@ export function routes(r: Router): void {
   r.post('/inbox/:id/snooze', requirePerm('comms:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT status FROM threads WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (t?.status === 'snoozed') run(`UPDATE threads SET status='open', snooze_until=NULL WHERE id=?`, rq.params.id!);
-    else run(`UPDATE threads SET status='snoozed', snooze_until=? WHERE id=?`, addDays(ctx.businessDate, 3), rq.params.id!);
-    return redirect(`/inbox/${rq.params.id}`, t?.status === 'snoozed' ? 'Unsnoozed' : 'Snoozed for 3 days');
+    if (!t) return notFound(); // another org's thread — never mutate it (§SEC-3)
+    if (t.status === 'snoozed') run(`UPDATE threads SET status='open', snooze_until=NULL WHERE id=? AND org_id=?`, rq.params.id!, ctx.orgId);
+    else run(`UPDATE threads SET status='snoozed', snooze_until=? WHERE id=? AND org_id=?`, addDays(ctx.businessDate, 3), rq.params.id!, ctx.orgId);
+    return redirect(`/inbox/${rq.params.id}`, t.status === 'snoozed' ? 'Unsnoozed' : 'Snoozed for 3 days');
   });
   r.post('/inbox/:id/close', requirePerm('comms:view'), (rq) => {
-    const t = q1<any>('SELECT status FROM threads WHERE id=?', rq.params.id!);
-    run(`UPDATE threads SET status=? WHERE id=? AND org_id=?`, t?.status === 'closed' ? 'open' : 'closed', rq.params.id!, (rq.ctx as Ctx).orgId);
+    const ctx = rq.ctx as Ctx;
+    const t = q1<any>('SELECT status FROM threads WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    run(`UPDATE threads SET status=? WHERE id=? AND org_id=?`, t?.status === 'closed' ? 'open' : 'closed', rq.params.id!, ctx.orgId);
     return redirect(`/inbox/${rq.params.id}`, t?.status === 'closed' ? 'Reopened' : 'Closed');
   });
 

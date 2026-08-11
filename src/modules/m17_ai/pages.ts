@@ -442,7 +442,7 @@ export function routes(r: Router): void {
       content: html`
         ${when(generated, () => card('Generated ✨ (copy into the editor, or regenerate)', html`
           ${when(genSubject, () => html`<p><b>Subject:</b> ${genSubject}</p>`)}
-          <div style="border:1px solid var(--line-2);border-radius:10px;padding:12px;background:var(--surface-2)">${raw(generated)}</div>`))}
+          <div style="border:1px solid var(--line-2);border-radius:10px;padding:12px;background:var(--surface-2)">${generated}</div>`))}
         <div class="grid cols-2">
           ${card('Listing description', html`<form method="post" action="/ai/essentials/listing">
             ${field('Floorplan', select('floorplan', fps.map((f): [string, string] => [f.id, `${f.prop} — ${f.name}`])))}

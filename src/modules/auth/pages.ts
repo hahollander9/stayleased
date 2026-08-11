@@ -4,7 +4,7 @@ import {
   type Router, type Rq, takeFlash,
 } from '../../lib/http.ts';
 import {
-  verifyPassword, createSession, destroySession, setSessionCookie, clearSessionCookie,
+  verifyPassword, dummyVerify, createSession, destroySession, setSessionCookie, clearSessionCookie,
   getSessionToken, attachSession, requireUser, requirePerm, rateLimit,
   type UserRow, type Ctx, canAccessProperty,
 } from '../../lib/auth.ts';
@@ -54,13 +54,19 @@ export function routes(r: Router): void {
   });
 
   r.post('/login', (rq) => {
-    if (!rateLimit(`login:${rq.ip}`, 20, 60000)) {
-      return redirect('/login', 'Too many attempts — wait a minute and try again.', 'err');
-    }
     const email = String(rq.body.email || '').trim().toLowerCase();
     const password = String(rq.body.password || '');
+    // rate-limit on real client IP (see clientIp/X-Forwarded-For) AND email, so a
+    // single shared proxy IP can't exhaust one global bucket and lock everyone out
+    if (!rateLimit(`login:${rq.ip}:${email}`, 20, 60000)) {
+      return redirect('/login', 'Too many attempts — wait a minute and try again.', 'err');
+    }
     const user = q1<UserRow>('SELECT * FROM users WHERE email=? AND active=1', email);
-    if (!user || !verifyPassword(password, user.password_hash)) {
+    if (!user) {
+      dummyVerify(); // equalize timing so a missing email can't be distinguished from a wrong password
+      return redirect('/login', 'Invalid email or password.', 'err');
+    }
+    if (!verifyPassword(password, user.password_hash)) {
       return redirect('/login', 'Invalid email or password.', 'err');
     }
     const t = createSession(user.id);

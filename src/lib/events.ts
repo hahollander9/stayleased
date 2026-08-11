@@ -1,6 +1,7 @@
-import { insert, q, run, js } from './db.ts';
+import { insert, q, run, js, j } from './db.ts';
 import { id } from './ids.ts';
 import { nowIso, addDays } from './dates.ts';
+import { log } from './log.ts';
 import type { Ctx } from './auth.ts';
 
 /** Domain event log (§3.2.3). Modules subscribe in-process; the webhook
@@ -38,7 +39,7 @@ export function emit(
     try {
       fn(ctx, { ...payload, entity, entityId }, eid);
     } catch (e) {
-      console.error(`[events] subscriber for ${type} failed:`, (e as Error).message);
+      log.error('event_subscriber_failed', e, { type });
     }
   }
   // queue webhook deliveries for matching endpoints
@@ -47,7 +48,7 @@ export function emit(
     ctx.orgId,
   );
   for (const ep of endpoints) {
-    const list = ep.events ? (JSON.parse(ep.events) as string[]) : ['*'];
+    const list = j<string[]>(ep.events, ['*']);
     if (list.includes('*') || list.includes(type) || list.some((p) => p.endsWith('.*') && type.startsWith(p.slice(0, -1)))) {
       insert('webhook_deliveries', {
         id: id('whd'),

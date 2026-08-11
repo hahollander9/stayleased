@@ -27,11 +27,6 @@ export function parseUsd(input: string): Cents {
   return neg ? -cents : cents;
 }
 
-export function sumCents(list: (Cents | null | undefined)[]): Cents {
-  let t = 0;
-  for (const v of list) t += v ?? 0;
-  return t;
-}
 
 /** rounds half-up at the cent */
 export function pctOf(cents: Cents, pctBps: number): Cents {

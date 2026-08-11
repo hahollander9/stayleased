@@ -291,7 +291,7 @@ export function routes(r: Router): void {
             ${when(canManage, () => html`
               <form method="post" action="/affordable/certs/${c.id}/check" style="margin:8px 0">
                 ${list.map((item, i) => html`<label class="check" style="display:block;margin:4px 0">
-                  <input type="checkbox" name="item_${i}" value="1" ${item.done ? 'checked' : ''} onchange="this.form.submit()" /> <span>${item.item}</span>
+                  <input type="checkbox" name="item_${i}" value="1" ${item.done ? 'checked' : ''} /><script>document.currentScript.previousElementSibling.addEventListener('change',function(){this.form.submit();});</script> <span>${item.item}</span>
                 </label>`)}
               </form>
               <form method="post" action="/affordable/certs/${c.id}/complete">

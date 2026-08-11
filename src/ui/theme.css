@@ -42,7 +42,11 @@
   --brand-dark: #0b9e6f;
   --brand-ink: #a7f3d0;
   --brand-soft: rgba(52, 211, 153, .13);
-  --grad: linear-gradient(135deg, #10b981 0%, #047857 100%);
+  /* button gradient — light stop deepened #10b981 → #067d52 (2026-08-11 a11y):
+     white label on the old bright stop was 2.5:1; the lightest pixel under
+     text now clears 4.5:1 (5.17:1 resting, ~4.6:1 under the hover brighten)
+     while staying emerald and lighter than the #047857 dark stop. */
+  --grad: linear-gradient(135deg, #067d52 0%, #047857 100%);
   --grad-wide: linear-gradient(90deg, #2dd4bf, #10b981 50%, #047857);
   --sidebar: #0a0f1b;
   --sidebar-ink: #c3cddf;
@@ -130,8 +134,11 @@ html[data-theme="light"] { color-scheme: light; }
 [data-theme="light"] .tbl tr[data-href]:hover td { background: rgba(37, 99, 235, .06); }
 [data-theme="light"] .badge { background: rgba(13, 25, 48, .07); color: var(--ink-2); }
 [data-theme="light"] .badge.ok { background: var(--ok-soft); color: var(--ok); border-color: rgba(6, 118, 71, .25); }
-[data-theme="light"] .badge.warn { background: var(--warn-soft); color: var(--warn); border-color: rgba(180, 83, 9, .25); }
-[data-theme="light"] .badge.bad { background: var(--bad-soft); color: var(--bad); border-color: rgba(217, 45, 32, .25); }
+/* badge inks deepened for 11px text on their tints (2026-08-11 a11y): warn
+   #b45309→#92400e (4.39→≥5.7:1), bad #d92d20→#b42318 (4.28→≥5.4:1). Scoped to
+   the badge so the brighter --warn/--bad tokens still serve larger text. */
+[data-theme="light"] .badge.warn { background: var(--warn-soft); color: #92400e; border-color: rgba(180, 83, 9, .25); }
+[data-theme="light"] .badge.bad { background: var(--bad-soft); color: #b42318; border-color: rgba(217, 45, 32, .25); }
 [data-theme="light"] .badge.info { background: var(--info-soft); color: var(--info); border-color: rgba(5, 150, 105, .25); }
 [data-theme="light"] .badge.accent { background: var(--accent-soft); color: var(--accent-ink); border-color: rgba(5, 150, 105, .25); }
 [data-theme="light"] .badge.violet { background: var(--violet-soft); color: var(--violet); border-color: rgba(124, 58, 237, .25); }
@@ -356,7 +363,7 @@ small, .small { font-size: 12px; }
 .sidebar .brand .org { display: block; font-size: 10.5px; font-weight: 500; color: var(--muted); letter-spacing: .02em; font-family: var(--font); }
 .nav { padding: 4px 8px 20px; }
 .nav-group { margin-top: 12px; }
-.nav-group > .nav-head { padding: 2px 10px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--faint); }
+.nav-group > .nav-head { padding: 2px 10px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: .1em; color: var(--muted); }
 .nav a { display: flex; align-items: center; gap: 8px; padding: 6px 10px; border-radius: 8px; color: var(--sidebar-ink); font-size: 13px; text-decoration: none; }
 .nav a:hover { background: rgba(255, 255, 255, .05); color: var(--ink); text-decoration: none; }
 .nav a.active { background: var(--sidebar-active); color: var(--brand-ink); font-weight: 600; }
@@ -799,8 +806,8 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 @keyframes dfping { 0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, .5); } 70%, 100% { box-shadow: 0 0 0 7px rgba(52, 211, 153, 0); } }
 .dash-feed .df-row { font-size: 12px; color: var(--ink-2); display: flex; gap: 8px; align-items: baseline; }
 .dash-feed .df-row b { color: var(--accent-ink); font-weight: 600; white-space: nowrap; }
-.dash-feed .df-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dash-feed .df-when { color: var(--faint); font-size: 11px; flex: none; margin-left: auto; padding-left: 8px; }
+.dash-feed .df-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.dash-feed .df-when { color: var(--muted); font-size: 11px; flex: none; margin-left: auto; padding-left: 8px; }
 @media (max-width: 900px) { .dash-hero .dh-side { width: 100%; } .dash-feed { max-width: none; flex: 1; } }
 
 /* ---------- portfolio map (CoStar-style navigation) ---------- */
@@ -866,7 +873,7 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 .slpop-actions { display: flex; gap: 7px; }
 .leaflet-control-zoom a { background: rgba(13, 19, 34, .94) !important; color: var(--ink) !important; border-color: var(--line) !important; }
 .leaflet-control-zoom a:hover { background: rgba(96, 165, 250, .18) !important; }
-.leaflet-control-attribution { background: rgba(10, 15, 27, .75) !important; color: var(--faint) !important; font-size: 9.5px !important; }
+.leaflet-control-attribution { background: rgba(10, 15, 27, .75) !important; color: var(--muted) !important; font-size: 9.5px !important; }
 .leaflet-control-attribution a { color: var(--muted) !important; }
 @media (max-width: 760px) {
   .mapview { height: calc(100vh - 150px); min-height: 460px; }
@@ -902,7 +909,7 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 .dashmap-card { padding: 0; overflow: hidden; }
 .dashmap { position: relative; display: block; height: 300px; text-decoration: none; color: inherit; }
 .dashmap:hover { text-decoration: none; }
-#dashmap { position: absolute; inset: 0; pointer-events: none; background: #0a0f1b; }
+#dashmap { position: absolute; inset: 0; max-width: 100%; pointer-events: none; background: #0a0f1b; }
 .dashmap-veil {
   position: absolute; inset: 0; z-index: 450; pointer-events: none;
   background: linear-gradient(180deg, rgba(7, 10, 19, .55) 0%, transparent 34%, transparent 62%, rgba(7, 10, 19, .78) 100%);
@@ -959,15 +966,15 @@ svg.chart path.ct { transform-box: fill-box; transform-origin: 50% 50%; animatio
 }
 
 /* ---------- dashboard: AI panel, duo layout, KPI bands, scroll reveal ---------- */
-.dash-duo { display: grid; grid-template-columns: 1.05fr .95fr; gap: 14px; align-items: stretch; }
+.dash-duo { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 14px; align-items: stretch; }
 .dash-duo > .card { margin-bottom: 14px; display: flex; flex-direction: column; }
 .dash-duo .dashmap { height: 100%; min-height: 300px; }
-@media (max-width: 980px) { .dash-duo { grid-template-columns: 1fr; } }
+@media (max-width: 980px) { .dash-duo { grid-template-columns: minmax(0, 1fr); } }
 .ai-panel .card-body { flex: 1; overflow-y: auto; max-height: 320px; }
 .ai-feed { list-style: none; margin: 0; padding: 4px 0; }
 .ai-feed li {
   display: flex; align-items: center; gap: 10px; padding: 8.5px 16px; font-size: 12.5px;
-  border-bottom: 1px solid var(--line-2);
+  border-bottom: 1px solid var(--line-2); min-width: 0;
 }
 .ai-feed li:last-child { border-bottom: 0; }
 .ai-feed .af-agent {
@@ -989,9 +996,9 @@ svg.chart path.ct { transform-box: fill-box; transform-origin: 50% 50%; animatio
   font-size: 10px; font-weight: 800; letter-spacing: 0;
 }
 [data-theme="light"] .ai-feed .af-count { border-color: rgba(180, 83, 9, .3); }
-.ai-feed .af-quiet { color: var(--faint); font-style: italic; }
+.ai-feed .af-quiet { color: var(--muted); font-style: italic; }
 .ai-feed .af-title { flex: 1; min-width: 0; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ai-feed .af-when { flex: none; color: var(--faint); font-size: 11px; }
+.ai-feed .af-when { flex: none; color: var(--muted); font-size: 11px; }
 .ai-feed li { animation: dfin .5s cubic-bezier(.16, 1, .3, 1) both; }
 .ai-feed li:nth-child(2) { animation-delay: .06s; } .ai-feed li:nth-child(3) { animation-delay: .12s; }
 .ai-feed li:nth-child(4) { animation-delay: .18s; } .ai-feed li:nth-child(5) { animation-delay: .24s; }
@@ -1258,7 +1265,7 @@ svg.chart g.ct:hover .ctdot { r: 4.6px; }
   flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
   font: 400 14px/1.4 var(--font); color: var(--ink); padding: 6px 0;
 }
-.aichat-form input::placeholder { color: var(--faint); }
+.aichat-form input::placeholder { color: var(--muted); }
 .aichat-send {
   flex: none; width: 38px; height: 38px; border-radius: 50%; border: 0; cursor: pointer;
   display: grid; place-items: center; color: #fff;

@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { html, raw } from '../../lib/html.ts';
 import { jsonRes, type Router, type Rq, type Res, type Middleware } from '../../lib/http.ts';
-import { q, q1, run, val } from '../../lib/db.ts';
+import { q, q1, run, val, j } from '../../lib/db.ts';
 import { nowIso } from '../../lib/dates.ts';
 import { sysCtx, rateLimit, type Ctx } from '../../lib/auth.ts';
 import { doc, logo } from '../../ui/ui.ts';
@@ -129,6 +129,7 @@ registerApi({
     const rows = type
       ? q<any>('SELECT id, type, entity, entity_id, payload, business_date, at FROM domain_events WHERE org_id=? AND type LIKE ? ORDER BY at DESC LIMIT ?', ctx.orgId, type + '%', limit)
       : q<any>('SELECT id, type, entity, entity_id, payload, business_date, at FROM domain_events WHERE org_id=? ORDER BY at DESC LIMIT ?', ctx.orgId, limit);
-    return jsonRes({ data: rows.map((e) => ({ ...e, payload: JSON.parse(e.payload) })) });
+    // one malformed payload row must not 500 the whole stream — j() falls back
+    return jsonRes({ data: rows.map((e) => ({ ...e, payload: j<unknown>(e.payload, null) })) });
   },
 });

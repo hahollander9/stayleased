@@ -512,4 +512,13 @@
       e.dataTransfer.setData('text/plain', item.getAttribute('data-dnd-item'));
     });
   });
+
+  // select-all-on-focus for read-only address fields
+  // (CSP-safe replacement for inline onfocus="this.select()")
+  document.addEventListener('focusin', function (e) {
+    var el = e.target;
+    if (el && el.classList && el.classList.contains('selectall') && typeof el.select === 'function') {
+      el.select();
+    }
+  });
 })();

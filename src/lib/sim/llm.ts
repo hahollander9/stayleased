@@ -126,6 +126,11 @@ const TOKENS_PER_CALL_CAP = Math.max(64, parseInt(process.env.STAYLEASED_AI_MAX_
 // more output room than a chat reply; still bounded, still under the daily cap
 const EXTRACT_TOKEN_CAP = Math.max(1000, parseInt(process.env.STAYLEASED_AI_EXTRACT_MAX_TOKENS || '8000', 10) || 8000);
 const DAILY_TOKEN_CAP = Math.max(0, parseInt(process.env.STAYLEASED_AI_DAILY_TOKEN_CAP || '250000', 10) || 250000);
+// The public marketing "Ask" endpoint is UNAUTHENTICATED and shares this process
+// with the paid product. It runs on its OWN, much smaller daily budget (default
+// well under the main cap) so anonymous/abusive traffic can never consume the
+// authenticated product's tokens. Override with STAYLEASED_AI_PUBLIC_DAILY_TOKEN_CAP.
+const PUBLIC_DAILY_TOKEN_CAP = Math.max(0, parseInt(process.env.STAYLEASED_AI_PUBLIC_DAILY_TOKEN_CAP || '25000', 10) || 25000);
 const CALL_TIMEOUT_MS = 12000;
 const EXTRACT_TIMEOUT_MS = 75000;
 
@@ -137,19 +142,45 @@ export function llm(): LlmProvider {
 }
 
 /** Which brain is active — surfaced (never the key) in the AI console. */
-export function llmStatus(): { live: boolean; mode: 'Live' | 'Demo'; model: string; spentToday: number; dailyCap: number } {
-  return { live: !!API_KEY, mode: API_KEY ? 'Live' : 'Demo', model: API_KEY ? AI_MODEL : 'MockLlm (deterministic)', spentToday: spend.tokens, dailyCap: DAILY_TOKEN_CAP };
+export function llmStatus(): { live: boolean; mode: 'Live' | 'Demo'; model: string; spentToday: number; dailyCap: number; publicSpentToday: number; publicDailyCap: number } {
+  return {
+    live: !!API_KEY, mode: API_KEY ? 'Live' : 'Demo',
+    model: API_KEY ? AI_MODEL : 'MockLlm (deterministic)',
+    spentToday: spend.tokens, dailyCap: DAILY_TOKEN_CAP,
+    publicSpentToday: publicSpend.tokens, publicDailyCap: PUBLIC_DAILY_TOKEN_CAP,
+  };
 }
 
-// daily spend accounting (wall-clock day; resets on date change)
-const spend = { day: '', tokens: 0 };
+export type Audience = 'public' | 'authed';
+
+// daily spend accounting (wall-clock day; resets on date change). Two ISOLATED
+// buckets: the authenticated product and the unauthenticated public "Ask"
+// endpoint never share a budget, so public/anonymous abuse can neither exhaust
+// the paid product's daily cap nor run up spend through it.
+const spend = { day: '', tokens: 0 };        // authenticated product
+const publicSpend = { day: '', tokens: 0 };  // public marketing endpoint
 function accountDay(): string {
   return new Date().toISOString().slice(0, 10);
 }
-function withinDailyCap(): boolean {
+function bucketFor(audience: Audience): { day: string; tokens: number } {
+  return audience === 'public' ? publicSpend : spend;
+}
+function capFor(audience: Audience): number {
+  return audience === 'public' ? PUBLIC_DAILY_TOKEN_CAP : DAILY_TOKEN_CAP;
+}
+export function withinDailyCap(audience: Audience = 'authed'): boolean {
   const d = accountDay();
-  if (spend.day !== d) { spend.day = d; spend.tokens = 0; }
-  return DAILY_TOKEN_CAP === 0 || spend.tokens < DAILY_TOKEN_CAP;
+  const b = bucketFor(audience);
+  if (b.day !== d) { b.day = d; b.tokens = 0; }
+  const cap = capFor(audience);
+  return cap === 0 || b.tokens < cap;
+}
+/** Meter usage (INPUT + output tokens) against one audience's isolated bucket. */
+export function meterTokens(audience: Audience, tokens: number): void {
+  const d = accountDay();
+  const b = bucketFor(audience);
+  if (b.day !== d) { b.day = d; b.tokens = 0; }
+  b.tokens += Math.max(0, tokens);
 }
 
 // small response cache (bounded, in-process)
@@ -165,7 +196,66 @@ type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'document'; source: { type: 'base64'; media_type: string; data: string } };
 
-function anthropicCall(system: string | undefined, prompt: string | ContentBlock[], maxTokens: number, timeoutMs = CALL_TIMEOUT_MS): Promise<{ text: string; outTokens: number }> {
+// ------------------------------------------------------------------
+// Transient-failure retry. A single 429/529/5xx or dropped connection should
+// not fail a whole PDF upload, so those are retried a bounded number of times
+// with jittered backoff. We NEVER retry 4xx (400/401/403 won't fix themselves
+// and a retry just wastes latency + budget) and NEVER retry a full timeout
+// (retrying a 75s extract timeout would blow the bounded latency budget).
+// ------------------------------------------------------------------
+
+export class AnthropicError extends Error {
+  status?: number;
+  retryable: boolean;
+  constructor(message: string, opts: { status?: number; retryable: boolean }) {
+    super(message);
+    this.name = 'AnthropicError';
+    this.status = opts.status;
+    this.retryable = opts.retryable;
+  }
+}
+
+/** Only rate-limit / overload / server errors are worth retrying. */
+export function retryableStatus(status: number): boolean {
+  return status === 429 || status === 529 || (status >= 500 && status <= 599);
+}
+
+function isRetryable(e: unknown): boolean {
+  if (e instanceof AnthropicError) return e.retryable;
+  return true; // generic network/socket errors are transient — retry them
+}
+
+/** jittered exponential backoff, bounded (~250ms then ~500ms before jitter). */
+function backoffMs(attempt: number): number {
+  const base = 250 * Math.pow(2, attempt);
+  return base + Math.floor(Math.random() * base);
+}
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+/** Run `fn` with up to `retries` retries on transient failures. Each attempt is
+ * independent and keeps its own per-call timeout. Exported so the retry/backoff
+ * decision can be unit-tested hermetically (no network). */
+export async function withRetry<T>(
+  fn: (attempt: number) => Promise<T>,
+  opts?: { retries?: number; retryable?: (e: unknown) => boolean; delayMs?: (attempt: number) => number },
+): Promise<T> {
+  const retries = opts?.retries ?? 2;
+  const canRetry = opts?.retryable ?? isRetryable;
+  const delay = opts?.delayMs ?? backoffMs;
+  let lastErr: unknown;
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn(attempt);
+    } catch (e) {
+      lastErr = e;
+      if (attempt >= retries || !canRetry(e)) break;
+      await sleep(delay(attempt));
+    }
+  }
+  throw lastErr;
+}
+
+function anthropicOnce(system: string | undefined, prompt: string | ContentBlock[], maxTokens: number, timeoutMs: number): Promise<{ text: string; outTokens: number; inTokens: number }> {
   return new Promise((resolve, reject) => {
     const body = JSON.stringify({
       model: AI_MODEL,
@@ -173,6 +263,7 @@ function anthropicCall(system: string | undefined, prompt: string | ContentBlock
       ...(system ? { system } : {}),
       messages: [{ role: 'user', content: prompt }],
     });
+    const bodyBytes = Buffer.byteLength(body);
     const req = httpsRequest(
       {
         hostname: 'api.anthropic.com',
@@ -182,7 +273,7 @@ function anthropicCall(system: string | undefined, prompt: string | ContentBlock
           'content-type': 'application/json',
           'x-api-key': API_KEY,
           'anthropic-version': '2023-06-01',
-          'content-length': Buffer.byteLength(body),
+          'content-length': bodyBytes,
         },
         timeout: timeoutMs,
       },
@@ -190,20 +281,29 @@ function anthropicCall(system: string | undefined, prompt: string | ContentBlock
         let buf = '';
         res.on('data', (c) => (buf += c));
         res.on('end', () => {
-          if ((res.statusCode ?? 500) >= 400) { reject(new Error(`anthropic_status_${res.statusCode}`)); return; }
+          const status = res.statusCode ?? 500;
+          if (status >= 400) { reject(new AnthropicError(`anthropic_status_${status}`, { status, retryable: retryableStatus(status) })); return; }
           try {
-            const parsed = JSON.parse(buf) as { content?: { type: string; text?: string }[]; usage?: { output_tokens?: number }; stop_reason?: string };
+            const parsed = JSON.parse(buf) as { content?: { type: string; text?: string }[]; usage?: { input_tokens?: number; output_tokens?: number }; stop_reason?: string };
             const text = (parsed.content || []).filter((b) => b.type === 'text').map((b) => b.text || '').join('').trim();
-            resolve({ text, outTokens: parsed.usage?.output_tokens ?? 0 });
-          } catch { reject(new Error('anthropic_parse')); }
+            const outTokens = parsed.usage?.output_tokens ?? 0;
+            // meter INPUT too; approximate from request body size when usage is absent
+            const inTokens = parsed.usage?.input_tokens ?? Math.ceil(bodyBytes / 4);
+            resolve({ text, outTokens, inTokens });
+          } catch { reject(new AnthropicError('anthropic_parse', { retryable: false })); }
         });
       },
     );
     req.on('error', (e) => reject(e));
-    req.on('timeout', () => req.destroy(new Error('anthropic_timeout')));
+    // a full timeout is deliberately NOT retried (keeps worst-case latency bounded)
+    req.on('timeout', () => req.destroy(new AnthropicError('anthropic_timeout', { retryable: false })));
     req.write(body);
     req.end();
   });
+}
+
+function anthropicCall(system: string | undefined, prompt: string | ContentBlock[], maxTokens: number, timeoutMs = CALL_TIMEOUT_MS): Promise<{ text: string; outTokens: number; inTokens: number }> {
+  return withRetry(() => anthropicOnce(system, prompt, maxTokens, timeoutMs));
 }
 
 export interface LlmResult { text: string; live: boolean; cached: boolean; }
@@ -219,32 +319,35 @@ export interface LlmResult { text: string; live: boolean; cached: boolean; }
 export async function llmExtractPdf(opts: { system?: string; prompt: string; pdf: Buffer; fallback: string; maxTokens?: number }): Promise<LlmResult> {
   if (!API_KEY) return { text: opts.fallback, live: false, cached: false };
   if (opts.pdf.length > 9_000_000) return { text: opts.fallback, live: false, cached: false };
-  if (!withinDailyCap()) return { text: opts.fallback, live: false, cached: false };
+  if (!withinDailyCap('authed')) return { text: opts.fallback, live: false, cached: false };
   try {
     const blocks: ContentBlock[] = [
       { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: opts.pdf.toString('base64') } },
       { type: 'text', text: opts.prompt },
     ];
-    const { text, outTokens } = await anthropicCall(opts.system, blocks, Math.min(opts.maxTokens ?? TOKENS_PER_CALL_CAP, EXTRACT_TOKEN_CAP), EXTRACT_TIMEOUT_MS);
+    const { text, outTokens, inTokens } = await anthropicCall(opts.system, blocks, Math.min(opts.maxTokens ?? TOKENS_PER_CALL_CAP, EXTRACT_TOKEN_CAP), EXTRACT_TIMEOUT_MS);
     if (!text) return { text: opts.fallback, live: false, cached: false };
-    spend.tokens += outTokens || Math.ceil(text.length / 4);
+    meterTokens('authed', (outTokens || Math.ceil(text.length / 4)) + inTokens);
     return { text, live: true, cached: false };
   } catch {
     return { text: opts.fallback, live: false, cached: false };
   }
 }
 
-export async function llmGenerate(opts: { system?: string; prompt: string; fallback: string; maxTokens?: number; cacheKey?: string; extended?: boolean }): Promise<LlmResult> {
+export async function llmGenerate(opts: { system?: string; prompt: string; fallback: string; maxTokens?: number; cacheKey?: string; extended?: boolean; audience?: Audience }): Promise<LlmResult> {
   if (!API_KEY) return { text: opts.fallback, live: false, cached: false };
-  const key = opts.cacheKey ?? String(h((opts.system || '') + ' ' + opts.prompt + ' ' + AI_MODEL));
+  const audience: Audience = opts.audience === 'public' ? 'public' : 'authed';
+  // fold audience into the auto key so a public request can never be served an
+  // authed cache entry (or vice-versa); explicit cacheKeys are already scoped.
+  const key = opts.cacheKey ?? String(h(audience + '|' + (opts.system || '') + ' ' + opts.prompt + ' ' + AI_MODEL));
   const hit = cacheGet(key);
   if (hit !== undefined) return { text: hit, live: true, cached: true };
-  if (!withinDailyCap()) return { text: opts.fallback, live: false, cached: false };
+  if (!withinDailyCap(audience)) return { text: opts.fallback, live: false, cached: false };
   try {
     const cap = opts.extended ? EXTRACT_TOKEN_CAP : TOKENS_PER_CALL_CAP;
-    const { text, outTokens } = await anthropicCall(opts.system, opts.prompt, Math.min(opts.maxTokens ?? cap, cap), opts.extended ? EXTRACT_TIMEOUT_MS : CALL_TIMEOUT_MS);
+    const { text, outTokens, inTokens } = await anthropicCall(opts.system, opts.prompt, Math.min(opts.maxTokens ?? cap, cap), opts.extended ? EXTRACT_TIMEOUT_MS : CALL_TIMEOUT_MS);
     if (!text) return { text: opts.fallback, live: false, cached: false };
-    spend.tokens += outTokens || Math.ceil(text.length / 4);
+    meterTokens(audience, (outTokens || Math.ceil(text.length / 4)) + inTokens);
     cachePut(key, text);
     return { text, live: true, cached: false };
   } catch {

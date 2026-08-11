@@ -322,7 +322,7 @@ export function ilsIntakeCard(ctx: Ctx): Raw {
       inquiry lands here as a guest card with the prospect's message threaded, cadence started, and the Leasing AI answering
       per that property's autonomy dial. No retyping, no tab-switching.</p>
     <table class="tbl"><thead><tr><th>Property</th><th>Lead intake address</th></tr></thead><tbody>
-      ${props.map((p: any) => html`<tr><td>${p.name}</td><td><input readonly value="${intakeAddressFor(ctx, p)}" style="width:100%;max-width:420px;font-family:var(--mono,monospace);font-size:12px" onfocus="this.select()" /></td></tr>`)}
+      ${props.map((p: any) => html`<tr><td>${p.name}</td><td><input readonly value="${intakeAddressFor(ctx, p)}" style="width:100%;max-width:420px;font-family:var(--mono,monospace);font-size:12px" class="selectall" /></td></tr>`)}
     </tbody></table>
     <div class="callout ${armed ? '' : 'bad'}" style="margin-top:10px">
       ${armed

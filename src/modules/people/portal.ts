@@ -46,7 +46,8 @@ export function ensurePortalAccess(ctx: Ctx, residentId: string): { userId: stri
   const res = q1<any>('SELECT * FROM residents WHERE id=? AND org_id=?', residentId, ctx.orgId);
   if (!res || !res.email) return { userId: null, invited: false };
   if (res.user_id) return { userId: res.user_id as string, invited: false };
-  const existing = q1<any>('SELECT id FROM users WHERE email=?', res.email);
+  // scope to the resident's own org — never link across tenants (§SEC-9)
+  const existing = q1<any>('SELECT id FROM users WHERE email=? AND org_id=?', res.email, ctx.orgId);
   if (existing) {
     run('UPDATE residents SET user_id=? WHERE id=?', existing.id, residentId);
     return { userId: existing.id as string, invited: false };

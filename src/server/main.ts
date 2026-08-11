@@ -8,6 +8,7 @@ import { startPoller, syncLiveOrgClocks } from '../lib/jobs.ts';
 import { html } from '../lib/html.ts';
 import { shell, card, emptyState } from '../ui/ui.ts';
 import { env } from '../lib/env.ts';
+import { log } from '../lib/log.ts';
 
 // module route registrations (each module wires nav/search/api in its import)
 import * as auth from '../modules/auth/pages.ts';
@@ -66,11 +67,11 @@ export function startServer(port: number): ReturnType<typeof createApp> {
   const app = createApp({
     router,
     before: [attachSession],
-    onError: (e, rq) => console.error(`[500] ${rq.method} ${rq.path}:`, e.stack || e.message),
+    onError: (e, rq) => log.error('request_failed', e, { method: rq.method, path: rq.path, ip: rq.ip }),
   });
   app.listen(port, () => {
     const dbFile = env('DB') || 'data/stayleased.db';
-    console.log(`StayLeased listening on http://localhost:${port}  (db: ${dbFile}, mode: ${env('MODE') || 'dev'})`);
+    log.info(`StayLeased listening on http://localhost:${port}`, { db: dbFile, mode: env('MODE') || 'dev' });
   });
   return app;
 }
@@ -84,18 +85,24 @@ function seedIfEmpty(): void {
   const empty = !q1('SELECT id FROM orgs LIMIT 1');
   closeDb();
   if (!empty) return;
-  console.log('Empty database — seeding the demo world (about a minute)...');
+  log.info('Empty database — seeding the demo world (about a minute)...');
   const r = spawnSync(
     process.execPath,
     ['--experimental-strip-types', '--no-warnings', join(ROOT, 'src/seed/seed.ts'), '--quiet'],
     { cwd: ROOT, stdio: 'inherit' },
   );
   if (r.status !== 0) throw new Error(`seed failed with exit ${r.status}`);
-  console.log('Seed complete.');
+  log.info('Seed complete.');
 }
 
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop() || '@@');
 if (isMain) {
+  // Crash safety (CODE-1): a stray rejection or throw must be logged, not
+  // silently swallowed. We deliberately do NOT exit — the in-process poller and
+  // request handlers are resilient, so killing the process would take the whole
+  // server down over one bad async task.
+  process.on('unhandledRejection', (reason) => log.error('unhandledRejection', reason));
+  process.on('uncaughtException', (err) => log.error('uncaughtException', err));
   const port = parseInt(process.env.PORT || '3000', 10);
   if (env('MODE') !== 'test') seedIfEmpty();
   startServer(port);
@@ -103,7 +110,7 @@ if (isMain) {
     startPoller(60000);
     // catch live orgs up to today shortly after boot (poller repeats this)
     setTimeout(() => {
-      try { syncLiveOrgClocks(); } catch (e) { console.error('[clock]', (e as Error).message); }
+      try { syncLiveOrgClocks(); } catch (e) { log.error('clock_sync', e); }
     }, 2000);
   }
 }

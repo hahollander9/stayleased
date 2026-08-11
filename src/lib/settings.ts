@@ -107,7 +107,3 @@ export function setSetting(ctx: Ctx, key: string, value: any, propertyId?: strin
   audit(ctx, 'setting', `${pid || 'org'}:${key}`, 'update', { value: before ? j(before.value, null) : null }, { value });
 }
 
-export function clearSetting(ctx: Ctx, key: string, propertyId?: string | null): void {
-  run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, propertyId || '', key);
-  audit(ctx, 'setting', `${propertyId || 'org'}:${key}`, 'clear');
-}

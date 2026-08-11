@@ -53,6 +53,3 @@ export function when(cond: unknown, then: () => Child, els?: () => Child): Child
 }
 
 /** encode an attribute-safe JSON blob (for data-* attributes) */
-export function jsonAttr(v: unknown): string {
-  return esc(JSON.stringify(v));
-}

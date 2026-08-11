@@ -155,7 +155,7 @@ export function tickLabel(v: number, kind: 'num' | 'pct' | 'usd' = 'num'): strin
 
 /** Vertical bar chart with y-gridlines and axis labels (Rolling Weekly
  * Occupancy pattern). Highlights the final bar in the strong brand color. */
-export function barChart(labels: string[], values: number[], opts?: { kind?: 'num' | 'pct' | 'usd'; h?: number; highlightLast?: boolean; zeroBase?: boolean }): Raw {
+export function barChart(labels: string[], values: number[], opts?: { kind?: 'num' | 'pct' | 'usd'; h?: number; highlightLast?: boolean; zeroBase?: boolean; label?: string }): Raw {
   const kind = opts?.kind || 'num';
   const H = opts?.h ?? 190;
   const W = 640;
@@ -185,14 +185,14 @@ export function barChart(labels: string[], values: number[], opts?: { kind?: 'nu
     const every = n > 8 ? 2 : 1;
     if (i % every === 0) bars += `<text x="${cx}" y="${H - 8}" text-anchor="middle" font-size="10" fill="${AXIS}">${esc(labels[i] || '')}</text>`;
   });
-  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet">${g}${bars}</svg>`);
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts?.label ?? 'bar chart')}" preserveAspectRatio="xMidYMid meet">${g}${bars}</svg>`);
 }
 
 let GRAD_SEQ = 0;
 
 /** Smooth area chart with a soft gradient fill (Interactions / Conversion
  * Rate card pattern). */
-export function areaChart(labels: string[], values: number[], opts?: { kind?: 'num' | 'pct' | 'usd'; h?: number; color?: string }): Raw {
+export function areaChart(labels: string[], values: number[], opts?: { kind?: 'num' | 'pct' | 'usd'; h?: number; color?: string; label?: string }): Raw {
   const kind = opts?.kind || 'num';
   const H = opts?.h ?? 190;
   const W = 640;
@@ -233,7 +233,7 @@ export function areaChart(labels: string[], values: number[], opts?: { kind?: 'n
       + `<rect x="${(px - Math.min(18, iw / Math.max(values.length, 1) / 2)).toFixed(1)}" y="${padT}" width="${Math.min(36, iw / Math.max(values.length, 1)).toFixed(1)}" height="${ih}" fill="transparent"/>`
       + `<circle class="ctdot" cx="${px.toFixed(1)}" cy="${py.toFixed(1)}" r="${lastPt ? 3.4 : 0}" fill="${color}"><title>${esc(labels[i] || '')}: ${esc(tickLabel(values[i]!, kind))}</title></circle></g>`;
   });
-  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet">
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts?.label ?? 'area chart')}" preserveAspectRatio="xMidYMid meet">
     <defs><linearGradient id="${gid}" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stop-color="${color}" stop-opacity=".28"/><stop offset="100%" stop-color="${color}" stop-opacity=".02"/></linearGradient></defs>
     ${g}<path d="${area}" fill="url(#${gid})"/><path d="${d}" fill="none" stroke="${color}" stroke-width="2.2" stroke-linecap="round"/>
     <circle cx="${dot[0].toFixed(1)}" cy="${dot[1].toFixed(1)}" r="3.4" fill="${color}"/>${hovers}${xs}</svg>`);
@@ -241,7 +241,7 @@ export function areaChart(labels: string[], values: number[], opts?: { kind?: 'n
 
 /** Centered conversion funnel (Lead-to-Lease pattern): symmetric bands whose
  * widths taper with the counts; label + value inside each band. */
-export function funnelChart(stages: { label: string; value: number }[], opts?: { h?: number }): Raw {
+export function funnelChart(stages: { label: string; value: number }[], opts?: { h?: number; label?: string }): Raw {
   const W = 640;
   const bandH = 44, gap = 5;
   const H = opts?.h ?? stages.length * (bandH + gap) + 10;
@@ -264,11 +264,11 @@ export function funnelChart(stages: { label: string; value: number }[], opts?: {
     out += `<text x="${W / 2}" y="${yTop + bandH / 2 - 3}" text-anchor="middle" font-size="12" font-weight="600" fill="${ink}">${esc(s.label)}</text>`;
     out += `<text x="${W / 2}" y="${yTop + bandH / 2 + 13}" text-anchor="middle" font-size="12.5" font-weight="700" fill="${ink}">${s.value.toLocaleString('en-US')}</text>`;
   });
-  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet">${out}</svg>`);
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts?.label ?? 'funnel chart')}" preserveAspectRatio="xMidYMid meet">${out}</svg>`);
 }
 
 /** One horizontal segmented bar + legend (Communication phone/text pattern). */
-export function splitBar(parts: { label: string; value: number }[], opts?: { kind?: 'num' | 'pct' | 'usd' }): Raw {
+export function splitBar(parts: { label: string; value: number }[], opts?: { kind?: 'num' | 'pct' | 'usd'; label?: string }): Raw {
   const W = 640, H = 64, barH = 26;
   const total = parts.reduce((s, p) => s + p.value, 0) || 1;
   const colors = [BLUE, BLUE_MID, '#8caef0', BLUE_SOFT];
@@ -286,5 +286,5 @@ export function splitBar(parts: { label: string; value: number }[], opts?: { kin
     legend += `<text x="${lx + 14}" y="${H - 8}" font-size="11.5" fill="var(--chart-axis, #3c4657)">${esc(t)}</text>`;
     lx += 14 + t.length * 6.4 + 18;
   });
-  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" preserveAspectRatio="xMidYMid meet"><rect x="0" y="6" width="${W}" height="${barH}" rx="4" fill="${GRID}"/>${segs}${legend}</svg>`);
+  return raw(`<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opts?.label ?? 'segmented bar chart')}" preserveAspectRatio="xMidYMid meet"><rect x="0" y="6" width="${W}" height="${barH}" rx="4" fill="${GRID}"/>${segs}${legend}</svg>`);
 }
