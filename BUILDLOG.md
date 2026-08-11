@@ -287,3 +287,11 @@
 **Verified:** tsc clean · unit 228/228 (2 new: banner detection incl. template-null case, plan document_property validation) · e2e clientready+workingmodel+setup+smoke 20/20 (explicit prop_mode flows untouched; dropzone keeps `input[name=file]` for setInputFiles) · hub screenshot with computed-style diag (display:flex confirmed) · impeccable detector: only pre-existing theme patterns (security build's), dropzone block clean.
 
 **Next:** production-readiness sweep waves per `claude/production-readiness-sweep-plan.md` (Henry's scope: daily-work screens, onboarding/first-week, speed).
+
+## 2026-08-11 — Residents lane learns to MERGE: tenant-directory contact info onto existing residents
+
+**Built (Henry uploaded rent roll + tenant directory live; "not much is filled in"):** the Residents lane previously only INSERTED new people onto leases — a tenant-directory upload either errored rows or duplicated everyone, and the one thing it was needed for (emails onto the rent-roll-created primaries → portal invites) had no path. Now `validateResidents` matches each directory row against the unit's active-lease household by order-insensitive name (`nameKey`: "Beltran, Angel" ≡ "Angel Beltran"), and matched rows become MERGE plans: fill blank email/phone (never overwrite non-blank), audit `import_contact_merge`, and provision portal access + invite the moment an email lands on a non-occupant. Preview says exactly what will happen per row ("Matches Angel Beltran on the lease — email and phone will be added"); already-complete matches error-skip with a friendly note; genuinely new people still insert with their role. Apply flash + history gain "N contact updates" via `contactUpdates` on ApplySummary.
+
+**Verified:** tsc clean · unit 229/229 (new gate: rent roll creates email-less primary → directory in "Last, First" format merges email+phone, no duplicate, `user_id` provisioned, portalInvites 1, only the new occupant counts as created) · e2e clientready+workingmodel+setup+smoke 20/20.
+
+**Next:** Henry re-runs the tenant directory after deploying (his live attempt predates the merge — check Residents for duplicates; if duplicated, fresh-property redo is cleanest, now fast with property auto-detect).

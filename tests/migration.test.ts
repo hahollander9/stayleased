@@ -16,6 +16,7 @@ import { extractLeaseFromText } from '../src/modules/setup/import_leases.ts';
 import { validatePlan } from '../src/modules/setup/ai_reader.ts';
 import {
   validateRentRoll, applyRentRoll, validateVendors, applyVendors, validateBalances, applyBalances,
+  validateResidents as validateResidentsX, applyResidents as applyResidentsX,
   type BatchRow,
 } from '../src/modules/setup/import_apply.ts';
 import { postMonthlyChargesForLease } from '../src/modules/m8_receivables/service.ts';
@@ -651,4 +652,42 @@ test('reading plan: document_property survives validation, junk does not', () =>
   assert.equal(plan?.document_property, 'Station U & O');
   const noProp = validatePlan({ header_row: 0, cols: { 0: 'unit' }, skip_rows: [], sections: [], document_property: 42 }, 5, 3, 'rent_roll');
   assert.equal(noProp?.document_property, undefined);
+});
+
+test('resident directory MERGES contact info onto existing residents (no duplicates, invites fire)', () => {
+  // rent roll first: primary created with no email (the Yardi reality)
+  const rrHeaders = ['Unit', 'Tenant', 'Rent', 'Deposit', 'Lease Start', 'Lease End'];
+  const rrRows = [['701', 'Angel Beltran', '1500', '1500', '2026-01-01', '2026-12-31']];
+  const rrBatch = mkBatch({
+    new_property_name: 'Directory Merge Test',
+    headers: JSON.stringify(rrHeaders), mapping: JSON.stringify(autoMap(rrHeaders, 'rent_roll')), rows: JSON.stringify(rrRows),
+  });
+  applyRentRoll(sysCtx(orgId, AS_OF), rrBatch);
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Directory Merge Test')!.id;
+  const before = q<any>('SELECT r.* FROM residents r JOIN household_members hm ON hm.resident_id=r.id JOIN leases l ON l.id=hm.lease_id WHERE l.property_id=?', pid);
+  assert.equal(before.length, 1);
+  assert.equal(before[0].email, null);
+
+  // tenant directory: same person ("Last, First" format) with email+phone, plus a genuinely new occupant
+  const dirHeaders = ['Unit', 'Name', 'Email', 'Phone', 'Role'];
+  const dirRows = [
+    ['701', 'Beltran, Angel', 'angel@x.test', '(202) 555-0101', ''],
+    ['701', 'Riley Beltran', '', '', 'occupant'],
+  ];
+  const dirBatch = mkBatch({
+    kind: 'residents', property_id: pid,
+    headers: JSON.stringify(dirHeaders), mapping: JSON.stringify(autoMap(dirHeaders, 'residents')), rows: JSON.stringify(dirRows),
+  });
+  const v = validateResidentsX(sysCtx(orgId, AS_OF), dirBatch);
+  assert.equal(v.error, 0, v.rows.map((r) => r.notes.join(';')).join(' | '));
+  const s = applyResidentsX(sysCtx(orgId, AS_OF), dirBatch);
+
+  const after = q<any>('SELECT r.* FROM residents r JOIN household_members hm ON hm.resident_id=r.id JOIN leases l ON l.id=hm.lease_id WHERE l.property_id=? ORDER BY r.created_at', pid);
+  assert.equal(after.length, 2, 'Angel merged (not duplicated), Riley added');
+  const angel = after.find((r: any) => r.first_name === 'Angel')!;
+  assert.equal(angel.email, 'angel@x.test', 'email merged onto the existing resident');
+  assert.equal(angel.phone, '(202) 555-0101');
+  assert.ok(angel.user_id, 'portal access provisioned once the email landed');
+  assert.equal(s.portalInvites, 1);
+  assert.equal(s.residents, 1, 'only the new occupant counts as created');
 });

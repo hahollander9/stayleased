@@ -272,7 +272,14 @@ export interface ApplySummary {
   depositsCents: number;
   /** portal logins created + invite emails sent to imported primary residents */
   portalInvites?: number;
+  /** existing residents whose email/phone were filled in by a directory import */
+  contactUpdates?: number;
   skipped: number;
+}
+
+/** "Beltran, Angel" and "Angel Beltran" are the same person. */
+function nameKey(s: string): string {
+  return splitName(String(s || '').trim()).display.toLowerCase().replace(/\s+/g, ' ');
 }
 
 export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
@@ -499,17 +506,41 @@ export function validateResidents(ctx: Ctx, batch: BatchRow): Validation {
     const rec = extractRecord(raw, mapping);
     const notes: string[] = [];
     let level: VRow['level'] = 'ok';
+    let plan: Record<string, unknown> | undefined;
     const name = (rec.tenant || `${rec.first_name || ''} ${rec.last_name || ''}`).trim();
     if (!rec.unit) { level = 'error'; notes.push('Unit is required.'); }
     if (!name) { level = 'error'; notes.push('Name is required.'); }
-    if (batch.property_id && rec.unit) {
+    if (batch.property_id && rec.unit && name) {
       const unit = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', batch.property_id, rec.unit.trim());
+      const lease = unit
+        ? q1<{ id: string }>(`SELECT id FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') ORDER BY created_at DESC LIMIT 1`, unit.id)
+        : undefined;
       if (!unit) { level = 'error'; notes.push(`No unit “${rec.unit}” in that property.`); }
-      else if (!q1(`SELECT id FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') LIMIT 1`, unit.id)) {
-        level = 'error'; notes.push(`Unit ${rec.unit} has no active lease to attach to.`);
+      else if (!lease) { level = 'error'; notes.push(`Unit ${rec.unit} has no active lease to attach to.`); }
+      else {
+        // directory rows usually name people the rent roll already created —
+        // match them and MERGE contact info instead of duplicating the person
+        const members = q<{ id: string; first_name: string; last_name: string; email: string | null; phone: string | null; role: string }>(
+          `SELECT r.id, r.first_name, r.last_name, r.email, r.phone, hm.role FROM residents r
+           JOIN household_members hm ON hm.resident_id=r.id WHERE hm.lease_id=?`, lease.id,
+        );
+        const match = members.find((m) => nameKey(`${m.first_name} ${m.last_name}`) === nameKey(name));
+        if (match) {
+          const newEmail = (rec.email || '').trim();
+          const newPhone = (rec.phone || '').trim();
+          const addsEmail = !!newEmail && !match.email;
+          const addsPhone = !!newPhone && !match.phone;
+          if (addsEmail || addsPhone) {
+            notes.push(`Matches ${match.first_name} ${match.last_name} on the lease — ${[addsEmail ? 'email' : '', addsPhone ? 'phone' : ''].filter(Boolean).join(' and ')} will be added.`);
+            plan = { mergeResidentId: match.id, memberRole: match.role, addsEmail };
+          } else {
+            level = 'error';
+            notes.push(`${match.first_name} ${match.last_name} is already on the lease with this contact info — nothing to add.`);
+          }
+        }
       }
     }
-    tally(out, { n: i + 1, rec, level, notes });
+    tally(out, { n: i + 1, rec, level, notes, plan });
   });
   return out;
 }
@@ -521,6 +552,21 @@ export function applyResidents(ctx: Ctx, batch: BatchRow): ApplySummary {
   tx(() => {
     for (const row of validation.rows) {
       if (row.level === 'error') continue;
+      // merge path: the person already exists on the lease — fill in the
+      // blanks and provision portal access if an email just arrived
+      const merge = row.plan as { mergeResidentId?: string; memberRole?: string; addsEmail?: boolean } | undefined;
+      if (merge?.mergeResidentId) {
+        const newEmail = (row.rec.email || '').trim();
+        const newPhone = (row.rec.phone || '').trim();
+        if (newEmail) run(`UPDATE residents SET email=? WHERE id=? AND (email IS NULL OR email='')`, newEmail, merge.mergeResidentId);
+        if (newPhone) run(`UPDATE residents SET phone=? WHERE id=? AND (phone IS NULL OR phone='')`, newPhone, merge.mergeResidentId);
+        summary.contactUpdates = (summary.contactUpdates || 0) + 1;
+        audit(ctx, 'resident', merge.mergeResidentId, 'import_contact_merge', null, { batch: batch.id, email: !!newEmail, phone: !!newPhone });
+        if (merge.addsEmail && merge.memberRole !== 'occupant' && ensurePortalAccess(ctx, merge.mergeResidentId).invited) {
+          summary.portalInvites = (summary.portalInvites || 0) + 1;
+        }
+        continue;
+      }
       const unit = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', batch.property_id, row.rec.unit!.trim())!;
       const lease = q1<{ id: string }>(`SELECT id FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') ORDER BY created_at DESC LIMIT 1`, unit.id)!;
       const nm = splitName((row.rec.tenant || `${row.rec.first_name || ''} ${row.rec.last_name || ''}`).trim());
