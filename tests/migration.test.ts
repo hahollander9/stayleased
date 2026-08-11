@@ -10,6 +10,7 @@ import { writeXlsx, parseXlsx, serialToIso } from '../src/lib/xlsx.ts';
 import { pdfExtractText } from '../src/lib/pdftext.ts';
 import {
   autoMap, detectPreset, findHeaderRow, moneyToCents, toIsoDate, normStatus, splitName, norm,
+  mergeStackedHeader, harvestSubRowCharges, type Mapping,
 } from '../src/modules/setup/mapping.ts';
 import { extractLeaseFromText } from '../src/modules/setup/import_leases.ts';
 import {
@@ -456,4 +457,177 @@ test('signup: invite code gates; success creates a live org with chart + admin s
   } finally {
     close();
   }
+});
+
+// ---------- Yardi first-contact fixes (2026-08-11): stacked headers, ----------
+// ---------- value-aware tie-breaks, charge sub-rows, move-out dates ----------
+
+const YARDI_H1 = ['Unit', 'Unit Type', 'Unit', 'Resident', 'Name', 'Market', 'Charge', 'Amount', 'Resident', 'Other', 'Move In', 'Lease', 'Move Out', 'Balance'];
+const YARDI_H2 = ['', '', 'Sq Ft', '', '', 'Rent', 'Code', '', 'Deposit', 'Deposit', '', 'Expiration', '', ''];
+
+test('stacked header: Yardi two-row header merges into full labels', () => {
+  const { headers, merged } = mergeStackedHeader(YARDI_H1, YARDI_H2);
+  assert.equal(merged, true);
+  assert.equal(headers[2], 'Unit Sq Ft');
+  assert.equal(headers[8], 'Resident Deposit');
+  assert.equal(headers[9], 'Other Deposit');
+  assert.equal(headers[11], 'Lease Expiration');
+  assert.equal(headers[0], 'Unit'); // untouched where no sub-label
+});
+
+test('stacked header: a data row under the header does NOT merge', () => {
+  const data = ['201', 'UO2B', '1045', 't0006508', 'Angel Beltran', '1696', 'rntnt', '1696', '1696', '0', '2024-03-01', '2025-03-28', '', '0'];
+  assert.equal(mergeStackedHeader(YARDI_H1, data).merged, false);
+  // vendors-style text data row (has @ / digits) must not merge either
+  assert.equal(mergeStackedHeader(['Vendor Name', 'Trade', 'Email', 'Phone'], ['Ace Plumbing', 'Plumbing', 'ace@x.test', '(202) 555-0114']).merged, false);
+});
+
+test('mapping: merged Yardi headers map deposits and names correctly', () => {
+  const headers = mergeStackedHeader(YARDI_H1, YARDI_H2).headers;
+  const samples = [
+    ['201', 'UO2B', '1045', 't0006508', 'Angel Beltran', '1696', 'rntnt', '1696', '1696', '0', '2024-03-01', '2025-03-28', '', '0'],
+    ['203', 'UO1A-2HC', '701', 't0007882', 'Emman Abdulhadi', '1413', 'rntnt', '1413', '0', '0', '2024-12-18', '2026-01-31', '', '1413'],
+  ];
+  const m = autoMap(headers, 'rent_roll', samples);
+  const by: Record<string, number> = {};
+  for (const [c, f] of Object.entries(m.cols)) if (f) by[f] = Number(c);
+  assert.equal(by.unit, 0);
+  assert.equal(by.floorplan, 1);
+  assert.equal(by.sqft, 2);
+  assert.equal(by.tenant, 4, 'tenant must be the Name column, not the t-code Resident column');
+  assert.equal(by.market_rent, 5);
+  assert.equal(by.deposit, 8, 'deposit must be Resident Deposit (non-zero samples), not Other Deposit');
+  assert.equal(by.move_in, 10);
+  assert.equal(by.lease_end, 11);
+  assert.equal(by.move_out, 12);
+  assert.equal(by.balance, 13);
+});
+
+test('mapping: money tie-break prefers the non-zero column', () => {
+  const headers = ['Unit', 'Tenant', 'Rent', 'Other Deposit', 'Resident Deposit'];
+  const samples = [['101', 'Ana Lee', '1200', '0', '1200'], ['102', 'Bo Reyes', '1300', '0', '1300']];
+  const m = autoMap(headers, 'rent_roll', samples);
+  assert.equal(m.cols[4], 'deposit');
+  assert.notEqual(m.cols[3], 'deposit');
+});
+
+test('harvest: charge sub-rows roll into the unit above; totals dropped', () => {
+  const mapping = { cols: { 0: 'unit', 1: 'tenant', 2: 'rent' } as Record<number, string>, preset: null, aiAssisted: [] };
+  const rows = [
+    ['211', 'Allan Rodriguez', '1413', 'rntnt'],
+    ['', '', '60', 'tsprkg'],
+    ['', '', '1473', 'Total'],
+    ['212', 'Dana Whitfield', '1300', 'rntnt'],
+    ['', '', '45', 'tsprkg'],
+    ['', '', '25', 'pet'],
+    ['', '', '1370', 'Total'],
+    ['213', 'VACANT', '0', ''],
+  ];
+  const h = harvestSubRowCharges(rows, mapping as Mapping);
+  assert.equal(h.rows.length, 3, 'only unit rows survive');
+  assert.equal(h.extraByRow.get(0)?.cents, 6000);
+  assert.equal(h.extraByRow.get(1)?.cents, 7000);
+  assert.equal(h.harvestedRows, 3);
+  assert.ok([...h.codes].includes('tsprkg'));
+  assert.equal(h.extraByRow.get(2), undefined);
+});
+
+test('rent roll apply: move-out date persists and extra monthly charges bill', () => {
+  const headers = ['Unit', 'Tenant', 'Rent', 'Deposit', 'Lease Start', 'Lease End', 'Move Out', 'Other monthly charges'];
+  const rows = [
+    ['501', 'Nora Vale', '1500', '1500', '2026-01-01', '2026-12-31', '2026-09-30', '60'],
+    ['502', 'Omar Diaz', '1400', '1400', '2026-02-01', '2027-01-31', '', ''],
+  ];
+  const mapping = autoMap(headers, 'rent_roll');
+  const batch = mkBatch({
+    new_property_name: 'MoveOut Test Villas',
+    headers: JSON.stringify(headers), mapping: JSON.stringify(mapping), rows: JSON.stringify(rows),
+  });
+  const v = validateRentRoll(sysCtx(orgId, AS_OF), batch);
+  assert.equal(v.error, 0, v.rows.map((r) => r.notes.join(';')).join(' | '));
+  const s = applyRentRoll(sysCtx(orgId, AS_OF), batch);
+  assert.equal(s.leases, 2);
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'MoveOut Test Villas')!.id;
+  const u501 = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', pid, '501')!;
+  const lease = q1<any>('SELECT * FROM leases WHERE unit_id=?', u501.id)!;
+  assert.equal(lease.move_out_date, '2026-09-30', 'move-out date must import, not null');
+  assert.equal(lease.status, 'notice');
+  const extra = q1<any>(`SELECT * FROM lease_charges WHERE lease_id=? AND kind='other'`, lease.id);
+  assert.ok(extra, 'extra monthly lease charge exists');
+  assert.equal(extra.amount_cents, 6000);
+  // monthly posting picks up BOTH lines, idempotently
+  const mk2 = monthKey(addMonths(AS_OF, 1));
+  const posted = postMonthlyChargesForLease(sysCtx(orgId, AS_OF), lease, mk2);
+  assert.equal(posted, 2, 'rent + other recurring both post');
+});
+
+test('xlsx: self-closing styled cells and rows do not swallow their neighbors (Yardi corruption)', () => {
+  // Yardi Voyager writes styled empty cells as <c r="A6" s="6"/> — a greedy
+  // parser merges them into the NEXT cell, shifting columns and leaking raw
+  // shared-string indexes. This fixture reproduces the exact shape.
+  const sheetXml = `<?xml version="1.0"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>` +
+    `<row r="1" s="3"><c r="A1" s="6" /><c r="B1" s="6" /><c r="C1" s="7" t="s"><v>0</v></c><c r="D1" s="6" /><c r="E1" s="7" t="s"><v>1</v></c></row>` +
+    `<row r="2" s="3" />` +
+    `<row r="3"><c r="A3" s="14" t="s"><v>2</v></c><c r="B3" s="15" /><c r="C3" s="16"><v>1045</v></c><c r="D3" s="14" /><c r="E3" s="16"><v>250</v></c></row>` +
+    `</sheetData></worksheet>`;
+  const sst = `<?xml version="1.0"?><sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><si><t>Sq Ft</t></si><si><t>Deposit</t></si><si><t>201</t></si></sst>`;
+  const wb = `<?xml version="1.0"?><workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="S" sheetId="1" r:id="rId1"/></sheets></workbook>`;
+  const rels = `<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="w" Target="worksheets/sheet1.xml"/></Relationships>`;
+  const buf = writeZip([
+    { name: 'xl/workbook.xml', data: wb },
+    { name: 'xl/_rels/workbook.xml.rels', data: rels },
+    { name: 'xl/sharedStrings.xml', data: sst },
+    { name: 'xl/worksheets/sheet1.xml', data: sheetXml },
+  ]);
+  const rows = parseXlsx(buf)[0]!.rows;
+  assert.deepEqual(rows[0], ['', '', 'Sq Ft', '', 'Deposit'], 'styled empty cells must not swallow following cells');
+  assert.deepEqual(rows[1], [], 'self-closed row stays an empty row, not merged into the next');
+  assert.deepEqual(rows[2], ['201', '', '1045', '', '250'], 'values stay in their own columns');
+});
+
+test('harvest: a summary block never folds into the last unit', () => {
+  const mapping = { cols: { 0: 'unit', 1: 'tenant', 2: 'rent' } as Record<number, string>, preset: null, aiAssisted: [] };
+  const rows = [
+    ['310', 'Last Unit', '1500', 'rntnt'],
+    ['', '', '1500', 'Total'],
+    ['', 'Summary of Charges', '', ''],
+    ['', '', '149365', 'rntnt'],
+    ['', '', '1260', 'tsprkg'],
+    ['', '', '150625', 'Total'],
+  ];
+  const h = harvestSubRowCharges(rows, mapping as Mapping);
+  assert.equal(h.extraByRow.get(0), undefined, 'summary amounts must not attach to unit 310');
+  assert.equal(h.totalCents, 0);
+});
+
+test('harvest + validate: section labels in the unit column neither fold nor import', () => {
+  const mapping = { cols: { 0: 'unit', 1: 'tenant', 2: 'rent' } as Record<number, string>, preset: null, aiAssisted: [] };
+  const rows = [
+    ['1102', 'Cass Lane', '1500', 'rntnt'],
+    ['Future Residents/Applicants', '', '', ''],
+    ['', '', '1450', 'rntnt'],
+  ];
+  const h = harvestSubRowCharges(rows, mapping as Mapping);
+  assert.equal(h.extraByRow.get(0), undefined, 'applicant charges must not fold into unit 1102');
+  const batch = mkBatch({
+    new_property_name: 'Section Label Test',
+    headers: JSON.stringify(['Unit', 'Tenant', 'Rent']),
+    mapping: JSON.stringify(mapping), rows: JSON.stringify(h.rows),
+  });
+  const v = validateRentRoll(sysCtx(orgId, AS_OF), batch);
+  const labelRow = v.rows.find((r) => r.rec.unit === 'Future Residents/Applicants');
+  assert.equal(labelRow?.level, 'error', 'section label row is skipped, not imported as a unit');
+});
+
+test('harvest: rent listed only as a sub-row promotes into the unit row', () => {
+  const mapping = { cols: { 0: 'unit', 1: 'tenant', 2: 'rent' } as Record<number, string>, preset: null, aiAssisted: [] };
+  const rows = [
+    ['405', 'Ida Marsh', '', ''],
+    ['', '', '1408', 'rntnt'],
+    ['', '', '60', 'tsprkg'],
+    ['', '', '1468', 'Total'],
+  ];
+  const h = harvestSubRowCharges(rows, mapping as Mapping);
+  assert.equal(h.rows[0]![2], '1408.00', 'first sub-row becomes the rent');
+  assert.equal(h.extraByRow.get(0)?.cents, 6000, 'later sub-rows stay extras');
 });

@@ -127,14 +127,23 @@ function colIndex(ref: string): number {
 
 function parseWorksheet(xml: string, shared: string[], dateStyles: Set<number>): string[][] {
   const rows: string[][] = [];
-  const rowRe = /<(?:\w+:)?row\b[^>]*>([\s\S]*?)<\/(?:\w+:)?row>/g;
-  const cellRe = /<(?:\w+:)?c\b([^>]*)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
+  // Attr captures are LAZY so the '/>' alternative wins on self-closing tags.
+  // A greedy [^>]* eats the '/' of '<c r="A6" s="6"/>', reads the tag as OPEN,
+  // and swallows the next real cell — inheriting the empty cell's column and
+  // dropping t="s", which is exactly how Yardi Voyager exports (styled empty
+  // cells everywhere) came apart. Same for self-closed <row/>. (2026-08-11;
+  // regression test in tests/migration.test.ts.)
+  const rowRe = /<(?:\w+:)?row\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?row>)/g;
+  const cellRe = /<(?:\w+:)?c\b([^>]*?)(?:\/>|>([\s\S]*?)<\/(?:\w+:)?c>)/g;
   let rm: RegExpExecArray | null;
   while ((rm = rowRe.exec(xml))) {
+    // keep the sheet's real vertical spacing: pad omitted/self-closed rows
+    const rNum = parseInt(attr(`<row ${rm[1] || ''}>`, 'r') || '0', 10);
+    if (rNum >= 1) while (rows.length < rNum - 1) rows.push([]);
     const cells: string[] = [];
     let cm: RegExpExecArray | null;
     let autoCol = 0;
-    while ((cm = cellRe.exec(rm[1]!))) {
+    while ((cm = cellRe.exec(rm[2] || ''))) {
       const attrs = cm[1] || '';
       const body = cm[2] || '';
       const ref = attr(`<c ${attrs}>`, 'r');

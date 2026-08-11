@@ -10,7 +10,8 @@ import { parseSpreadsheet, writeXlsx } from '../../lib/xlsx.ts';
 import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
 import { shell, card, tbl, field, input, select, statusBadge } from '../../ui/ui.ts';
 import {
-  autoMap, fieldsFor, findHeaderRow, norm, PRESETS, type ImportKind, type Mapping,
+  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges, norm, PRESETS,
+  type ImportKind, type Mapping,
 } from './mapping.ts';
 import {
   validateRentRoll, validateVendors, validateResidents, validateBalances,
@@ -68,7 +69,7 @@ function extractJson(text: string): Record<string, unknown> | null {
 
 /** Ask the live brain to map leftover columns. Only fills gaps — heuristic
  * matches always win — and never invents fields. No key configured → no-op. */
-async function aiAssistMapping(headers: string[], samples: string[][], mapping: Mapping, kind: ImportKind, orgId: string): Promise<Mapping> {
+async function aiAssistMapping(headers: string[], samples: string[][], mapping: Mapping, kind: ImportKind): Promise<Mapping> {
   if (!llmStatus().live) return mapping;
   const fields = fieldsFor(kind);
   const unmappedCols = headers.map((_, i) => i).filter((i) => mapping.cols[i] === undefined);
@@ -82,7 +83,7 @@ async function aiAssistMapping(headers: string[], samples: string[][], mapping: 
     prompt: `Canonical fields: ${unclaimed.map((f) => `${f.key} (${f.label})`).join(', ')}\n\nUnmapped columns:\n${colDesc}\n\nJSON only:`,
     fallback: '{}',
     maxTokens: 300,
-    cacheKey: `map:${orgId}:${kind}:${headers.join('|')}`,
+    cacheKey: `map:${kind}:${headers.join('|')}`,
   });
   const parsed = extractJson(res.text) || {};
   const valid = new Set(unclaimed.map((f) => f.key));
@@ -165,12 +166,24 @@ export function routes(r: Router): void {
       // Whole-sheet AI reading first: the model sees the entire grid and plans
       // the read (header, columns, skip rows, property sections). Deterministic
       // code executes the plan; heuristics remain the fallback and the tiebreak.
-      const plan = await aiPlanSpreadsheet({ ...sheet, rows: sheet.rows.slice(0, MAX_ROWS + 40) }, kind, ctx.orgId).catch(() => null);
+      const plan = await aiPlanSpreadsheet({ ...sheet, rows: sheet.rows.slice(0, MAX_ROWS + 40) }, kind).catch(() => null);
 
       const headerIdx = findHeaderRow(sheet.rows, kind);
-      const hHeaders = (sheet.rows[headerIdx] || []).map((h) => String(h));
-      const hRows = sheet.rows.slice(headerIdx + 1, headerIdx + 1 + MAX_ROWS).filter((row) => row.some((c) => String(c).trim() !== ''));
-      let hMapping = autoMap(hHeaders, kind);
+      let hHeaders = (sheet.rows[headerIdx] || []).map((h) => String(h));
+      let hRows = sheet.rows.slice(headerIdx + 1, headerIdx + 1 + MAX_ROWS).filter((row) => row.some((c) => String(c).trim() !== ''));
+      let hMapping = autoMap(hHeaders, kind, hRows.slice(0, 8));
+      // stacked two-row header (Yardi): merge sub-labels when doing so maps
+      // strictly more fields, and consume the continuation row
+      const stacked = mergeStackedHeader(hHeaders, sheet.rows[headerIdx + 1]);
+      if (stacked.merged) {
+        const mergedMap = autoMap(stacked.headers, kind, hRows.slice(1, 9));
+        const mappedCount = (m: Mapping): number => Object.values(m.cols).filter(Boolean).length;
+        if (mappedCount(mergedMap) > mappedCount(hMapping)) {
+          hHeaders = stacked.headers;
+          hRows = hRows.slice(1);
+          hMapping = mergedMap;
+        }
+      }
 
       const aiRead = plan ? applyReadingPlan(sheet.rows.slice(0, MAX_ROWS + 40), plan, kind) : null;
       if (aiRead && aiRead.dataRows.length && mappingScore(aiRead.mapping.cols, kind) >= mappingScore(hMapping.cols, kind)) {
@@ -179,10 +192,40 @@ export function routes(r: Router): void {
         mapping = aiRead.mapping;
       } else {
         if (!hRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found under the header.', 'err');
-        hMapping = await aiAssistMapping(hHeaders, hRows, hMapping, kind, ctx.orgId);
+        hMapping = await aiAssistMapping(hHeaders, hRows, hMapping, kind);
         headers = hHeaders;
         dataRows = hRows;
         mapping = hMapping;
+      }
+    }
+    // AI-plan mappings get a free synonym pass over the (possibly merged)
+    // headers to fill columns the plan left unmapped — this is what catches
+    // "Resident Deposit" when the model only saw "Resident"
+    if (!isPdf && mapping.reader === 'ai') {
+      const gap = autoMap(headers, kind, dataRows.slice(0, 8));
+      const claimed = new Set(Object.values(mapping.cols).filter(Boolean));
+      for (const [ci, f] of Object.entries(gap.cols)) {
+        const n = Number(ci);
+        if (f && mapping.cols[n] === undefined && !claimed.has(f)) { mapping.cols[n] = f; claimed.add(f); }
+      }
+    }
+    // block-format rent rolls: fold charge sub-rows into the unit above and
+    // drop total lines — nothing the file billed monthly is lost
+    if (kind === 'rent_roll' && !isPdf) {
+      const h = harvestSubRowCharges(dataRows, mapping);
+      dataRows = h.rows;
+      if (h.harvestedRows > 0) {
+        const extraIdx = headers.length;
+        headers = [...headers, 'Other monthly charges'];
+        mapping.cols[extraIdx] = 'extra_monthly';
+        dataRows = dataRows.map((r, i) => {
+          const e = h.extraByRow.get(i);
+          const row = Array.from({ length: extraIdx }, (_, ci) => String(r[ci] ?? ''));
+          row.push(e ? (e.cents / 100).toFixed(2) : '');
+          return row;
+        });
+        const codeStr = [...h.codes].slice(0, 5).join(', ');
+        (mapping.notes ||= []).push(`Folded ${h.harvestedRows} recurring-charge sub-row${h.harvestedRows === 1 ? '' : 's'}${codeStr ? ` (${codeStr})` : ''} — $${(h.totalCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo — into an “Other monthly charges” column billed alongside rent.`);
       }
     }
     if (!dataRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found in that file.', 'err');
@@ -338,7 +381,7 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
     ['rentroll', 'Rent roll (everything)', html`
       ${card('Upload your rent roll — the whole portfolio in one file', html`
         <p class="muted" style="margin-top:0">${KINDS[0]!.blurb} Works with exports from ${hjoin(PRESETS.map((p) => html`<b>${p.name}</b>`), raw(', ').s)} or any spreadsheet.
-        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span> <span class="muted small">Documents are sent to Anthropic's Claude API for reading; no data is used for training.</span>` : html` <span class="muted small">(Automatic AI document reading is offline here — columns are matched by name; PDFs need the live AI)</span>`}</p>
+        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and plans the import; you review before applying">AI document reading: on</span>` : html` <span class="muted small">(Automatic AI document reading is offline here — columns are matched by name; PDFs need the live AI)</span>`}</p>
         ${uploader('rent_roll')}
         <div class="callout info" style="margin-top:10px">No file handy? <a href="/setup/import/template?kind=rent_roll">Download the Excel template</a> — or try the sample to see the flow.</div>
       `)}
@@ -432,17 +475,25 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
       ${when(!!preset, () => html`<div class="callout info">Recognized a <b>${preset!.name}</b> export — its columns were pre-mapped. Adjust anything below.</div>`)}
-      ${when(mapping.reader === 'ai', () => html`<div class="callout info"><b>Read by AI.</b> The model read the whole document — header, columns, section labels and summary rows. ${(mapping.notes || []).join(' ')} Verify the mapping and preview below; nothing imports until you apply.</div>`)}
+      ${when(mapping.reader === 'ai', () => html`<div class="callout info"><b>Read by AI.</b> The model read the whole document — header, columns, section labels and summary rows. ${(mapping.notes || []).join(' ')} Everything below is already pre-filled from that read — this screen is verification, not data entry. Nothing imports until you apply.</div>`)}
       ${when(mapping.aiAssisted.length, () => html`<div class="callout info">AI assist mapped: ${mapping.aiAssisted.join(', ')} — double-check those selects below.</div>`)}
 
       <form method="post" action="/setup/import/b/${batch.id}/mapping">
       ${card('1 · Column mapping', html`
+        <p class="muted small" style="margin-top:0">${String(headers.filter((_, i) => mapping.cols[i]).length)} of ${String(headers.length)} columns mapped automatically${mapping.reader === 'ai' ? ' by the AI read' : preset ? ` from the ${preset.name} format` : ''} — adjust anything, then re-check.</p>
         ${tbl(
-          [{ label: 'Your column' }, { label: 'Sample values' }, { label: 'Maps to' }],
+          [{ label: 'Your column' }, { label: 'Sample values' }, { label: 'Maps to' }, { label: '' }],
           headers.map((h, i) => ({ cells: [
             html`<b>${h || html`<span class="muted">(column ${String(i + 1)})</span>`}</b>`,
             html`<span class="muted small">${sample(i)}</span>`,
             select(`map_${i}`, [['', '— ignore —'], ...fields.map((f) => [f.key, f.label + (f.required ? ' *' : '')] as [string, Child])], mapping.cols[i] ?? ''),
+            mapping.cols[i]
+              ? (mapping.aiAssisted.includes(mapping.cols[i]!)
+                ? html`<span class="pill" title="Filled by the AI assist — double-check">AI assist</span>`
+                : mapping.reader === 'ai'
+                  ? html`<span class="pill" title="Mapped by the whole-document AI read">AI</span>`
+                  : preset ? html`<span class="pill" title="Recognized ${preset.name} column">${preset.name}</span>` : html`<span class="pill" title="Matched by column name">auto</span>`)
+              : raw(''),
           ] })),
           { empty: 'No columns found.' },
         )}

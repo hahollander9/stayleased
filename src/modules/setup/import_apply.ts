@@ -106,6 +106,10 @@ interface RRPlan {
   leaseStart: string;
   leaseEnd: string;
   moveIn: string | null;
+  /** imported move-out date — previously dropped (the audit's :336 finding) */
+  moveOut: string | null;
+  /** harvested/mapped recurring non-rent charges (parking, pet, storage…) */
+  extraMonthlyCents: number;
   mtm: boolean;
   onNotice: boolean;
 }
@@ -142,6 +146,14 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
       // skip obvious total/footer rows quietly when the row has no unit AND no tenant
       if (!rec.tenant && !rec.first_name) { fail('No unit number — row skipped.'); tally(out, { n, rec, level, notes }); return; }
       fail('Unit number is required.');
+      tally(out, { n, rec, level, notes });
+      return;
+    }
+    // a digit-less "unit" with no tenant is a section or summary label that
+    // leaked into the unit column ("Future Residents/Applicants", "Summary
+    // Groups") — skip it instead of creating a unit named after it
+    if (!/\d/.test(unit) && !rec.tenant && !rec.first_name) {
+      fail('Looks like a section or summary label — row skipped.');
       tally(out, { n, rec, level, notes });
       return;
     }
@@ -182,6 +194,9 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
 
     // dates
     const moveIn = toIsoDate(rec.move_in);
+    const moveOut = toIsoDate(rec.move_out);
+    if (rec.move_out && !moveOut) warn(`Couldn't read move-out date “${rec.move_out}” — ignored.`);
+    if (moveOut && moveOut < asOf) warn(`Move-out ${moveOut} is before the switch date — imported on notice; end the lease after import.`);
     let leaseStart = toIsoDate(rec.lease_start) || moveIn;
     let leaseEnd = toIsoDate(rec.lease_end);
     let mtm = false;
@@ -206,15 +221,20 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     if (!floorplanName) floorplanName = `${bedsF} bed / ${bathsF} bath`;
     const sqft = rec.sqft ? parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 750 : 750;
 
+    // recurring non-rent charges (harvested sub-rows or a mapped column)
+    const extraMonthlyCents = moneyToCents(rec.extra_monthly) ?? 0;
+    if (rec.extra_monthly && moneyToCents(rec.extra_monthly) === null) warn(`Couldn't read other monthly charges “${rec.extra_monthly}” — ignored.`);
+
     // existing unit checks (only resolvable for a concrete target property)
     const plan: RRPlan = {
       propertyKey, unit, floorplanName, beds: bedsF, baths: bathsF, sqft,
       marketRentCents: marketRentCents ?? effRent, occupied: occupied && !!tenantName,
-      unitStatus: occupied && tenantName ? (st === 'notice' ? 'notice' : 'occupied') : st === 'down' ? 'down' : 'vacant_ready',
+      unitStatus: occupied && tenantName ? (st === 'notice' || moveOut ? 'notice' : 'occupied') : st === 'down' ? 'down' : 'vacant_ready',
       tenants: [], email: rec.email || null, phone: rec.phone || null,
       rentCents: effRent, depositCents, balanceCents,
       leaseStart: leaseStart || asOf, leaseEnd: leaseEnd || addMonths(asOf, 12), moveIn: moveIn || leaseStart || null,
-      mtm, onNotice: st === 'notice',
+      moveOut, extraMonthlyCents: extraMonthlyCents > 0 ? extraMonthlyCents : 0,
+      mtm, onNotice: st === 'notice' || (!!moveOut && occupied),
     };
     if (tenantName && plan.occupied) {
       const parts = tenantName.split(/\s*(?:&| and )\s*/i).filter(Boolean).slice(0, 4);
@@ -336,7 +356,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unitId,
           household_name: householdName, status: plan.mtm ? 'month_to_month' : plan.onNotice ? 'notice' : 'active',
           start_date: plan.leaseStart, end_date: plan.leaseEnd, move_in_date: plan.moveIn,
-          move_out_date: null, notice_date: null, mtm_since: plan.mtm ? (plan.leaseEnd < asOf ? plan.leaseEnd : asOf) : null,
+          move_out_date: plan.moveOut, notice_date: null, mtm_since: plan.mtm ? (plan.leaseEnd < asOf ? plan.leaseEnd : asOf) : null,
           rent_cents: plan.rentCents, deposit_cents: plan.depositCents, deposit_alternative: 0,
           term_months: 12, application_id: null, renewal_of_lease_id: null, template_id: null,
           packet_file_id: null, esign_request_id: null, bed_label: null,
@@ -347,6 +367,15 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           amount_cents: plan.rentCents, gl_account_code: null, rentable_item_id: null,
           start_date: billingStart, end_date: null, created_at: nowIso(),
         });
+        if (plan.extraMonthlyCents > 0) {
+          // parking/pet/storage lines folded in from the source file — billed
+          // monthly alongside rent as their own charge line, never merged into it
+          insert('lease_charges', {
+            id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'other', label: 'Other recurring (imported)',
+            amount_cents: plan.extraMonthlyCents, gl_account_code: null, rentable_item_id: null,
+            start_date: billingStart, end_date: null, created_at: nowIso(),
+          });
+        }
         run(`UPDATE units SET status=? WHERE id=?`, plan.onNotice ? 'notice' : 'occupied', unitId);
 
         plan.tenants.forEach((t, ti) => {

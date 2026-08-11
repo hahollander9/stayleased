@@ -249,3 +249,21 @@
 **Verified:** tsc clean · unit 191/191 · marketing e2e 38/38 (homepage incl. new order assertion + new approval-h2 pin, mkpages, marketing, navmenus, rebrand, smoke) · batched screenshot round desktop 1440 + mobile 390, light + dark (hero, approval, table, governance) with one fix batch (mobile table) + confirm · impeccable detector: only pre-existing brand patterns (gradient numerals, dark-kicker gradient, draft-rail border, Space Grotesk) — deliberately untouched.
 
 **Next:** Henry uploads the cumulative controlfirst zip (supersedes demoled zip — includes it); demo gate + demo-org reset unchanged from prior entries.
+
+## 2026-08-11 — Import first-contact fixes: the Yardi build (parser correctness + no data loss + verify-framed review)
+
+**Built (driven by Henry's live Station U & O import test — real Voyager 7S "Rent Roll with Lease Charges"):**
+1. **xlsx parser correctness (`lib/xlsx.ts`) — the root cause.** The cell/row regexes greedily consumed the `/` of self-closing tags (`<c r="A6" s="6"/>`), read them as OPEN tags, and swallowed the next real cell — inheriting the empty cell's column and dropping `t="s"`. Yardi styles every empty cell, so values shifted columns on most rows (deposits/balances/move-outs landing under the wrong headers) and shared-string indexes leaked as literals ("Sq Ft"→"16", "Total"→"27"). Fixed with lazy attr captures + self-closed-row handling + row padding by `r=`. Regression test hand-builds the exact Yardi shape.
+2. **Stacked two-row headers** (`mergeStackedHeader`): "Resident/Deposit", "Unit/Sq Ft", "Lease/Expiration" merge before mapping, on both the AI-plan path (guarded against section rows) and the heuristic path (accepted only when it strictly increases mapped fields). With merged headers the **Yardi preset** now fires (its `resident→tenant` mapping removed — in Voyager exports Resident is the t-code column; value-shape tie-breaks prefer person-shaped samples for tenant and non-zero samples for money fields).
+3. **Charge-code-aware sub-row harvest** (`harvestSubRowCharges`): block-based — each unit's charges are gathered (the unit row's own Amount is just one charge, often parking, NOT rent), the portfolio's rent code is inferred (modal across blocks, rnt*-prefix tie-break), rent is promoted from whichever row carries it, and every other code folds into a new "Other monthly charges" column → imported as a second `lease_charges` row (kind `other`) that the monthly billing job posts alongside rent, prorated and idempotent. Barriers: Total rows dropped; digit-less "units" (section labels, "Summary Groups") close the fold window and are error-skipped by the validator instead of becoming units.
+4. **Move-out dates import** (the audit's `import_apply` `move_out_date: null` finding): mapped column → `leases.move_out_date`, status notice, billing stops at move-out; past-date move-outs warn.
+5. **AI-read gap-fill**: after an AI plan wins, a free synonym pass over the merged headers fills columns the plan left unmapped. `amount` added to rent synonyms (a rent roll's bare Amount column is the charge amount).
+6. **Review screen verify-framing**: "N of M columns mapped automatically" line, per-row provenance pills (AI / AI assist / preset / auto), "this screen is verification, not data entry" copy.
+
+**Reconciliation against the real file (heuristic path, no live AI):** 110 unique units · rent **$149,365.00 exact** vs Yardi's rntnt summary · extras **$1,260.00 exact** vs tsprkg · 119 total rows dropped · 8 future/applicant duplicates error-skipped · 3 move-outs captured. Penny-perfect to the source system's own summary block.
+
+**Decisions:** #27–28.
+
+**Verified:** tsc clean · unit 201/201 (10 new: parser corruption fixture, stacked headers ×2, merged-Yardi mapping, money tie-break, harvest ×4, move-out+extra-charges apply/billing) · e2e setup+clientready+workingmodel+goldenpath+smoke 25/25 · real-file replay reconciles to the penny. Accounting flake fired twice mid-session (documented; passes on rerun).
+
+**Next:** Henry re-imports Station U & O AFTER deploying (the applied import predates the parser fix — its rows are column-shifted; use a fresh property or org) · resident-directory import for emails → portal invites · PDF-lane extra_monthly support · Lease PDFs/vendors lanes still untested against Dantes data.

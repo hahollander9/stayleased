@@ -39,13 +39,14 @@ export const RENT_ROLL_FIELDS: FieldDef[] = [
   { key: 'last_name', label: 'Last name', synonyms: ['last name', 'last', 'lname', 'surname'], contains: ['last name'] },
   { key: 'email', label: 'Email', synonyms: ['email', 'e mail', 'email address', 'tenant email', 'resident email'], contains: ['email'] },
   { key: 'phone', label: 'Phone', synonyms: ['phone', 'phone number', 'mobile', 'cell', 'telephone', 'contact number', 'tenant phone'], contains: ['phone'] },
-  { key: 'rent', label: 'Lease rent', synonyms: ['rent', 'lease rent', 'current rent', 'monthly rent', 'rent amount', 'rate', 'rent charge', 'actual rent', 'contract rent', 'rental rate', 'total rent'], contains: ['rent'] },
+  { key: 'rent', label: 'Lease rent', synonyms: ['rent', 'lease rent', 'current rent', 'monthly rent', 'rent amount', 'rate', 'rent charge', 'actual rent', 'contract rent', 'rental rate', 'total rent', 'amount'], contains: ['rent'] },
   { key: 'deposit', label: 'Security deposit', synonyms: ['deposit', 'security deposit', 'sec dep', 'sec deposit', 'deposit held', 'deposits held', 'security dep'], contains: ['deposit'] },
   { key: 'balance', label: 'Balance owed', hint: 'what the household owes as of the switch date', synonyms: ['balance', 'balance due', 'past due', 'amount owed', 'outstanding', 'delinquent', 'delinquency', 'ar balance', 'total owed', 'open balance', 'amount due', 'total due'], contains: ['balance', 'past due', 'due'] },
   { key: 'lease_start', label: 'Lease start', synonyms: ['lease start', 'lease from', 'start date', 'lease start date', 'lease begin', 'begin date', 'from'], contains: ['lease start', 'lease from'] },
   { key: 'lease_end', label: 'Lease end', synonyms: ['lease end', 'lease to', 'end date', 'lease end date', 'expiration', 'lease expiration', 'expiry', 'to'], contains: ['lease end', 'lease to', 'expir'] },
   { key: 'move_in', label: 'Move-in date', synonyms: ['move in', 'move in date', 'movein', 'moved in', 'occupancy date'], contains: ['move in'] },
   { key: 'move_out', label: 'Move-out date', synonyms: ['move out', 'move out date', 'moveout', 'notice date'], contains: ['move out'] },
+  { key: 'extra_monthly', label: 'Other monthly charges', hint: 'parking, storage, pets — imported as a second recurring charge on the lease', synonyms: ['other monthly charges', 'other charges', 'additional charges', 'recurring charges', 'ancillary charges'], contains: ['other charge', 'addl charge'] },
 ];
 
 export const VENDOR_FIELDS: FieldDef[] = [
@@ -101,7 +102,12 @@ export const PRESETS: Preset[] = [
   {
     key: 'yardi', name: 'Yardi',
     signature: ['unit', 'unit type', 'resident', 'market rent', 'lease from', 'lease to'],
-    map: { 'unit': 'unit', 'unit type': 'floorplan', 'resident': 'tenant', 'name': 'tenant', 'market rent': 'market_rent', 'actual rent': 'rent', 'resident deposit': 'deposit', 'other deposit': '', 'move in': 'move_in', 'lease from': 'lease_start', 'lease to': 'lease_end', 'move out': 'move_out', 'balance': 'balance', 'sq ft': 'sqft' },
+    // NOTE: 'resident' is deliberately NOT mapped to tenant here — in Voyager
+    // "Rent Roll with Lease Charges" exports, Resident is the t-code column and
+    // Name carries the household. Files where Resident IS the name still map
+    // through the tenant synonyms (with the value-shape tie-break preferring
+    // the column whose samples look like people).
+    map: { 'unit': 'unit', 'unit type': 'floorplan', 'name': 'tenant', 'market rent': 'market_rent', 'actual rent': 'rent', 'resident deposit': 'deposit', 'other deposit': '', 'move in': 'move_in', 'lease from': 'lease_start', 'lease to': 'lease_end', 'move out': 'move_out', 'lease expiration': 'lease_end', 'sq ft': 'sqft', 'unit sq ft': 'sqft', 'charge code': '', 'balance': 'balance' },
   },
   {
     key: 'rentmanager', name: 'Rent Manager',
@@ -152,11 +158,26 @@ function scoreField(h: string, f: FieldDef): number {
   return 0;
 }
 
-export function autoMap(headers: string[], kind: ImportKind): Mapping {
+/** Fields where two look-alike columns are common (Resident Deposit vs Other
+ * Deposit) — the tie-break prefers the column whose sample values are real. */
+const MONEY_FIELDS = new Set(['deposit', 'rent', 'market_rent', 'balance', 'extra_monthly']);
+
+export function autoMap(headers: string[], kind: ImportKind, samples?: string[][]): Mapping {
   const fields = fieldsFor(kind);
   const preset = kind === 'rent_roll' ? detectPreset(headers) : null;
   const cols: Record<number, string> = {};
   const claimed = new Set<string>();
+
+  // value-shape signals per column (only when samples are provided)
+  const colMoney: boolean[] = [];
+  const colPerson: boolean[] = [];
+  if (samples?.length) {
+    headers.forEach((_, i) => {
+      const vals = samples.map((r) => String(r[i] ?? '').trim()).filter(Boolean);
+      colMoney[i] = vals.some((v) => (moneyToCents(v) ?? 0) > 0);
+      colPerson[i] = vals.some((v) => /[a-zA-Z]{2,}\s+[a-zA-Z]{2,}/.test(v) && !/\d{3,}/.test(v));
+    });
+  }
 
   // 1) preset exact headers win
   if (preset) {
@@ -172,18 +193,24 @@ export function autoMap(headers: string[], kind: ImportKind): Mapping {
   }
 
   // 2) generic synonym scoring for the rest — best score wins per column,
-  //    and each field is claimed by its highest-scoring column
-  const candidates: { col: number; field: string; score: number }[] = [];
+  //    each field claimed by its highest-scoring column; ties break on value
+  //    shape (money fields want non-zero samples, tenant wants name-shaped
+  //    samples), then on column order.
+  const candidates: { col: number; field: string; score: number; boost: number }[] = [];
   headers.forEach((h, i) => {
     if (cols[i] !== undefined) return;
     const hn = norm(h);
     if (!hn) return;
     for (const f of fields) {
       const s = scoreField(hn, f);
-      if (s > 0) candidates.push({ col: i, field: f.key, score: s });
+      if (s <= 0) continue;
+      let boost = 0;
+      if (MONEY_FIELDS.has(f.key)) boost = colMoney[i] ? 1 : 0;
+      else if (f.key === 'tenant') boost = colPerson[i] ? 1 : 0;
+      candidates.push({ col: i, field: f.key, score: s, boost });
     }
   });
-  candidates.sort((a, b) => b.score - a.score);
+  candidates.sort((a, b) => b.score - a.score || b.boost - a.boost || a.col - b.col);
   const colTaken = new Set<number>(Object.keys(cols).map(Number));
   for (const c of candidates) {
     if (colTaken.has(c.col) || claimed.has(c.field)) continue;
@@ -192,6 +219,154 @@ export function autoMap(headers: string[], kind: ImportKind): Mapping {
     claimed.add(c.field);
   }
   return { cols, preset: preset?.key || null, aiAssisted: [] };
+}
+
+// ---------- stacked (two-row) headers ----------
+
+/** Yardi-style stacked headers: a sparse continuation row directly under the
+ * header carries sub-labels ("Sq Ft", "Deposit", "Expiration") that belong to
+ * the titles above. Merge the labels; the caller drops the row from data when
+ * `merged` is true. Guards make a data row unmergeable: any filled cell that
+ * is money-like, date-like, digit-heavy, or an email disqualifies the row, as
+ * does a row as dense as the header itself. */
+export function mergeStackedHeader(headerRow: string[], nextRow: string[] | undefined): { headers: string[]; merged: boolean } {
+  const plain = headerRow.map((h) => String(h ?? '').trim());
+  if (!nextRow) return { headers: plain, merged: false };
+  const cells = nextRow.map((c) => String(c ?? '').trim());
+  const filled = cells.filter(Boolean);
+  // one filled cell is a section label ("Maple Court"), not a sub-label row
+  if (filled.length < 2) return { headers: plain, merged: false };
+  const labelish = (s: string): boolean =>
+    s.length <= 26 && !s.includes('@')
+    && (s.match(/\d/g) || []).length < 3
+    && moneyToCents(s) === null && toIsoDate(s) === null;
+  if (!filled.every(labelish)) return { headers: plain, merged: false };
+  const headFilled = plain.filter(Boolean).length;
+  if (filled.length >= headFilled) return { headers: plain, merged: false };
+  const headers = plain.map((a, i) => {
+    const b = cells[i] || '';
+    return b ? (a ? `${a} ${b}` : b) : a;
+  });
+  return { headers, merged: true };
+}
+
+// ---------- charge sub-rows (block-format rent rolls) ----------
+
+export interface SubRowHarvest {
+  /** surviving rows (unit rows only, in order) */
+  rows: string[][];
+  /** surviving-row index → harvested recurring extras from its sub-rows */
+  extraByRow: Map<number, { cents: number; codes: string[] }>;
+  harvestedRows: number;
+  droppedTotals: number;
+  totalCents: number;
+  codes: Set<string>;
+}
+
+/** Yardi "Rent Roll with Lease Charges" prints each unit as a block: a unit
+ * row plus one row per charge code, then a Total row. The rent is the amount
+ * on the row whose CODE is the rent code — NOT necessarily the unit row's
+ * amount (multi-charge units often carry parking on the unit row and rent in
+ * a sub-row). So the harvest is block- and code-aware: gather each block's
+ * charges, find the portfolio's rent code (the code most units share, ties
+ * broken toward rnt*/
+export function harvestSubRowCharges(rows: string[][], mapping: Mapping): SubRowHarvest {
+  const out: SubRowHarvest = { rows: [], extraByRow: new Map(), harvestedRows: 0, droppedTotals: 0, totalCents: 0, codes: new Set() };
+  let unitCol = -1;
+  let rentCol = -1;
+  let tenantCol = -1;
+  const mappedCols = new Set<number>();
+  for (const [c, f] of Object.entries(mapping.cols)) {
+    if (f) mappedCols.add(Number(c));
+    if (f === 'unit') unitCol = Number(c);
+    if (f === 'rent') rentCol = Number(c);
+    if (f === 'tenant') tenantCol = Number(c);
+  }
+  if (unitCol < 0 || rentCol < 0) { out.rows = rows; return out; }
+
+  // ---- pass 1: keep rows, group charge sub-rows into blocks under their unit
+  interface Charge { code: string; cents: number; fromUnitRow: boolean }
+  const blocks = new Map<number, Charge[]>(); // out.rows index → charges
+  const chargeRowCells: string[][] = []; // sub-rows, for code-column detection
+  let lastUnitIdx = -1;
+  const pending: { idx: number; row: string[] }[] = [];
+  for (const row of rows) {
+    const unit = String(row[unitCol] ?? '').trim();
+    if (unit) {
+      out.rows.push(row);
+      // a digit-less "unit" is a section label ("Future Residents/Applicants",
+      // "Summary Groups") — keep the row for the validator but close the
+      // window so what follows can't fold into the real unit above
+      lastUnitIdx = /\d/.test(unit) ? out.rows.length - 1 : -1;
+      continue;
+    }
+    const isTotal = row.some((c) => /^(sub)?totals?$/i.test(String(c ?? '').trim()));
+    if (isTotal) { out.droppedTotals++; continue; }
+    const cents = moneyToCents(String(row[rentCol] ?? ''));
+    const tenant = tenantCol >= 0 ? String(row[tenantCol] ?? '').trim() : '';
+    if (cents !== null && cents > 0 && !tenant && lastUnitIdx >= 0) {
+      pending.push({ idx: lastUnitIdx, row });
+      chargeRowCells.push(row);
+      continue;
+    }
+    out.rows.push(row); // unknown blank-unit row: keep — the validator reports it
+    lastUnitIdx = -1; // …and close the attribution window (summary blocks, stray headers)
+  }
+  if (!pending.length) return out;
+
+  // ---- code column: the unmapped column charge sub-rows consistently fill
+  const codeColVotes = new Map<number, number>();
+  for (const r of chargeRowCells) {
+    r.forEach((c, ci) => {
+      const v = String(c ?? '').trim();
+      if (!v || ci === rentCol || mappedCols.has(ci)) return;
+      if (/^[a-zA-Z][a-zA-Z0-9]{1,11}$/.test(v) && moneyToCents(v) === null) codeColVotes.set(ci, (codeColVotes.get(ci) || 0) + 1);
+    });
+  }
+  const codeCol = [...codeColVotes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1;
+  const codeAt = (row: string[]): string => (codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '');
+
+  // build blocks: the unit row's own amount counts as a charge when a code
+  // column exists (Yardi puts SOME charge — not always rent — on the unit row)
+  for (const { idx, row } of pending) {
+    const list = blocks.get(idx) || [];
+    if (!list.length) {
+      const parent = out.rows[idx]!;
+      const pCents = moneyToCents(String(parent[rentCol] ?? ''));
+      if (pCents !== null && pCents > 0 && codeCol >= 0) list.push({ code: codeAt(parent), cents: pCents, fromUnitRow: true });
+    }
+    list.push({ code: codeAt(row), cents: moneyToCents(String(row[rentCol] ?? ''))!, fromUnitRow: false });
+    blocks.set(idx, list);
+  }
+
+  // ---- the rent code: shared by the most blocks; ties break toward rnt*/rent*
+  const codeBlocks = new Map<string, number>();
+  for (const list of blocks.values()) {
+    for (const code of new Set(list.map((c) => c.code).filter(Boolean))) codeBlocks.set(code, (codeBlocks.get(code) || 0) + 1);
+  }
+  const rentCode = [...codeBlocks.entries()]
+    .sort((a, b) => b[1] - a[1] || Number(/^re?nt/i.test(b[0])) - Number(/^re?nt/i.test(a[0])) || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
+
+  // ---- pass 2: per block, rent = the rent-code charge; everything else = extras
+  for (const [idx, list] of blocks) {
+    const rent = list.find((c) => c.code && c.code === rentCode) ?? (moneyToCents(String(out.rows[idx]![rentCol] ?? '')) ? null : list[0] ?? null);
+    const extras = list.filter((c) => c !== rent && !(c.fromUnitRow && !rent));
+    const promoted = [...out.rows[idx]!];
+    if (rent) promoted[rentCol] = (rent.cents / 100).toFixed(2);
+    out.rows[idx] = promoted;
+    let cents = 0;
+    const codes: string[] = [];
+    for (const c of extras) {
+      cents += c.cents;
+      if (c.code) { codes.push(c.code); out.codes.add(c.code); }
+    }
+    if (cents > 0) {
+      out.extraByRow.set(idx, { cents, codes });
+      out.totalCents += cents;
+    }
+    out.harvestedRows += list.filter((c) => !c.fromUnitRow).length;
+  }
+  return out;
 }
 
 /** Which required/important fields are still unmapped (for warnings + AI assist). */
