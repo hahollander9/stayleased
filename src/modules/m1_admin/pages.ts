@@ -30,7 +30,7 @@ registerNav('Admin', { href: '/admin/audit', label: 'Audit log', perm: 'admin:au
 registerNav('Admin', { href: '/admin/jobs', label: 'Scheduled jobs', perm: 'admin:jobs' });
 registerNav('Admin', { href: '/admin/api', label: 'Integrations', perm: 'admin:api' });
 registerNav('Developer', { href: '/dev/sim', label: 'Simulator console', perm: 'dev:console', demoOnly: true });
-registerNav('Developer', { href: '/dev/messages', label: 'Message console', perm: 'dev:console' });
+registerNav('Developer', { href: '/dev/messages', label: 'Outbox', perm: 'dev:console' });
 
 registerSearch((ctx, query) => {
   if (!ctx.perms.has('admin:staff')) return [];
@@ -435,10 +435,10 @@ export function routes(r: Router): void {
     const page = Math.max(1, parseInt(rq.query.get('page') || '1', 10) || 1);
     const rows = q<any>(`SELECT * FROM outbox_messages WHERE ${where} ORDER BY created_at DESC LIMIT 50 OFFSET ?`, ...params, (page - 1) * 50);
     return shell(rq, {
-      title: 'Message console',
+      title: 'Outbox',
       active: '/dev/messages',
       subtitle: ctx.orgKind === 'live'
-        ? `Your outbox record — live email/SMS rails are not on yet, so nothing sends externally; every message the platform generates (portal invites with one-time passwords included) is captured here. ${total} message${total === 1 ? '' : 's'}.`
+        ? `Every message the platform generates — portal invites and one-time passwords included. External email/SMS delivery is rolling out; until it's enabled, this is the delivery record. ${total} message${total === 1 ? '' : 's'}.`
         : `Outbox simulator — nothing actually sends. ${total} message${total === 1 ? '' : 's'} captured.`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>

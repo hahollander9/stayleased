@@ -83,6 +83,18 @@ test('client walk 1: signup → rent-roll upload → applied with portal invites
   assert.match(flash, /3 leases/);
   assert.match(flash, /4 residents/);
   assert.match(flash, /3 portal invites sent/, 'every primary with an email got portal access');
+
+  // the applied import stays visible: history on the hub + a read-only record
+  await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
+  const hub = await body(page);
+  assert.match(hub, /Import history/, 'hub shows the history section once a batch exists');
+  assert.match(hub, /Applied/, 'applied batch is listed, not hidden');
+  assert.match(hub, /3 leases/, 'history row carries the result summary');
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('a.btn-ghost[href*="/setup/import/b/"]')]);
+  const record = await body(page);
+  assert.match(record, /Applied/, 'read-only record renders for an applied batch');
+  assert.match(record, /Cedar Yard|3 leases/, 'record shows what the import did');
+  assert.doesNotMatch(record, /Apply \d+ rows?/, 'no apply button on an applied batch');
   await page.close();
 });
 

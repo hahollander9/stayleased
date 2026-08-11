@@ -370,7 +370,7 @@ export function routes(r: Router): void {
               <p>Plain-English questions about your portfolio, answered from your live operating records. Every answer is recorded in the audit log.</p>
             </div>
             ${when(pc.scope, () => html`<span class="badge info">Scoped to ${pc.scope}</span>`)}
-            <span class="aichat-brain ${st.live ? 'live' : ''}"><i></i>${st.live ? `Live · ${st.model}` : 'Demo brain'}</span>
+            <span class="aichat-brain ${st.live ? 'live' : ''}"><i></i>${st.live ? `Live · ${st.model}` : 'Built-in engine'}</span>
           </div>
 
           <div class="aichat-panel">

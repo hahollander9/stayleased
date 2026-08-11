@@ -185,7 +185,13 @@ export function leasePdfLaneCard(ctx: Ctx, props: { id: string; name: string }[]
     ${ai.live ? html` <span class="pill">AI document reading: live (${ai.model})</span> <span class="muted small">Documents are sent to Anthropic's Claude API for reading; no data is used for training.</span>` : html` <span class="muted small">(Live AI off — typed PDFs still read locally; scans need the key.)</span>`}</p>
     <form method="post" action="/setup/import/leases/upload" enctype="multipart/form-data">
       <div class="form-grid">
-        ${field('Lease PDFs (up to 20)', raw('<input type="file" name="files" accept=".pdf,application/pdf" multiple required />'))}
+        ${field('Lease PDFs (up to 20)', raw(`<label class="dropzone" data-dropzone>
+          <input type="file" name="files" accept=".pdf,application/pdf" multiple required />
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m0 0 4.2 4.2M12 4 7.8 8.2"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <b>Drop signed leases here <span>or click to browse</span></b>
+          <span class="dz-hint">PDFs — up to 20 at once</span>
+          <span class="dz-file" data-dz-name></span>
+        </label>`))}
         ${field('Property', props.length ? select('property', props.map((p) => [p.id, p.name] as [string, Child]), '', { required: true }) : html`<span class="muted">Create a property first (rent-roll import or wizard).</span>`)}
         ${field('As-of (switch) date', input('as_of', { type: 'date', value: ctx.businessDate }), 'Billing here starts the month after; past months belong to your old system.')}
       </div>

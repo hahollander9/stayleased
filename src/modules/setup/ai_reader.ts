@@ -21,6 +21,8 @@ export interface ReadingPlan {
   cols: Record<number, string>; // column index → canonical field key
   skip_rows: number[]; // titles, totals, summaries — not unit data
   sections: { row: number; property: string }[]; // property section headers
+  /** the property the whole document is about, when its title names one */
+  document_property?: string;
 }
 
 export interface ReadResult {
@@ -90,7 +92,8 @@ export function validatePlan(raw: unknown, rowCount: number, colCount: number, k
     }
   }
   sections.sort((a, b) => a.row - b.row);
-  return { header_row: header, cols, skip_rows: skip.filter((r) => r !== header), sections };
+  const docProp = typeof p.document_property === 'string' ? p.document_property.trim().slice(0, 80) : '';
+  return { header_row: header, cols, skip_rows: skip.filter((r) => r !== header), sections, ...(docProp ? { document_property: docProp } : {}) };
 }
 
 /** Which of the fields that matter most did a mapping find? Used to pick
@@ -180,13 +183,14 @@ function fieldList(kind: ImportKind): string {
 }
 
 const PLAN_SYSTEM = `You analyze property-management spreadsheet exports (rent rolls, vendor lists, balance reports). Given a numbered grid, reply with ONLY JSON:
-{"header_row": <int, -1 if none>, "cols": {"<colIndex>": "<fieldKey>"}, "skip_rows": [<ints>], "sections": [{"row": <int>, "property": "<name>"}]}
+{"header_row": <int, -1 if none>, "cols": {"<colIndex>": "<fieldKey>"}, "skip_rows": [<ints>], "sections": [{"row": <int>, "property": "<name>"}], "document_property": "<name or empty>"}
 Rules:
 - header_row: the row containing column titles. When titles span two stacked rows (sub-labels like "Sq Ft" / "Deposit" directly under the titles), header_row is the FIRST of them.
 - cols: map ONLY columns that clearly match a canonical field. Never guess.
 - skip_rows: report titles, blank spacers, TOTAL/SUBTOTAL/summary rows, footers — anything that is not one unit/record of data.
 - Rows that continue the unit above with an additional recurring charge line (blank unit cell, a short charge code plus an amount — parking, pet, storage) ARE data rows: do NOT list them in skip_rows.
 - sections: rows that label a property/building whose name applies to the data rows BELOW them (common in multi-property rent rolls). Do not list them in skip_rows too.
+- document_property: when the title banner names the ONE property the whole document covers ("Station U & O (1022)"), its name without any trailing code; empty when the file spans several properties or no name appears.
 - Everything not listed is treated as a data row.`;
 
 /** Ask the model to read the whole sheet. Returns null when the AI is off,

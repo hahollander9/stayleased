@@ -522,3 +522,31 @@
     }
   });
 })();
+
+// ---------- file dropzones: drag-drop + chosen-file feedback ----------
+(function () {
+  'use strict';
+  document.querySelectorAll('[data-dropzone]').forEach(function (zone) {
+    var input = zone.querySelector('input[type=file]');
+    var nameEl = zone.querySelector('[data-dz-name]');
+    if (!input) return;
+    function show() {
+      var n = input.files ? input.files.length : 0;
+      if (nameEl) nameEl.textContent = n === 1 ? input.files[0].name : n > 1 ? n + ' files selected' : '';
+      zone.classList.toggle('has-file', n > 0);
+    }
+    input.addEventListener('change', show);
+    ['dragover', 'dragenter'].forEach(function (ev) {
+      zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add('drag'); });
+    });
+    zone.addEventListener('dragleave', function () { zone.classList.remove('drag'); });
+    zone.addEventListener('drop', function (e) {
+      e.preventDefault();
+      zone.classList.remove('drag');
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
+        input.files = e.dataTransfer.files;
+        show();
+      }
+    });
+  });
+})();

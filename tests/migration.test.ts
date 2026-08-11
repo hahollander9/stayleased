@@ -10,9 +10,10 @@ import { writeXlsx, parseXlsx, serialToIso } from '../src/lib/xlsx.ts';
 import { pdfExtractText } from '../src/lib/pdftext.ts';
 import {
   autoMap, detectPreset, findHeaderRow, moneyToCents, toIsoDate, normStatus, splitName, norm,
-  mergeStackedHeader, harvestSubRowCharges, type Mapping,
+  mergeStackedHeader, harvestSubRowCharges, detectDocumentProperty, type Mapping,
 } from '../src/modules/setup/mapping.ts';
 import { extractLeaseFromText } from '../src/modules/setup/import_leases.ts';
+import { validatePlan } from '../src/modules/setup/ai_reader.ts';
 import {
   validateRentRoll, applyRentRoll, validateVendors, applyVendors, validateBalances, applyBalances,
   type BatchRow,
@@ -630,4 +631,24 @@ test('harvest: rent listed only as a sub-row promotes into the unit row', () => 
   const h = harvestSubRowCharges(rows, mapping as Mapping);
   assert.equal(h.rows[0]![2], '1408.00', 'first sub-row becomes the rent');
   assert.equal(h.extraByRow.get(0)?.cents, 6000, 'later sub-rows stay extras');
+});
+
+test('document property: detected from the Yardi title banner, skipping report/date lines', () => {
+  const rows = [
+    ['Rent Roll with Lease Charges', '', ''],
+    ['Station U & O (1022)', '', ''],
+    ['As Of = 08/11/2026', '', ''],
+    ['Month Year = 08/2026', '', ''],
+    ['Unit', 'Name', 'Rent'],
+  ];
+  assert.equal(detectDocumentProperty(rows, 4), 'Station U & O');
+  // template files that start at the header have nothing to detect
+  assert.equal(detectDocumentProperty([['Unit', 'Name', 'Rent'], ['101', 'A', '1']], 0), null);
+});
+
+test('reading plan: document_property survives validation, junk does not', () => {
+  const plan = validatePlan({ header_row: 0, cols: { 0: 'unit' }, skip_rows: [], sections: [], document_property: '  Station U & O  ' }, 5, 3, 'rent_roll');
+  assert.equal(plan?.document_property, 'Station U & O');
+  const noProp = validatePlan({ header_row: 0, cols: { 0: 'unit' }, skip_rows: [], sections: [], document_property: 42 }, 5, 3, 'rent_roll');
+  assert.equal(noProp?.document_property, undefined);
 });

@@ -267,3 +267,23 @@
 **Verified:** tsc clean · unit 201/201 (10 new: parser corruption fixture, stacked headers ×2, merged-Yardi mapping, money tie-break, harvest ×4, move-out+extra-charges apply/billing) · e2e setup+clientready+workingmodel+goldenpath+smoke 25/25 · real-file replay reconciles to the penny. Accounting flake fired twice mid-session (documented; passes on rerun).
 
 **Next:** Henry re-imports Station U & O AFTER deploying (the applied import predates the parser fix — its rows are column-shifted; use a fresh property or org) · resident-directory import for emails → portal invites · PDF-lane extra_monthly support · Lease PDFs/vendors lanes still untested against Dantes data.
+
+## 2026-08-11 — Migration Center UX: history, read-only records, declutter + live-org professionalism
+
+**Built (Henry: "can't see what you uploaded in the past… so much text everywhere" + "looks demo, not production, we have actual clients"):** (1) **Import history** on the hub — every batch (staged/applied/discarded) with status chip, result summary from the stored apply summary ("2 properties · 110 units · 108 leases · $99,367 in deposits held · N skipped"), and Review/View actions; shared `summaryBits()` powers the flash, the history row, and the record. (2) **Read-only batch records**: applied/discarded batches render a record page (status, applied date, result, reader notes, the exact column mapping used) instead of redirecting away — "what did I upload and what did it do" now has an answer. (3) **Hub declutter** (Operate-mode scanability): one-line lane copy, source systems + template + AI pill compressed to a single muted line, the five-input checklist collapsed into a `<details>`, the preset tile grid and Live-connections tile removed, tab labels shortened, form hints tightened. (4) **Live-org professionalism**: "Message console" → **Outbox** (nav + title; live subtitle reframed as the delivery record, rolling-out language), AI chat "Demo brain" → "Built-in engine". Routes, tab keys, and button labels unchanged — e2e URL/selector compatible.
+
+**Decisions:** #29.
+
+**Verified:** tsc clean · unit 226/226 (flake reran green) · e2e clientready (extended: history presence, result summary in the row, read-only record renders, no Apply button on applied) + setup + goldenpath + smoke 18/18 · hub screenshot eyeballed (one card, one collapsed checklist — was ~5 blocks of prose). First selector draft hit Playwright `:has-text` substring matching ("View" ⊂ "Overview") — scoped to `a.btn-ghost[href*="/setup/import/b/"]`.
+
+**Next:** the full production-readiness sweep Henry asked for (scope question pending — operational screens polish, portal surface, empty states/onboarding, speed feel).
+
+## 2026-08-11 — Migration Center round 2: property auto-detection + dropzone (Henry live-feedback build)
+
+**Built:** (1) **Property read from the file** — new default "Read it from the file" radio on the rent-roll lane: the AI plan's new `document_property` field (title banner, e.g. "Station U & O (1022)") with a deterministic fallback (`detectDocumentProperty`: pre-header banner scan, report/date lines skipped, trailing "(code)" stripped) resolves the target property — matched case-insensitively to an existing property or queued for creation, with the decision surfaced as a review-screen note; a mapped Property column always wins; manual existing/new modes unchanged. (2) **Dropzone uploader** (Migration Center + lease-PDF lane): drag-drop with drag-over state, chosen-file feedback, keyboard-accessible (`:focus-within` ring), ≥44px target per ui-ux-pro-max rules — replaces the native Choose-File button. Specificity lesson: `.field > label { display:block }` beat `.dropzone` — selector is `label.dropzone`. (3) Heuristic-path reader notes now render on review (was AI-callout-only).
+
+**Decisions:** —.
+
+**Verified:** tsc clean · unit 228/228 (2 new: banner detection incl. template-null case, plan document_property validation) · e2e clientready+workingmodel+setup+smoke 20/20 (explicit prop_mode flows untouched; dropzone keeps `input[name=file]` for setInputFiles) · hub screenshot with computed-style diag (display:flex confirmed) · impeccable detector: only pre-existing theme patterns (security build's), dropzone block clean.
+
+**Next:** production-readiness sweep waves per `claude/production-readiness-sweep-plan.md` (Henry's scope: daily-work screens, onboarding/first-week, speed).

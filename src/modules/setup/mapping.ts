@@ -221,6 +221,26 @@ export function autoMap(headers: string[], kind: ImportKind, samples?: string[][
   return { cols, preset: preset?.key || null, aiAssisted: [] };
 }
 
+// ---------- document-level property detection ----------
+
+/** Single-property exports usually name the property in the title banner
+ * above the header ("Station U & O (1022)"). Find it deterministically:
+ * among the pre-header rows, skip report/date/page lines, take the first
+ * remaining short mostly-alone text cell; strip a trailing "(code)". */
+export function detectDocumentProperty(rows: string[][], headerIdx: number): string | null {
+  for (let i = 0; i < Math.min(headerIdx, 6); i++) {
+    const row = rows[i] || [];
+    const filled = row.filter((c) => String(c ?? '').trim());
+    if (!filled.length || filled.length > 2) continue;
+    const cell = String(row.find((c) => String(c ?? '').trim()) ?? '').trim();
+    if (/rent roll|as of|month year|report|page \d|prepared|run date|=/i.test(cell)) continue;
+    if (cell.length < 3 || cell.length > 60) continue;
+    const name = cell.replace(/\s*\([^)]{1,12}\)\s*$/, '').trim();
+    if (name.length >= 3) return name;
+  }
+  return null;
+}
+
 // ---------- stacked (two-row) headers ----------
 
 /** Yardi-style stacked headers: a sparse continuation row directly under the
