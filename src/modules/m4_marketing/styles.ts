@@ -165,18 +165,24 @@ body.mk-mm-open { overflow: hidden; }
  * gradient kicker because its floor is ~10:1 on the dark surface. */
 .mk-kicker { display: inline-flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); margin-bottom: 22px; }
 .mk-hero h1 {
-  font-size: clamp(46px, 6vw, 84px); line-height: 1.0; letter-spacing: -.035em; font-weight: 640;
+  font-size: clamp(48px, 6.4vw, 92px); line-height: 0.98; letter-spacing: -.037em; font-weight: 640;
   color: var(--ink);
 }
 .mk-sub { font-size: 19px; color: var(--ink2); margin: 26px auto 34px; max-width: 40em; }
 .mk-cta-row { display: flex; gap: 13px; flex-wrap: wrap; }
 .mk-hero-note { margin-top: 26px; font-size: 14px; color: var(--mut); }
 .mk-hero-note b { color: var(--ink); font-weight: 600; }
+.mk-hero-note a, .mkp-cta p a { color: var(--mut); text-decoration: underline; text-underline-offset: 3px; transition: color .15s ease; }
+.mk-hero-note a:hover, .mkp-cta p a:hover { color: var(--ink); }
 
 /* hero vignettes — stylized product cards, layered like a desk */
 .mk-vigrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; align-items: start; margin: 60px auto -78px; position: relative; z-index: 2; padding-bottom: 8px; }
 .mk-hero + .mk-band { padding-top: 178px; }
-.mk-vig { --vr: 0deg; --vy: 0px; background: var(--card); border: 1px solid var(--line-2); border-radius: 16px; box-shadow: 0 2px 4px rgba(19,21,25,.06), 0 32px 64px -24px rgba(19,21,25,.35); padding: 18px; font-size: 13px; transform: rotate(var(--vr)) translateY(var(--vy)); }
+.mk-vig { --vr: 0deg; --vy: 0px; background: var(--card); border: 1px solid var(--line-2); border-radius: 16px;
+  /* v4: emerald-tinted depth + top edge-light — the cards read lit, not gray */
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 2px 4px rgba(19,21,25,.06), 0 12px 24px -14px rgba(6,78,59,.18), 0 34px 68px -26px rgba(6,78,59,.32);
+  padding: 18px; font-size: 13px; transform: rotate(var(--vr)) translateY(var(--vy)); }
+html[data-theme="dark"] .mk-vig { box-shadow: inset 0 1px 0 rgba(163,196,180,.10), 0 2px 4px rgba(0,0,0,.3), 0 34px 68px -26px rgba(0,0,0,.55); }
 .mk-vig:first-child { --vr: -1.6deg; --vy: 14px; }
 .mk-vig:last-child { --vr: 1.4deg; --vy: 10px; }
 .mk-vig-head { display: flex; align-items: center; gap: 9px; padding-bottom: 12px; border-bottom: 1px solid var(--line-2); margin-bottom: 12px; }
@@ -371,7 +377,26 @@ html[data-theme="dark"] .mk-hero-clip::after { background-image: radial-gradient
 .mk-plat:hover .mk-more, .mk-more:hover { text-decoration-color: var(--accent); color: var(--accent); }
 
 /* architecture comparison — formal table, no competitor named */
-.mk-compare { border: 1px solid var(--line-2); border-radius: 16px; overflow-x: auto; background: var(--card); box-shadow: 0 1px 2px rgba(19,21,25,.05), 0 14px 34px -18px rgba(19,21,25,.22); }
+.mk-compare { border: 1px solid var(--line-2); border-radius: 16px; overflow-x: auto; box-shadow: 0 1px 2px rgba(19,21,25,.05), 0 14px 34px -18px rgba(19,21,25,.22);
+  /* v4: scrolling edge shadows (pure CSS, background-attachment trick) so the
+   * mobile overflow is discoverable; the covers scroll with content, the
+   * shadows stay pinned to the container edges. */
+  background: linear-gradient(90deg, var(--card) 34%, rgba(255,255,255,0)) 0 0, linear-gradient(-90deg, var(--card) 34%, rgba(255,255,255,0)) 100% 0,
+    radial-gradient(farthest-side at 0 50%, rgba(19,21,25,.16), transparent) 0 0, radial-gradient(farthest-side at 100% 50%, rgba(19,21,25,.16), transparent) 100% 0, var(--card);
+  background-repeat: no-repeat; background-size: 56px 100%, 56px 100%, 16px 100%, 16px 100%, auto; background-attachment: local, local, scroll, scroll, local; }
+.mk-compare tbody tr { transition: background .15s ease; }
+.mk-compare tbody tr:hover { background: rgba(4,120,87,.035); }
+html[data-theme="dark"] .mk-compare tbody tr:hover { background: rgba(110,231,183,.05); }
+/* v4 mobile: the row labels stay pinned while the columns scroll, so the
+ * StayLeased column is reachable without losing what each row means. */
+@media (max-width: 760px) {
+  /* pin the data columns to px so the surplus from the table's min-width
+   * can't inflate the sticky label column (auto layout gives leftover
+   * space to the widest column — which was the labels). */
+  .mk-compare td:not(:first-child), .mk-compare th:not(:first-child) { width: 190px; min-width: 190px; }
+  .mk-compare td:first-child, .mk-compare th:first-child { position: sticky; left: 0; z-index: 1; background: var(--card); width: 150px; max-width: 150px; font-size: 13px; box-shadow: 6px 0 10px -6px rgba(19,21,25,.14); }
+  html[data-theme="dark"] .mk-compare td:first-child, html[data-theme="dark"] .mk-compare th:first-child { box-shadow: 6px 0 10px -6px rgba(0,0,0,.5); }
+}
 .mk-compare table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 720px; }
 .mk-compare th, .mk-compare td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--line-2); }
 .mk-compare tbody tr:last-child td { border-bottom: 0; }
@@ -449,6 +474,11 @@ html[data-theme="dark"] .mk-compare td.mkc-us, html[data-theme="dark"] .mk-compa
 html[data-theme="dark"] .mk-dark { background: #0D1A13; border-top: 1px solid rgba(163,196,180,.12); border-bottom: 1px solid rgba(163,196,180,.12); }
 .mk-dark::before { content: ''; position: absolute; left: 50%; top: -320px; width: 1100px; height: 640px; transform: translateX(-50%); pointer-events: none;
   background: radial-gradient(50% 55% at 50% 50%, rgba(16,185,129,.13), transparent 70%); }
+/* v4 depth: a second, lower ember + a hairline top light so the band reads
+ * as a lit room rather than a flat fill. Static — no motion. */
+.mk-dark::after { content: ''; position: absolute; right: -180px; bottom: -260px; width: 900px; height: 560px; pointer-events: none;
+  background: radial-gradient(48% 52% at 60% 60%, rgba(45,212,191,.07), transparent 72%); }
+.mk-dark { box-shadow: inset 0 1px 0 rgba(163,196,180,.08); }
 .mk-dark .mk-wrap { position: relative; }
 .mk-dark .mk-h2 { color: var(--ink); }
 .mk-dark .mk-lead { color: var(--ink2); }

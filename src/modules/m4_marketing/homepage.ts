@@ -11,11 +11,14 @@ import { THEME_BOOT_JS } from '../../ui/ui.ts';
 
 /** The platform marketing homepage — the front door for logged-out visitors.
  * Architecture v3 (2026-08-05, per the differentiation strategy): the page is
- * an argument, not a platform tour. Hero (segment + labor + governance) →
+ * an argument, not a platform tour. v4 control-first order (2026-08-10,
+ * for AI-skeptical buyers): Hero (segment + labor + governance) →
+ * approval model FIRST (the leash before the claims; 9:04 pm draft card) →
  * segment evidence band (the staffing dead zone, sourced market data) →
- * agents as a staff roster → the system of record as the mechanism that
- * grounds them → architecture comparison → first-week steps → Ask demo →
- * approval model → autonomy levels → governance (dark anchor band) →
+ * AI agents, function-labeled → the system of record as the mechanism that
+ * grounds them → architecture comparison (books + bills rows, point-solution
+ * column shaped by the EliseAI cluster, no vendor named) → first-week steps →
+ * Ask demo → autonomy levels → governance (dark anchor band) →
  * verification band (radical verifiability) → who-it's-for → pricing →
  * walkthrough form → mega-footer. "Everything in one place" was retired as a
  * headline 2026-08-05 — it is the literal hero copy of every incumbent — and
@@ -23,6 +26,10 @@ import { THEME_BOOT_JS } from '../../ui/ui.ts';
  * noun-phrase headlines, no "you" headlines, information compressed never
  * deleted. Every market figure on the page is sourced (Terner, RHFS, MRI,
  * RentEngine); no usage stats are implied — there are no customers yet.
+ * Sales motion (2026-08-10, Henry): demo-led. "Book a live demo" is the
+ * primary CTA everywhere; the self-guided demo stays open but demoted to
+ * secondary links. The demo itself is NOT gated in this build (that ships
+ * later); the verification band's "open to anyone" claim therefore stays.
  * Nav, footer, styles, menus, AND the reveal/stagger motion engine live in
  * chrome.ts, shared with the /platform, /agents, /for, and /legal pages. */
 
@@ -56,19 +63,21 @@ const EVIDENCE: { n: string; body: string; src: string }[] = [
   { n: '56.8%', body: 'of rental inquiries arrive outside office hours', src: 'RentEngine industry analysis' },
 ];
 
-/** Agents presented as a staff roster — the roles the segment's economics
- * can't fill with people — never as a feature list. Names are pinned by e2e. */
+/** Agents labeled as AI software with plain function descriptors — the
+ * humanlike role titles ("the collections clerk") were retired 2026-08-10:
+ * in this industry "agent" reads as a human job, and the price story only
+ * works because these are software. Names are pinned by e2e. */
 const AGENTS: { role: string; name: string; blurb: string; ico: string }[] = [
-  { role: 'The leasing desk that never closes', name: 'Leasing Agent', blurb: 'Answers the 9:04 pm Zillow lead in seconds and books the Saturday tour.', ico: 'chat' },
-  { role: 'The 24-hour maintenance line', name: 'Maintenance Agent', blurb: 'Triages the 2 am call, dispatches within limits, and escalates every emergency to a human.', ico: 'wrench' },
-  { role: 'The collections clerk', name: 'Payments Agent', blurb: 'Runs the delinquency sequence inside set limits, in the approved tone.', ico: 'bank' },
-  { role: 'The renewals desk', name: 'Renewals Agent', blurb: 'Prepares offers inside approved pricing bounds, ahead of every expiration.', ico: 'refresh' },
-  { role: 'The front-desk notetaker', name: 'Call Analysis', blurb: 'Summarizes every call and files the follow-ups.', ico: 'phone' },
-  { role: 'The portfolio analyst', name: 'Ask StayLeased', blurb: 'Answers operational questions from the live records.', ico: 'spark' },
+  { role: 'AI · lead response & tours', name: 'Leasing Agent', blurb: 'Answers the 9:04 pm Zillow lead in seconds and books the Saturday tour.', ico: 'chat' },
+  { role: 'AI · maintenance intake, 24/7', name: 'Maintenance Agent', blurb: 'Triages the 2 am call, dispatches within limits, and escalates every emergency to a human.', ico: 'wrench' },
+  { role: 'AI · collections & delinquency', name: 'Payments Agent', blurb: 'Runs the delinquency sequence inside set limits, in the approved tone.', ico: 'bank' },
+  { role: 'AI · renewals & expirations', name: 'Renewals Agent', blurb: 'Prepares offers inside approved pricing bounds, ahead of every expiration.', ico: 'refresh' },
+  { role: 'AI · call summaries', name: 'Call Analysis', blurb: 'Summarizes every call and files the follow-ups.', ico: 'phone' },
+  { role: 'AI · portfolio answers', name: 'Ask StayLeased', blurb: 'Answers operational questions from the live records.', ico: 'spark' },
 ];
 
 const VERIFY: { head: string; body: string; href?: string }[] = [
-  { head: 'Live demo, open to anyone', body: 'Fully populated — no sales call, no email gate.', href: '/login' },
+  { head: 'Live demo, open to anyone', body: 'Fully populated — self-guided, or shown live on a demo call.', href: '/login' },
   { head: 'Pricing, published', body: 'On this page. No quotation process.', href: '#pricing' },
   { head: 'Build status, published in the product', body: 'Working now vs. coming soon — including what is still simulated.' },
   { head: 'Records, the operator’s property', body: 'Full export at any time, in open formats.' },
@@ -136,39 +145,63 @@ ${mkHeader()}
     <div class="mk-hero-copy">
       <div class="mk-kicker">Property management software for buildings of 10–100 units</div>
       <h1>Autonomous property management<span class="mk-dot">.</span></h1>
-      <p class="mk-sub">AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft queued for the operator’s approval, on one system of record built for small multifamily.</p>
+      <p class="mk-sub">AI agents staff the leasing desk, collections, maintenance intake, and the books — drafting into an approval queue the operator controls, on one system of record built for small multifamily.</p>
       <div class="mk-cta-row">
-        <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Explore the live demo</a>
-        ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="#walkthrough">Book a walkthrough</a>`}
+        <a class="mk-btn mk-btn-solid mk-btn-lg" href="#walkthrough">Book a live demo</a>
+        ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/login">Explore the live demo</a>`}
       </div>
-      <div class="mk-hero-note">Portfolios import from Buildium, AppFolio, or spreadsheets in a single afternoon.</div>
+      <div class="mk-hero-note">Portfolios import from Buildium, AppFolio, or spreadsheets in a single afternoon.${when(signupOpen, () => html` <a href="/login">Self-guided demo →</a>`)}</div>
       <a class="mk-scrollcue" href="#segment" aria-label="Continue to the next section"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></a>
     </div>
   </div>
   <div class="mk-wrap mk-vigrow" aria-hidden="true">
     <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">SR</span><div><b>Ask StayLeased</b><span>portfolio assistant</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
+      <div class="mk-vig-head"><span class="mk-vig-av">SR</span><div><b>Ask StayLeased</b><span>AI portfolio assistant</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
       <div class="mk-vig-msg you">What's my occupancy?</div>
       <div class="mk-vig-msg agent">Occupancy is 93.1% — 362 of 389 units, with 15 vacant-ready and 8 in turnover averaging 6 days to ready.</div>
     </div>
     <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">PA</span><div><b>Payments Agent</b><span>agent activity · demo portfolio</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
+      <div class="mk-vig-head"><span class="mk-vig-av">PA</span><div><b>Payments Agent</b><span>AI agent · demo portfolio</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
       <div class="mk-vig-task"><i>✓</i>3 residents past due on rent</div>
       <div class="mk-vig-task"><i>✓</i>Reminders drafted in the approved tone</div>
       <div class="mk-vig-task"><i>✓</i>Payment plan prepared — Keller household</div>
       <div class="mk-vig-task hold"><i>●</i>4 drafts queued<span class="mk-vig-chip warn">awaiting approval</span></div>
     </div>
     <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">LA</span><div><b>Leasing Agent</b><span>new lead · Zillow · 9:04 pm</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
-      <div class="mk-vig-msg agent">"Hi Sam — yes, the 2BR is available at $1,450. Saturday I have 10:00, 11:30, or 2:00 for a tour."</div>
-      <div class="mk-vig-actions"><span class="mk-vig-ok">✓ Approve</span><span class="mk-vig-ghost">Edit</span><span class="mk-vig-ghost">Reject</span></div>
+      <div class="mk-vig-head"><span class="mk-vig-av">MA</span><div><b>Maintenance Agent</b><span>AI triage · 2:14 am</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
+      <div class="mk-vig-msg you">"There's water pooling under my water heater."</div>
+      <div class="mk-vig-task"><i>✓</i>Not an emergency — triaged routine</div>
+      <div class="mk-vig-task hold"><i>●</i>Plumber dispatch drafted<span class="mk-vig-chip warn">awaiting approval</span></div>
     </div>
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="segment">
+<section class="mk-band mk-band-alt" id="newtoai">
+  <div class="mk-wrap mk-ask-grid">
+    <div>
+      <div class="mk-kicker">${kick('01', 'The approval model')}</div>
+      <h2 class="mk-h2">Nothing reaches a resident without sign-off.</h2>
+      <p class="mk-lead" style="margin-bottom:22px">Agents read what arrives, draft the response, and queue it — Approve, Edit, or Reject. Every figure in every draft comes from the live system, and every action lands on the audit trail.</p>
+      <div class="mk-cta-row" style="margin-top:24px">
+        <a class="mk-btn mk-btn-solid" href="/agents/new-to-ai">How the AI operates</a>
+        <a class="mk-btn mk-btn-line" href="/login">Observe it in the demo</a>
+      </div>
+    </div>
+    <div class="mk-nta-card" aria-hidden="true">
+      <div class="mk-nta-row"><span class="mk-nta-time">9:04 pm</span> New lead from Zillow: <i>"Hi — is the 2 bedroom still available? Could I see it this weekend?"</i></div>
+      <div class="mk-nta-draft">
+        <div class="mk-nta-draft-tag">AI draft · waiting for your approval</div>
+        <p>"Hi Sam — yes! The 2BR at Summit Ridge is available at $1,450, and Saturday works: I have 10:00, 11:30, or 2:00 open for a tour. Want me to hold one for you?"</p>
+        <div class="mk-nta-actions"><span class="mk-nta-ok">✓ Approve</span><span class="mk-nta-edit">Edit</span><span class="mk-nta-skip">Reject</span></div>
+      </div>
+      <div class="mk-nta-note">Availability, pricing, and tour times come from the live system at the moment of drafting.</div>
+    </div>
+  </div>
+</section>
+
+<section class="mk-band" id="segment">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('01', 'The staffing dead zone')}</div>
+    <div class="mk-kicker">${kick('02', 'The staffing dead zone')}</div>
     <h2 class="mk-h2">Built for the middle of the market.</h2>
     <p class="mk-lead">A 50-unit building generates a full-time manager’s workload on a part-time manager’s budget. Enterprise platforms set unit minimums above it, landlord apps stop short of real accounting — so the middle mostly manages itself. StayLeased is built for exactly this segment.</p>
     <div class="mk-stats">
@@ -177,11 +210,11 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="agents">
+<section class="mk-band mk-band-alt" id="agents">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('02', 'The agents')}</div>
-    <h2 class="mk-h2">The staff a small building can’t carry, as software.</h2>
-    <p class="mk-lead">Roles, not modules. Each agent holds one job, drafts into the approval queue, and acts only within configured authority.</p>
+    <div class="mk-kicker">${kick('03', 'The agents')}</div>
+    <h2 class="mk-h2">AI agents for the work a small building can’t staff.</h2>
+    <p class="mk-lead">Software, not staffing. Six AI agents, each with one job — every draft into the approval queue, every action within configured authority.</p>
     <div class="mk-grid3">
       ${AGENTS.map((a) => html`<div class="mk-card mk-agent">
         <span class="mk-agent-ico">${raw(agentIcon(a.ico))}</span>
@@ -189,13 +222,13 @@ ${mkHeader()}
         <h3>${a.name}</h3><p>${a.blurb}</p>
       </div>`)}
     </div>
-    <div class="mk-inline-cta"><a class="mk-btn mk-btn-solid" href="/login">Observe the agents in the live demo</a></div>
+    <div class="mk-inline-cta"><a class="mk-btn mk-btn-solid" href="#walkthrough">See the agents in a live demo</a></div>
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="platform">
+<section class="mk-band" id="platform">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('03', 'The system of record')}</div>
+    <div class="mk-kicker">${kick('04', 'The system of record')}</div>
     <h2 class="mk-h2">Agents that work on the records, not beside them.</h2>
     <p class="mk-lead">An agent is only as reliable as the records under it. StayLeased agents read the live system — the vacancy, the price, the ledger balance, the work-order history — and their approved actions post straight back to it. No sync, no re-keying, no second bill for an AI layer.</p>
     <div class="mk-suites-label">The record the agents maintain</div>
@@ -209,9 +242,9 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="why">
+<section class="mk-band mk-band-alt" id="why">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('04', 'Architecture')}</div>
+    <div class="mk-kicker">${kick('05', 'Architecture')}</div>
     <h2 class="mk-h2">A different architecture.</h2>
     <p class="mk-lead">Legacy platforms hold the records; the work stays manual. AI point tools automate one task and need a platform underneath. StayLeased is both layers in one system.</p>
     <div class="mk-compare">
@@ -219,7 +252,9 @@ ${mkHeader()}
         <thead><tr><th scope="col"><span class="sr-only">Capability</span></th><th scope="col">Legacy platforms</th><th scope="col">AI point solutions</th><th scope="col" class="mkc-us">StayLeased</th></tr></thead>
         <tbody>
           <tr><td>Complete system of record</td><td>${raw(CHECK)}</td><td>—</td><td class="mkc-us">${raw(CHECK)}</td></tr>
-          <tr><td>Agents that do the daily work</td><td>—</td><td>One function</td><td class="mkc-us">Every function</td></tr>
+          <tr><td>Agents that do the daily work</td><td>—</td><td>One function — leasing or maintenance</td><td class="mkc-us">Every function</td></tr>
+          <tr><td>The books</td><td>Included</td><td>Not included — a PMS still required</td><td class="mkc-us">Included — true double-entry</td></tr>
+          <tr><td>Bills to pay</td><td>One, plus AI add-ons</td><td>Two — the AI layer and the PMS under it</td><td class="mkc-us">One</td></tr>
           <tr><td>Approval-first governance &amp; audit trail</td><td>—</td><td>—</td><td class="mkc-us">${raw(CHECK)}</td></tr>
           <tr><td>Published pricing</td><td>Often quote-led; unit minimums common</td><td>Enterprise contracts</td><td class="mkc-us">Published</td></tr>
           <tr><td>Built for</td><td>Mid-size and larger portfolios</td><td>NMHC Top 50 operators</td><td class="mkc-us">10–100-unit buildings</td></tr>
@@ -230,9 +265,9 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="how">
+<section class="mk-band" id="how">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('05', 'Getting started')}</div>
+    <div class="mk-kicker">${kick('06', 'Getting started')}</div>
     <h2 class="mk-h2">Operational in an afternoon.</h2>
     <p class="mk-lead">Implementation is a data import, not a project.</p>
     <div class="mk-steps">
@@ -244,13 +279,13 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="ask">
+<section class="mk-band mk-band-alt" id="ask">
   <div class="mk-wrap mk-ask-grid">
     <div class="mk-ask-copy">
-      <div class="mk-kicker mk-kicker-ai">${kick('06', 'Ask StayLeased')}${aiLive ? ' · powered by Claude' : ''}</div>
+      <div class="mk-kicker mk-kicker-ai">${kick('07', 'Ask StayLeased')}${aiLive ? ' · powered by Claude' : ''}</div>
       <h2 class="mk-h2">Operational questions, answered from the records.</h2>
       <p class="mk-lead">Occupancy, delinquency, expirations, work orders, vendor spend — answered from live portfolio data, every response logged.</p>
-      <div class="mk-cta-row"><a class="mk-btn mk-btn-solid" href="/login">Use the full assistant in the demo</a></div>
+      <div class="mk-cta-row"><a class="mk-btn mk-btn-solid" href="#walkthrough">Book a live demo</a></div>
     </div>
     <div class="mk-askbox" id="mk-askbox">
       <div class="mk-askbox-head">
@@ -265,29 +300,6 @@ ${mkHeader()}
         <input id="mk-ask-input" name="q" placeholder="Ask anything…" maxlength="500" aria-label="Ask StayLeased" />
         <button type="submit" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
       </form>
-    </div>
-  </div>
-</section>
-
-<section class="mk-band mk-band-alt" id="newtoai">
-  <div class="mk-wrap mk-ask-grid">
-    <div>
-      <div class="mk-kicker">${kick('07', 'The approval model')}</div>
-      <h2 class="mk-h2">Approval-first by design.</h2>
-      <p class="mk-lead" style="margin-bottom:22px">Agents read what arrives, draft the response, and queue it for approval. Nothing reaches a prospect or resident without sign-off, and every figure comes from the live system.</p>
-      <div class="mk-cta-row" style="margin-top:24px">
-        <a class="mk-btn mk-btn-solid" href="/agents/new-to-ai">How the AI operates</a>
-        <a class="mk-btn mk-btn-line" href="/login">Observe it in the demo</a>
-      </div>
-    </div>
-    <div class="mk-nta-card" aria-hidden="true">
-      <div class="mk-nta-row"><span class="mk-nta-time">9:04 pm</span> New lead from Zillow: <i>"Hi — is the 2 bedroom still available? Could I see it this weekend?"</i></div>
-      <div class="mk-nta-draft">
-        <div class="mk-nta-draft-tag">AI draft · waiting for your approval</div>
-        <p>"Hi Sam — yes! The 2BR at Summit Ridge is available at $1,450, and Saturday works: I have 10:00, 11:30, or 2:00 open for a tour. Want me to hold one for you?"</p>
-        <div class="mk-nta-actions"><span class="mk-nta-ok">✓ Approve</span><span class="mk-nta-edit">Edit</span><span class="mk-nta-skip">Reject</span></div>
-      </div>
-      <div class="mk-nta-note">Availability, pricing, and tour times come from the live system at the moment of drafting.</div>
     </div>
   </div>
 </section>
@@ -376,17 +388,17 @@ ${mkHeader()}
   <div class="mk-wrap mk-two-col">
     <div>
       <h2 class="mk-h2">See autonomous property management in action.</h2>
-      <p class="mk-lead">The demo company is fully populated — every screen live, every agent at work. Or describe the portfolio and we will arrange a walkthrough.</p>
+      <p class="mk-lead">A live demo runs in the working system — every screen live, every agent at work, on a fully populated portfolio. Describe the portfolio and we will set one up.</p>
       <div class="mk-cta-row">
-        <a class="mk-btn mk-btn-solid mk-btn-lg" href="/login">Open the live demo</a>
+        <a class="mk-btn mk-btn-line mk-btn-lg" href="/login">Explore the self-guided demo</a>
         ${when(signupOpen, () => html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>`)}
       </div>
     </div>
     <div class="mk-form-card">
       ${thanks
-        ? html`<div class="mk-thanks"><b>Got it — thank you.</b><br/>We'll reach out shortly to set up your walkthrough${signupOpen ? ' and invite code' : ''}.</div>`
+        ? html`<div class="mk-thanks"><b>Got it — thank you.</b><br/>We'll reach out shortly to set up your demo${signupOpen ? ' and invite code' : ''}.</div>`
         : html`<form method="post" action="/company/walkthrough">
-            <h3>Book a walkthrough</h3>
+            <h3>Book a live demo</h3>
             <div class="mk-form-grid">
               <label>Name<input name="name" required /></label>
               <label>Work email<input name="email" type="email" required /></label>
@@ -394,7 +406,7 @@ ${mkHeader()}
               <label>Units managed<select name="units"><option>1–50</option><option>51–150</option><option>151–500</option><option>501–2,500</option><option>2,500+</option></select></label>
             </div>
             <label class="mk-form-full">Anything specific you want to see?<input name="note" placeholder="e.g. moving off AppFolio, ~120 units" /></label>
-            <button class="mk-btn mk-btn-solid" type="submit">Request walkthrough</button>
+            <button class="mk-btn mk-btn-solid" type="submit">Request a demo</button>
           </form>`}
     </div>
   </div>
@@ -409,11 +421,11 @@ ${mkFooter()}
 <div id="mkchat" class="mk-chat">
   <div class="mk-chat-panel" id="mkchat-panel" role="dialog" aria-label="Ask StayLeased" aria-hidden="true">
     <div class="mk-chat-head">
-      <div class="mk-chat-id"><span class="mk-chat-av">SL</span><div><b>Ask StayLeased</b><span>${aiLive ? 'powered by Claude' : 'product questions, answered'}</span></div></div>
+      <div class="mk-chat-id"><span class="mk-chat-av">SL</span><div><b>Ask StayLeased</b><span>${aiLive ? 'AI · powered by Claude' : 'AI · product questions, answered'}</span></div></div>
       <button class="mk-chat-close" id="mkchat-close" type="button" aria-label="Close">✕</button>
     </div>
     <div class="mk-chat-msgs" id="mkchat-msgs" aria-live="polite">
-      <div class="mk-msg agent">Hello — I am the StayLeased assistant. I can answer questions about the product: pricing, migrating from your current software, what the AI agents do, and how to get started.</div>
+      <div class="mk-msg agent">Hello — I am StayLeased’s AI assistant. I can answer questions about the product: pricing, migrating from your current software, what the AI agents do, and how to get started.</div>
     </div>
     <div class="mk-chat-chips" id="mkchat-chips">
       ${SALES_CHIPS.map((c) => html`<button type="button" class="mk-ask-chip">${c}</button>`)}
@@ -495,7 +507,7 @@ ${mkFooter()}
       agent.textContent = '';
       typeInto(agent, answer, box, function () { box._busy = false; if (done) done(true); });
     }).catch(function () {
-      agent.textContent = 'Sorry — I could not reach the assistant just now. Try the live demo.';
+      agent.textContent = 'Sorry — I could not reach the assistant just now. Try again in a moment.';
       box._busy = false; if (done) done(false);
     });
   }

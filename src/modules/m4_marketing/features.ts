@@ -573,7 +573,7 @@ export const MK_PAGES: MkPage[] = [
       { q: 'I don’t want a robot talking to my tenants.', a: 'Then it won’t — that’s the default, not a setting you have to find. It drafts; you send. It only ever contacts anyone directly if you deliberately turn that on later, and you can turn it back off in one click.' },
       { q: 'Do I need to learn “prompting” or take a course?', a: 'No. There’s nothing to prompt. The AI reacts to real events — a lead, a late balance, a repair request — and shows you its work. Your only job is Approve / Edit / Reject, which you already know how to do.' },
       { q: 'How is this different from ChatGPT?', a: 'ChatGPT answers questions from the internet. This works inside your operation: it knows your actual units, prices, balances, and policies, acts only through drafts you approve, and logs everything. It’s an employee with rules, not a chat window.' },
-      { q: 'What does it cost to try?', a: 'Early access is free, and the live demo company is open right now — no signup, no sales call. Watch the AI work on a fake portfolio before it touches yours.' },
+      { q: 'What does it cost to try?', a: 'Early access is free. Book a live demo and watch the AI work on a fully populated portfolio before it touches yours — or explore the demo company self-guided first.' },
     ],
     related: [
       { label: 'Leasing AI', href: '/agents/leasing' },
@@ -1083,10 +1083,10 @@ function ctaRow(large = false): Raw {
   const signupOpen = mkSignupOpen();
   const lg = large ? ' mk-btn-lg' : '';
   return html`<div class="mk-cta-row">
-    <a class="mk-btn mk-btn-solid${lg}" href="/login">Explore the live demo</a>
+    <a class="mk-btn mk-btn-solid${lg}" href="/#walkthrough">Book a live demo</a>
     ${signupOpen
       ? html`<a class="mk-btn mk-btn-line${lg}" href="/signup">Create your company</a>`
-      : html`<a class="mk-btn mk-btn-line${lg}" href="/#walkthrough">Book a walkthrough</a>`}
+      : html`<a class="mk-btn mk-btn-line${lg}" href="/login">Explore the live demo</a>`}
   </div>`;
 }
 
@@ -1154,8 +1154,8 @@ ${mkHeader()}
 
 <section class="mkp-cta">
   <div class="mk-wrap">
-    <h2>See it working in the live demo.</h2>
-    <p>A fully seeded company — every screen live, every agent mid-flight. No form first.</p>
+    <h2>See it working in a live demo.</h2>
+    <p>A fully seeded company — every screen live, every agent mid-flight. Book a call for the guided tour, or <a href="/login">explore it self-guided</a>.</p>
     ${ctaRow(true)}
   </div>
 </section>
@@ -1202,14 +1202,14 @@ const PRIVACY = html`
 <p>StayLeased (“we”, “us”) provides property management software for independent rental operators. This policy explains what we collect and how we use it, in plain English.</p>
 <h2>What we collect</h2>
 <ul>
-  <li><b>Account and contact information</b> — name, email, company, and portfolio details you provide when you request a walkthrough, create a company, or sign in.</li>
+  <li><b>Account and contact information</b> — name, email, company, and portfolio details you provide when you request a demo, create a company, or sign in.</li>
   <li><b>Operating data</b> — the property, lease, resident, financial, and communications records your company creates in the product. This data belongs to your company; we process it to run the service.</li>
   <li><b>Usage and log data</b> — sign-ins, actions taken (kept in your company’s audit trail), and technical logs needed to operate and secure the service.</li>
 </ul>
 <h2>How we use it</h2>
 <ul>
   <li>To operate the service: billing runs, portals, reports, and the AI features described in the product.</li>
-  <li>To respond when you ask us to (walkthrough requests, support).</li>
+  <li>To respond when you ask us to (demo requests, support).</li>
   <li>To secure the platform: session management, permission enforcement, and audit logging.</li>
 </ul>
 <h2>AI processing</h2>
@@ -1225,7 +1225,7 @@ const PRIVACY = html`
 <h2>Retention and deletion</h2>
 <p>Company data is retained while the account is active. On request after account closure we delete company data from the live system, subject to legal retention requirements.</p>
 <h2>Contact</h2>
-<p>Questions or requests: email us via the walkthrough form on the homepage and we’ll respond from a human inbox. As an early-access product this policy will evolve; material changes will be posted here with a new date.</p>`;
+<p>Questions or requests: email us via the demo-request form on the homepage and we’ll respond from a human inbox. As an early-access product this policy will evolve; material changes will be posted here with a new date.</p>`;
 
 const TERMS = html`
 <p>These terms cover use of StayLeased during early access. They’re written to be read.</p>

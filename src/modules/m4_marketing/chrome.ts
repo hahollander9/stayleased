@@ -77,9 +77,10 @@ export function mkSignupOpen(): boolean {
 /** Sticky marketing header with dropdown nav, CTAs, and the mobile menu. */
 export function mkHeader(): Raw {
   const signupOpen = mkSignupOpen();
-  const primaryCta = signupOpen
-    ? html`<a class="mk-btn mk-btn-solid" href="/signup">Create your company</a>`
-    : html`<a class="mk-btn mk-btn-solid" href="/#walkthrough">Book a walkthrough</a>`;
+  // Demo-led sales motion (2026-08-10): the header CTA is always the demo
+  // booking, even while signup is open — signup stays in the hero, pricing,
+  // mobile menu, and footer.
+  const primaryCta = html`<a class="mk-btn mk-btn-solid" href="/#walkthrough">Book a live demo</a>`;
   return html`<header class="mk-nav">
   <div class="mk-wrap mk-nav-in">
     <a class="mk-logo" href="/">${logo(24, '#34D399')}<span>Stay<b>Leased</b></span></a>
@@ -108,7 +109,8 @@ export function mkHeader(): Raw {
       <a class="mk-mm-link" href="/#how">How it works</a>
       <div class="mk-mm-cta">
         <a class="mk-btn mk-btn-line" href="/login">Sign in</a>
-        ${signupOpen ? html`<a class="mk-btn mk-btn-solid" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-solid" href="/#walkthrough">Book a walkthrough</a>`}
+        ${when(signupOpen, () => html`<a class="mk-btn mk-btn-line" href="/signup">Create your company</a>`)}
+        <a class="mk-btn mk-btn-solid" href="/#walkthrough">Book a live demo</a>
       </div>
     </div>
 </div>`;
@@ -125,7 +127,7 @@ export function mkFooter(): Raw {
     <div><div class="mk-foot-head">Company</div>
       <a href="/login">Sign in</a>
       ${when(signupOpen, () => html`<a href="/signup">Create your company</a>`)}
-      <a href="/#walkthrough">Book a walkthrough</a>
+      <a href="/#walkthrough">Book a live demo</a>
       <a href="/company">Communities</a>
       <a href="/legal/privacy">Privacy</a>
       <a href="/legal/terms">Terms</a>

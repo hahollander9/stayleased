@@ -37,11 +37,17 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   assert.match(body, /of rental inquiries arrive outside office hours/);
   assert.match(body, /Terner Center/);
   assert.match(body, /Agents that work on the records, not beside them\./);
-  assert.match(body, /The staff a small building can’t carry, as software\./);
+  assert.match(body, /AI agents for the work a small building can’t staff\./);
   assert.match(body, /Verification, not claims\./);
   assert.match(body, /Live demo, open to anyone/);
   assert.ok(!/Everything in one place\./.test(body), 'retired category-wallpaper headline stays gone');
-  assert.match(body, /Approval-first by design\./);
+  assert.match(body, /Nothing reaches a resident without sign-off\./);
+  // v4 control-first order (2026-08-10): the approval band is the first band
+  // after the hero — a skeptical buyer meets the leash before the claims.
+  assert.ok(
+    body.indexOf('Nothing reaches a resident without sign-off') < body.indexOf('Built for the middle of the market'),
+    'approval band precedes the segment band',
+  );
   assert.match(body, /Three levels of autonomy\./);
   assert.match(body, /Governance and oversight\./);
   assert.match(body, /Built for independent operators/);
