@@ -473,3 +473,34 @@ hotter than CLAUDE.md's estimate on 2026-08-12. Pre-existing on main and out of 
 because "re-run once before believing a red" may no longer be enough of a filter.
 
 **Next:** unchanged — Station U&O recovery, then Yardi root-cause replay when the files arrive.
+
+## 2026-08-12 — SessionStart hook: web containers arrive with deps and a current graph
+
+**Why.** Claude Code on the web starts every session from a fresh clone: no `node_modules`, no
+`graphify` CLI. Two consequences, both hit live in this session — `npx tsc --noEmit` reported five
+phantom errors that were only a missing `pdf-lib`, and the graphify `PreToolUse` guards no-opped
+because the binary they check for did not exist. `.claude/hooks/session-start.sh` closes both before
+the session takes its first turn.
+
+**What it does**, in order: `npm install` (not `ci` — warm containers are cached and skip the work) ·
+`uv tool install "graphifyy[sql]"` when `graphify` is absent, falling back to pipx · `graphify update .`
+· persists `PATH` through `$CLAUDE_ENV_FILE`.
+
+**Three properties it holds.** (1) **Web only** — the `CLAUDE_CODE_REMOTE` guard means a local
+machine gets a silent exit 0 and nothing is installed behind anyone's back. (2) **Never fatal** —
+every step is `|| echo WARN`, because tooling that stops a session from starting is worse than the
+tooling being absent. (3) **Cheap when warm** — SessionStart also fires on resume/clear/compact, so
+the graph rebuild is skipped unless a file under `src`/`tests`/`e2e` is newer than `graph.json`.
+That one condition took the warm re-run from **9.5s to 0.35s**; cold is 17.1s, and a real source
+change still rebuilds in ~9s.
+
+**Decisions:** #39.
+
+**Verified** against a genuinely cold container (`rm -rf node_modules graphify-out` +
+`uv tool uninstall graphifyy`): hook exit 0 in 17.1s · `npm run typecheck` clean · `tests/migration.test.ts`
+29/29 · graph 2375 nodes / 12125 links with `src/db/schema.sql` present (403 refs) · remote guard
+silently no-ops with `CLAUDE_CODE_REMOTE` unset and with it set to `false` · warm re-run 0.35s and
+prints `graph current` · `touch src/lib/db.ts` triggers the rebuild as intended.
+
+**Note for whoever restores CI:** this hook is the honest description of what a fresh container needs
+to run the gates — `npm install` first, everything else after.
