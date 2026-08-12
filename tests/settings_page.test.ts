@@ -343,3 +343,116 @@ test('a partial property override renders merged, so saving cannot pin the untou
     close();
   }
 });
+
+/** Parse a rendered settings form the way a browser would submit it: every
+ * input's rendered value, every selected option, every CHECKED checkbox (an
+ * unchecked one sends nothing), and nothing else. Deliberately reads the real
+ * markup rather than reconstructing a body from the spec — a body built from
+ * the spec would agree with the spec even when the form disagrees with both. */
+function formsOn(page: string): { key: string; body: Record<string, string> }[] {
+  const out: { key: string; body: Record<string, string> }[] = [];
+  for (const chunk of page.split('<form method="post" action="/admin/settings">').slice(1)) {
+    const form = chunk.slice(0, chunk.indexOf('</form>'));
+    const body: Record<string, string> = {};
+    for (const m of form.matchAll(/<input\b([^>]*)>/g)) {
+      const attrs = m[1]!;
+      const name = /name="([^"]*)"/.exec(attrs)?.[1];
+      if (!name) continue;
+      const isCheckbox = /type="checkbox"/.test(attrs);
+      if (isCheckbox && !/\bchecked\b/.test(attrs)) continue; // unchecked sends nothing
+      body[name] = (/value="([^"]*)"/.exec(attrs)?.[1] ?? '').replace(/&amp;/g, '&').replace(/&#39;/g, "'").replace(/&quot;/g, '"');
+    }
+    for (const m of form.matchAll(/<select\b([^>]*)>([\s\S]*?)<\/select>/g)) {
+      const name = /name="([^"]*)"/.exec(m[1]!)?.[1];
+      if (!name) continue;
+      const sel = /<option value="([^"]*)"\s+selected>/.exec(m[2]!);
+      body[name] = sel ? sel[1]! : (/<option value="([^"]*)"/.exec(m[2]!)?.[1] ?? '');
+    }
+    const key = body.key;
+    if (key) out.push({ key, body });
+  }
+  return out;
+}
+
+test('every setting round-trips: submitting the form exactly as rendered saves it unchanged', async () => {
+  // The class of bug this exists for: a sub-field missing from the default
+  // object renders as an empty box, so the very first save of an untouched
+  // org fails — or worse, stores something the form never showed. A test that
+  // hand-writes the POST body cannot see it, because it supplies the value the
+  // form omitted. This drives the real markup instead.
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    const page = await get(base, '/admin/settings', cookie);
+    const forms = formsOn(page.text);
+    assert.equal(forms.length, SPECS.length, 'one editable form per setting');
+
+    for (const { key, body } of forms) {
+      // deep-equal, not stringified: a spec may declare sub-fields in a
+      // different order than the default object lists them, and key order in
+      // stored JSON means nothing to any consumer
+      const before = structuredClone(val(key));
+      const res = await post(base, '/admin/settings', body, cookie);
+      assert.equal(res.status, 303, `${key}: submitting the rendered form should be accepted`);
+      const flash = await get(base, res.location!.replace(/^[^/]*/, ''), cookie);
+      assert.doesNotMatch(
+        flash.text, /class="flash err"/,
+        `${key}: submitting the form exactly as rendered was rejected — the form renders a value the parse will not take`,
+      );
+      assert.deepEqual(val(key), before, `${key}: a no-op save changed the stored value`);
+    }
+  } finally {
+    close();
+  }
+});
+
+test('every sub-field a spec declares exists in that setting default', () => {
+  // the render side of the same class: a declared path with no value renders
+  // an empty control, which for a required type cannot be saved back
+  const missing: string[] = [];
+  for (const spec of SPECS) {
+    if (!spec.subs) continue;
+    const def = SETTING_DEFAULTS[spec.key] as Record<string, unknown>;
+    for (const sub of spec.subs) {
+      if (def === null || typeof def !== 'object' || !(sub.path in def)) missing.push(`${spec.key}.${sub.path}`);
+    }
+  }
+  assert.deepEqual(missing, [], 'these controls render empty because the default object has no such field');
+});
+
+test('a deleted pay grade stays deleted — the render must not merge a default row back in', async () => {
+  // Regression guard for the merge fix: closed-shape settings merge levels so
+  // a partial override does not show code defaults, but an open-ended key map
+  // must REPLACE. Merging re-supplies whatever the operator just removed, and
+  // the next save writes it back — deletion becomes impossible.
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    // earlier tests in this file mutate the table, so pick a grade that is
+    // actually present right now rather than assuming the shipped defaults
+    const start = val<Record<string, Record<string, number>>>('bah_table');
+    const doomed = Object.keys(start).find((r) => r in (SETTING_DEFAULTS.bah_table as Record<string, unknown>));
+    assert.ok(doomed, 'a grade that also exists in the code defaults — the one a merge would resurrect');
+
+    const body: Record<string, string> = { key: 'bah_table', property: '', [`drop.${doomed}`]: '1' };
+    for (const rank of Object.keys(start)) {
+      body[`f.${rank}.with_deps`] = (start[rank]!.with_deps! / 100).toFixed(2);
+      body[`f.${rank}.without_deps`] = (start[rank]!.without_deps! / 100).toFixed(2);
+    }
+    await post(base, '/admin/settings', body, cookie);
+    assert.equal(val<Record<string, unknown>>('bah_table')[doomed!], undefined, `stored without ${doomed}`);
+
+    // …and the PAGE must agree, or the next save silently resurrects it
+    const page = await get(base, '/admin/settings', cookie);
+    const matrix = page.text.slice(page.text.indexOf('BAH rates by pay grade'));
+    assert.doesNotMatch(matrix.slice(0, 6000), new RegExp(`f\\.${doomed}\\.with_deps`), 'the deleted grade is gone from the form too');
+
+    // prove it round-trips: resubmitting the rendered form keeps it deleted
+    const forms = formsOn(page.text).filter((f) => f.key === 'bah_table');
+    assert.equal(forms.length, 1);
+    await post(base, '/admin/settings', forms[0]!.body, cookie);
+    assert.equal(val<Record<string, unknown>>('bah_table')[doomed!], undefined, 'still gone after a no-op save');
+  } finally {
+    close();
+  }
+});

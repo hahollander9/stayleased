@@ -250,9 +250,16 @@ export function routes(r: Router): void {
       (r.property_id === '' ? orgLevel : propLevel).set(r.key, j<unknown>(r.value, undefined));
     }
     const overriddenKeys = new Set(propId ? [...propLevel.keys()] : []);
+    // Closed-shape settings MERGE, so a partial override does not render the
+    // other fields as code defaults. Open-ended key maps (the matrix specs)
+    // REPLACE: merging a stored table over the default re-supplies any row the
+    // operator deleted, and a merge cannot express "this key is gone".
+    const openEnded = new Set(SPECS.filter((sp) => sp.matrix).map((sp) => sp.key));
     const effectiveFor = (key: string): unknown => {
-      const merged = layerSetting(SETTING_DEFAULTS[key], orgLevel.get(key));
-      return propId ? layerSetting(merged, propLevel.get(key)) : merged;
+      const pick = (base: unknown, over: unknown): unknown =>
+        openEnded.has(key) ? (over === undefined ? base : over) : layerSetting(base, over);
+      const merged = pick(SETTING_DEFAULTS[key], orgLevel.get(key));
+      return propId ? pick(merged, propLevel.get(key)) : merged;
     };
     return shell(rq, {
       title: 'Settings',
@@ -301,7 +308,10 @@ export function routes(r: Router): void {
     try {
       // the spec validates in the operator's terms — a bad late fee is a
       // sentence about the late fee, never a JSON parse error
-      value = parseSetting(spec, rq.body as Record<string, unknown>, getSettingMerged(sysCtx(ctx.orgId), key, propId || undefined));
+      const current = spec.matrix
+        ? getSetting(sysCtx(ctx.orgId), key, propId || undefined)   // open-ended: replace, so deletions stick
+        : getSettingMerged(sysCtx(ctx.orgId), key, propId || undefined);
+      value = parseSetting(spec, rq.body as Record<string, unknown>, current);
     } catch (e) {
       return redirect(back, (e as Error).message, 'err');
     }

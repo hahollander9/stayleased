@@ -658,3 +658,37 @@ auto-resolve the text and thereby destroy the signal — two sessions claiming #
 into a file with two #38s. The conflict is the useful part; the test is the backstop.
 
 **Verified:** tsc strict clean · unit 329/329 on the rebased tree · e2e re-run against the new base.
+
+## 2026-08-12 — Adversarial verification of the review fixes: two more defects, one of them mine
+
+**Ran an 8-agent refutation pass over the 14 code-review fixes** rather than trusting the tests that
+came with them — each agent told to default to "does not hold" and to read executable code, not
+comments. Two of the fixes had real problems, both invisible to the tests written alongside them.
+
+1. **The percent fix made the late fee policy unsavable out of the box.** `late_fee_policy`'s default
+   has no `percent` key, so the new control rendered an empty box, and the pct parser (correctly)
+   refuses blank — meaning an org that had never saved this setting could not change its grace period
+   without first typing into a field whose own hint says it is only used by another structure. My test
+   passed because it supplied `f.percent`; a browser never would. `percent: 5` is now explicit in
+   SETTING_DEFAULTS, matching what the engine already assumed.
+2. **The merge fix broke deletion in the BAH matrix — a regression I introduced.** Layering the stored
+   table over the code default re-supplies any pay grade the operator just removed, and the next save
+   writes it back. Closed-shape settings merge; open-ended key maps must replace. The spec already
+   encodes which is which (`subs` vs `matrix`). (#43)
+
+Also fixed in passing: `policy.percent || 5` swallowed an explicit zero. Harmless while percent was
+unreachable; now that it is an editable control, "no percentage fee" has to mean zero, so it is `??`.
+
+**The test that would have caught both, and now does:** `every setting round-trips` renders the real
+page, parses each form the way a browser would submit it (rendered input values, selected options,
+CHECKED checkboxes only), posts it back, and asserts a 303 with no error flash and an unchanged stored
+value — for all 40 settings. It reads the actual markup rather than rebuilding a body from the spec,
+because a body built from the spec agrees with the spec even when the form disagrees with both. A
+companion test asserts every sub-field a spec declares exists in that setting's default object.
+
+**Decisions:** #43.
+
+**Verified:** tsc strict clean · unit suite · e2e. `tests/settings_page.test.ts` is now 13 tests.
+
+**Method note:** every defect in this entry came from an agent instructed to REFUTE a fix, reading the
+consumer rather than the control. The fixes' own tests all passed, both before and after.

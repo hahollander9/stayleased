@@ -9,7 +9,11 @@ import type { Ctx } from './auth.ts';
 
 export const SETTING_DEFAULTS: Record<string, any> = {
   // receivables / late fees
-  late_fee_policy: { graceDays: 3, type: 'flat_plus_daily', flatCents: 5000, dailyCents: 1000, dailyCapCents: 15000, minBalanceCents: 5000 },
+  // `percent` is explicit even though the default structure does not use it:
+  // the engine reads `policy.percent || 5`, and a field the settings form
+  // renders must have a value to render (an absent one makes the whole policy
+  // unsavable until someone types into a box the hints call optional).
+  late_fee_policy: { graceDays: 3, type: 'flat_plus_daily', flatCents: 5000, percent: 5, dailyCents: 1000, dailyCapCents: 15000, minBalanceCents: 5000 },
   nsf_fee_cents: 3500,
   prorate_method: 'actual_days', // actual_days | thirty_day
   payment_methods: { ach: true, card: true, cash_equivalent: true },
