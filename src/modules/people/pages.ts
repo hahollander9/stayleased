@@ -1,7 +1,8 @@
-import { html, raw, when } from '../../lib/html.ts';
-import { redirect, notFound, type Router, type Rq } from '../../lib/http.ts';
+import { html, raw, when, esc, type Child, type Raw } from '../../lib/html.ts';
+import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, propFilter, canAccessProperty, can, hashPassword, tempPassword, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, run, j } from '../../lib/db.ts';
+import { toCsv } from '../../lib/csv.ts';
 import { audit } from '../../lib/audit.ts';
 import { ensurePortalAccess } from './portal.ts';
 import { fmtDate, diffDays } from '../../lib/dates.ts';
@@ -29,41 +30,122 @@ registerSearch((ctx, query) => {
 
 const LEASE_STATUSES = ['active', 'month_to_month', 'notice', 'draft', 'out_for_signature', 'partially_signed', 'fully_executed', 'ended', 'renewed', 'canceled'];
 
+// ---------- residents list: sorting / page size / CSV ----------
+
+const RESIDENT_SORTS = ['name', 'unit', 'property', 'role', 'balance'] as const;
+type ResidentSort = (typeof RESIDENT_SORTS)[number];
+const PER_CHOICES = ['25', '50', '100', 'all'] as const;
+
+function residentCmp(sort: ResidentSort): (a: any, b: any) => number {
+  const s = (v: unknown): string => String(v ?? '').toLowerCase();
+  switch (sort) {
+    case 'name': return (a, b) => s(a.last_name).localeCompare(s(b.last_name)) || s(a.first_name).localeCompare(s(b.first_name));
+    // natural (numeric-aware) compare so unit 201 sorts before 1002
+    case 'unit': return (a, b) => String(a.unit_number ?? '').localeCompare(String(b.unit_number ?? ''), 'en', { numeric: true, sensitivity: 'base' });
+    case 'property': return (a, b) => s(a.prop_name).localeCompare(s(b.prop_name));
+    case 'role': return (a, b) => s(a.role).localeCompare(s(b.role));
+    case 'balance': return (a, b) => (a.balance as number) - (b.balance as number);
+  }
+}
+
+/** Shared by GET /residents and GET /residents.csv so the export is exactly
+ * the table the user sees — same org/property scope, same search, same sort —
+ * across ALL pages. Sorting happens server-side in JS: unit needs a natural
+ * compare and balance is computed off the ledger, neither of which SQLite
+ * offers; the SQL default order (last, first) remains and, sort() being
+ * stable, stays the tiebreaker. `x.balance` is attached only when the sort
+ * needs it — callers fall back to leaseBalance() per rendered row. */
+function residentListRows(ctx: Ctx, rq: Rq): { rows: any[]; sort: ResidentSort | null; dir: 'asc' | 'desc'; query: string } {
+  const pf = propFilter(ctx, 'l.property_id');
+  const query = rq.query.get('q') || '';
+  const params: unknown[] = [ctx.orgId, ...pf.params];
+  let where = `l.org_id=? AND l.status IN ('active','month_to_month','notice')${pf.sql} AND hm.role IN ('primary','co')`;
+  if (query) { where += ` AND (r.first_name || ' ' || r.last_name LIKE ? OR r.email LIKE ? OR u.unit_number LIKE ?)`; params.push(`%${query}%`, `%${query}%`, `%${query}%`); }
+  const rows = q<any>(
+    `SELECT r.id, r.first_name, r.last_name, r.email, r.phone, hm.role, l.id AS lease_id, l.status AS lease_status,
+            u.unit_number, p.name AS prop_name, l.end_date
+     FROM household_members hm JOIN leases l ON l.id=hm.lease_id JOIN residents r ON r.id=hm.resident_id
+     JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=l.property_id
+     WHERE ${where} ORDER BY r.last_name, r.first_name`,
+    ...params,
+  );
+  const sortParam = rq.query.get('sort') || '';
+  const sort = (RESIDENT_SORTS as readonly string[]).includes(sortParam) ? (sortParam as ResidentSort) : null;
+  const dir: 'asc' | 'desc' = rq.query.get('dir') === 'desc' ? 'desc' : 'asc';
+  if (sort) {
+    if (sort === 'balance') for (const x of rows) x.balance = leaseBalance(ctx, x.lease_id);
+    const cmp = residentCmp(sort);
+    const sgn = dir === 'desc' ? -1 : 1;
+    rows.sort((a, b) => sgn * cmp(a, b));
+  }
+  return { rows, sort, dir, query };
+}
+
+/** tbl() with per-column aria-sort — same markup/classes as ui.ts tbl()
+ * (tbl-wrap, data-href row links, num cells), which cannot carry attributes
+ * on a <th>. Kept local to the residents list. */
+function sortableTbl(
+  cols: { label: Child; num?: boolean; ariaSort?: 'ascending' | 'descending' }[],
+  rows: { cells: Child[]; href?: string }[],
+  empty: string,
+): Raw {
+  if (!rows.length) return html`<div class="empty"><div class="e-title">${empty}</div></div>`;
+  return html`<div class="tbl-wrap"><table class="tbl">
+    <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}" ${c.ariaSort ? raw(`aria-sort="${c.ariaSort}"`) : ''}>${c.label}</th>`)}</tr></thead>
+    <tbody>${rows.map(
+      (row) =>
+        html`<tr ${row.href ? raw(`data-href="${esc(row.href)}" tabindex="0"`) : ''}>${row.cells.map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}">${cell}</td>`)}</tr>`,
+    )}</tbody>
+  </table></div>`;
+}
+
 export function routes(r: Router): void {
   // ---------- residents ----------
   r.get('/residents', requirePerm('residents:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const pf = propFilter(ctx, 'l.property_id');
-    const query = rq.query.get('q') || '';
-    const params: unknown[] = [ctx.orgId, ...pf.params];
-    let where = `l.org_id=? AND l.status IN ('active','month_to_month','notice')${pf.sql} AND hm.role IN ('primary','co')`;
-    if (query) { where += ` AND (r.first_name || ' ' || r.last_name LIKE ? OR r.email LIKE ? OR u.unit_number LIKE ?)`; params.push(`%${query}%`, `%${query}%`, `%${query}%`); }
-    const total = val<number>(
-      `SELECT COUNT(*) FROM household_members hm JOIN leases l ON l.id=hm.lease_id JOIN residents r ON r.id=hm.resident_id JOIN units u ON u.id=l.unit_id WHERE ${where}`,
-      ...params,
-    );
+    const { rows, sort, dir, query } = residentListRows(ctx, rq);
+    const total = rows.length;
+    const perParam = rq.query.get('per') || '50';
+    const per = (PER_CHOICES as readonly string[]).includes(perParam) ? perParam : '50';
+    const pageSize = per === 'all' ? Math.max(total, 1) : parseInt(per, 10);
     const page = Math.max(1, parseInt(rq.query.get('page') || '1', 10) || 1);
-    const rows = q<any>(
-      `SELECT r.id, r.first_name, r.last_name, r.email, r.phone, hm.role, l.id AS lease_id, l.status AS lease_status,
-              u.unit_number, p.name AS prop_name, l.end_date
-       FROM household_members hm JOIN leases l ON l.id=hm.lease_id JOIN residents r ON r.id=hm.resident_id
-       JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=l.property_id
-       WHERE ${where} ORDER BY r.last_name, r.first_name LIMIT 50 OFFSET ?`,
-      ...params, (page - 1) * 50,
-    );
+    const pageRows = per === 'all' ? rows : rows.slice((page - 1) * pageSize, page * pageSize);
+
+    // sort links preserve search + page size (the pager already preserves
+    // sort/dir/per the same way); a re-sort restarts at page 1
+    const sortHref = (key: ResidentSort): string => {
+      const sp = new URLSearchParams(rq.query);
+      sp.delete('page');
+      sp.set('sort', key);
+      sp.set('dir', sort === key && dir === 'asc' ? 'desc' : 'asc');
+      return `/residents?${sp}`;
+    };
+    const head = (key: ResidentSort, label: string, num?: boolean): { label: Child; num?: boolean; ariaSort?: 'ascending' | 'descending' } => ({
+      num,
+      ariaSort: sort === key ? (dir === 'asc' ? 'ascending' : 'descending') : undefined,
+      label: html`<a href="${sortHref(key)}">${label}${sort === key ? html`<span aria-hidden="true"> ${dir === 'asc' ? '▲' : '▼'}</span>` : ''}</a>`,
+    });
+    const csvSp = new URLSearchParams(rq.query);
+    csvSp.delete('page');
+    csvSp.delete('per');
+    const csvQs = csvSp.toString();
+
     return shell(rq, {
       title: 'Residents',
       active: '/residents',
       subtitle: `${total} adults on current leases`,
       content: html`
-        <form method="get" class="toolbar">
+        <form method="get" class="toolbar" data-autosubmit>
+          ${when(sort, () => html`<input type="hidden" name="sort" value="${sort}" /><input type="hidden" name="dir" value="${dir}" />`)}
           ${field('Search', input('q', { value: query, placeholder: 'Name, email, or unit…', type: 'search' }))}
+          ${field('Rows', select('per', PER_CHOICES.map((p): [string, string] => [p, p === 'all' ? 'All' : p]), per))}
           <button class="btn btn-ghost">Filter</button>
+          <a class="btn btn-ghost" href="/residents.csv${csvQs ? `?${csvQs}` : ''}">Export CSV</a>
         </form>
-        ${card(null, html`${tbl(
-          [{ label: 'Resident' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Role' }, { label: 'Lease' }, { label: 'Balance', num: true }],
-          rows.map((x) => {
-            const bal = leaseBalance(ctx, x.lease_id);
+        ${card(null, html`${sortableTbl(
+          [head('name', 'Resident'), head('unit', 'Unit'), head('property', 'Property'), head('role', 'Role'), { label: 'Lease' }, head('balance', 'Balance', true)],
+          pageRows.map((x) => {
+            const bal: number = x.balance ?? leaseBalance(ctx, x.lease_id);
             return {
               href: `/residents/${x.id}`,
               cells: [
@@ -73,9 +155,24 @@ export function routes(r: Router): void {
               ],
             };
           }),
-          { empty: 'No residents match.' },
-        )}${pager(rq, total)}`, { flush: true })}`,
+          'No residents match.',
+        )}${pager(rq, total, pageSize)}`, { flush: true })}`,
     });
+  });
+
+  // CSV export of the current view — same permission, same org/property scope,
+  // same search + sort as the table, every matching row (not just one page).
+  r.get('/residents.csv', requirePerm('residents:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const { rows } = residentListRows(ctx, rq);
+    const csv = toCsv(
+      ['Resident', 'Unit', 'Property', 'Role', 'Lease status', 'Balance'],
+      rows.map((x) => [
+        `${x.first_name} ${x.last_name}`, x.unit_number, x.prop_name, x.role, x.lease_status,
+        (((x.balance ?? leaseBalance(ctx, x.lease_id)) as number) / 100).toFixed(2),
+      ]),
+    );
+    return fileRes(csv, 'text/csv; charset=utf-8', { filename: `residents-${ctx.businessDate}.csv` });
   });
 
   r.get('/residents/:id', requirePerm('residents:view'), (rq) => {

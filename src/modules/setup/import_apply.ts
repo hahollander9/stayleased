@@ -45,6 +45,23 @@ export interface VRow {
   plan?: Record<string, unknown>;
 }
 
+/** What the file adds up to — shown on the review screen and the applied
+ * record so the operator can tie the import to the source report's own
+ * summary page BEFORE anything applies. Born from the 2026-08-11 live run,
+ * where $99k of deposits imported as $0 and a $14.50 mis-mapped column stood
+ * in for $331k of balances with nothing on screen to catch either. */
+export interface ImportRecon {
+  units: number;
+  occupied: number;
+  rentCents: number;
+  extraMonthlyCents: number;
+  depositCents: number;
+  balanceCents: number;
+  moveOuts: number;
+  /** batch-level mis-mapping heuristics ("every deposit is $0", …) */
+  columnWarnings: string[];
+}
+
 export interface Validation {
   rows: VRow[];
   ok: number;
@@ -53,6 +70,10 @@ export interface Validation {
   /** property names resolved from the file (property-column imports) */
   properties: string[];
   blockers: string[]; // batch-level problems that prevent apply entirely
+  /** rent-roll reconciliation strip (see ImportRecon) */
+  recon?: ImportRecon;
+  /** residents-lane mass-insert guard: explains at review, enforced at apply */
+  duplicateGuard?: { inserts: number; matched: number; message: string };
 }
 
 function tally(out: Validation, row: VRow): void {
@@ -132,6 +153,15 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
 
   const seen = new Map<string, number>(); // propertyKey|unit → row n
   const propNames = new Set<string>();
+  const headers = j<string[]>(batch.headers, []);
+  const headerFor = (field: string): string => {
+    const ci = Object.entries(mapping.cols).find(([, f]) => f === field)?.[0];
+    return ci !== undefined ? (headers[Number(ci)] || `column ${Number(ci) + 1}`) : '';
+  };
+  // reconciliation accumulators (non-error rows only — what would apply)
+  const recon: ImportRecon = { units: 0, occupied: 0, rentCents: 0, extraMonthlyCents: 0, depositCents: 0, balanceCents: 0, moveOuts: 0, columnWarnings: [] };
+  const colStats = { deposit: { zero: 0, freq: new Map<number, number>() }, balance: { zero: 0, freq: new Map<number, number>() } };
+  const rentFreq = new Map<number, number>(); // occupied-row rent value → count
 
   rows.forEach((raw, i) => {
     const n = i + 1;
@@ -254,9 +284,54 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     }
 
     tally(out, { n, rec, level, notes, plan: plan as unknown as Record<string, unknown> });
+    // reconciliation accumulation — read the tallied level (closure mutations
+    // above defeat TS narrowing on the local)
+    if (out.rows[out.rows.length - 1]!.level !== 'error') {
+      recon.units++;
+      if (plan.occupied) {
+        recon.occupied++;
+        recon.rentCents += plan.rentCents;
+        rentFreq.set(plan.rentCents, (rentFreq.get(plan.rentCents) || 0) + 1);
+      }
+      recon.extraMonthlyCents += plan.extraMonthlyCents;
+      recon.depositCents += plan.depositCents;
+      recon.balanceCents += plan.balanceCents;
+      if (moveOut) recon.moveOuts++;
+      for (const [field, cents] of [['deposit', depositCents], ['balance', balanceCents]] as const) {
+        const s = colStats[field];
+        if (cents === 0) s.zero++;
+        else s.freq.set(cents, (s.freq.get(cents) || 0) + 1);
+      }
+    }
   });
 
   out.properties = [...propNames];
+
+  // ---- column-level mis-mapping heuristics (batch warnings, not row noise)
+  const fmt = (c: number): string => `$${(c / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  for (const [field, label] of [['deposit', 'deposit'], ['balance', 'balance']] as const) {
+    if (!mappedFields.has(field) || recon.units < 10) continue;
+    const s = colStats[field];
+    const nonzero = [...s.freq.values()].reduce((a, b) => a + b, 0);
+    if (nonzero === 0) {
+      recon.columnWarnings.push(`The ${label} column (mapped from “${headerFor(field)}”) produced $0 on every row — that mapping is probably wrong. ${field === 'deposit' ? 'Deposits held would import as nothing.' : 'Balances owed would import as nothing.'}`);
+      continue;
+    }
+    // uniformity is only suspicious for balances: what people owe varies
+    // organically, so 98 identical balances means a mis-mapped column — while
+    // an identical deposit on every lease is just a deposit policy.
+    const [topCents, topCount] = [...s.freq.entries()].sort((a, b) => b[1] - a[1])[0]!;
+    if (field === 'balance' && nonzero >= 10 && topCount / nonzero >= 0.8) {
+      recon.columnWarnings.push(`${topCount} of ${nonzero} non-zero ${label} values are identical (${fmt(topCents)}) — an identical ${label} on nearly every lease usually means the column is mis-mapped, not real data.`);
+    }
+  }
+  for (const [cents, count] of [...rentFreq.entries()].sort((a, b) => b[1] - a[1])) {
+    if (count >= 3 && cents > 0 && cents <= 50000) {
+      recon.columnWarnings.push(`${count} occupied units import with rent ${fmt(cents)} — in block-format rent rolls a small identical “rent” is usually a recurring charge (parking, storage) sitting on the unit row, not the rent. Check those rows before applying.`);
+      break; // one such warning is enough
+    }
+  }
+  out.recon = recon;
   return out;
 }
 
@@ -275,6 +350,9 @@ export interface ApplySummary {
   /** existing residents whose email/phone were filled in by a directory import */
   contactUpdates?: number;
   skipped: number;
+  /** what the applied file added up to (rent rolls) — kept on the record so
+   * the batch page can show it without re-validating post-apply */
+  recon?: ImportRecon;
 }
 
 /** "Beltran, Angel" and "Angel Beltran" are the same person. */
@@ -287,7 +365,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
   if (validation.blockers.length) throw new Error(validation.blockers.join(' '));
   const asOf = batch.as_of || ctx.businessDate;
   const billingStart = firstOfMonth(addMonths(asOf, 1));
-  const summary: ApplySummary = { properties: 0, units: 0, residents: 0, leases: 0, vendors: 0, balancesCents: 0, depositsCents: 0, skipped: validation.error };
+  const summary: ApplySummary = { properties: 0, units: 0, residents: 0, leases: 0, vendors: 0, balancesCents: 0, depositsCents: 0, skipped: validation.error, recon: validation.recon };
 
   tx(() => {
     ensureOpeningEquityAccount(ctx.orgId);
@@ -493,10 +571,12 @@ export function applyVendors(ctx: Ctx, batch: BatchRow): ApplySummary {
 
 // ---------- additional residents (co-tenants / occupants onto existing leases) ----------
 
-export function validateResidents(ctx: Ctx, batch: BatchRow): Validation {
+export function validateResidents(ctx: Ctx, batch: BatchRow, opts: { confirmDuplicates?: boolean } = {}): Validation {
   const mapping = j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] });
   const rows = j<string[][]>(batch.rows, []);
   const out: Validation = { rows: [], ok: 0, warn: 0, error: 0, properties: [], blockers: [] };
+  let inserts = 0; // rows that found the unit + lease but matched nobody on it
+  let matched = 0; // rows that matched an existing household member by name
   const mapped = new Set(Object.values(mapping.cols).filter(Boolean));
   if (!mapped.has('unit')) out.blockers.push('No column is mapped to “Unit number”.');
   if (!mapped.has('tenant') && !(mapped.has('first_name') || mapped.has('last_name'))) out.blockers.push('No name column is mapped.');
@@ -526,6 +606,7 @@ export function validateResidents(ctx: Ctx, batch: BatchRow): Validation {
         );
         const match = members.find((m) => nameKey(`${m.first_name} ${m.last_name}`) === nameKey(name));
         if (match) {
+          matched++;
           const newEmail = (rec.email || '').trim();
           const newPhone = (rec.phone || '').trim();
           const addsEmail = !!newEmail && !match.email;
@@ -537,17 +618,35 @@ export function validateResidents(ctx: Ctx, batch: BatchRow): Validation {
             level = 'error';
             notes.push(`${match.first_name} ${match.last_name} is already on the lease with this contact info — nothing to add.`);
           }
+        } else {
+          inserts++;
+          notes.push(`No one on unit ${rec.unit}’s lease matches this name — will be added as a NEW person.`);
         }
       }
     }
     tally(out, { n: i + 1, rec, level, notes, plan });
   });
+
+  // ---- mass-insert guard (2026-08-11 live run: 247 duplicates in one apply).
+  // A directory that lists people the rent roll already created should MERGE;
+  // when most rows would insert instead, the overwhelmingly likely cause is a
+  // name-format mismatch between the two files, and applying would duplicate
+  // the building. Explained here at review; enforced in applyResidents.
+  if (inserts >= 10 && matched / Math.max(1, inserts + matched) < 0.5 && !opts.confirmDuplicates) {
+    out.duplicateGuard = {
+      inserts, matched,
+      message: `${inserts} of ${inserts + matched} people in this file don’t match anyone on their unit’s lease, so they would be added as NEW residents. When a directory names people the rent roll already created, that usually means a name-format mismatch between the files — applying would duplicate the building’s residents. Spot-check a few rows below; if these really are new people, tick “Add them as new residents” beside Apply.`,
+    };
+  }
   return out;
 }
 
-export function applyResidents(ctx: Ctx, batch: BatchRow): ApplySummary {
-  const validation = validateResidents(ctx, batch);
+export function applyResidents(ctx: Ctx, batch: BatchRow, opts: { confirmDuplicates?: boolean } = {}): ApplySummary {
+  const validation = validateResidents(ctx, batch, opts);
   if (validation.blockers.length) throw new Error(validation.blockers.join(' '));
+  if (validation.duplicateGuard) {
+    throw new Error(`${validation.duplicateGuard.inserts} of ${validation.duplicateGuard.inserts + validation.duplicateGuard.matched} people don’t match anyone on their unit’s lease — applying would add them all as new residents. Tick “Add them as new residents” to confirm, or fix the mapping.`);
+  }
   const summary: ApplySummary = { properties: 0, units: 0, residents: 0, leases: 0, vendors: 0, balancesCents: 0, depositsCents: 0, skipped: validation.error };
   tx(() => {
     for (const row of validation.rows) {

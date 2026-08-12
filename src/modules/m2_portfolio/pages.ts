@@ -18,7 +18,7 @@ import { donut, bars, sparkline, barChart, areaChart, funnelChart, splitBar } fr
 import { funnelStats } from '../m3_crm/service.ts';
 import {
   unitStats, floorplanAvailability, propertySummaries, unitAmenities, effectiveMarketRent,
-  UNIT_STATUSES, UNIT_STATUS_LABELS,
+  deleteProperty, UNIT_STATUSES, UNIT_STATUS_LABELS,
 } from './service.ts';
 import { mapRoutes, dashMapCard } from './map.ts';
 
@@ -264,7 +264,21 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const p = getProp(ctx, rq.params.id!);
     if (!p) return notFound();
-    return shell(rq, { title: `Edit ${p.name}`, active: '/properties', crumbs: [['Properties', '/properties'], [p.name, `/properties/${p.id}`]], content: card(null, propertyForm(p)) });
+    const dangerZone = card('Danger zone', html`
+      <p style="margin-top:0"><b>Remove this property.</b> This permanently deletes ${p.name} and everything recorded
+      under it: units, leases, resident records and their portal access, files, and every journal entry booked to the
+      property on both the accrual and cash books. Residents who also hold a lease at another property keep their
+      records and portal access. This cannot be undone.</p>
+      <p class="small muted" style="margin-top:0">If payments or manually posted journal entries have been recorded here
+      since the books were set up, the removal will be declined to protect your financial history.</p>
+      <form method="post" action="/properties/${p.id}/delete">
+        ${field(html`To confirm, type the property name exactly — <b>${p.name}</b>`, input('confirm_name', { required: true, placeholder: p.name }))}
+        <div class="btn-row"><button class="btn btn-danger">Remove this property permanently</button></div>
+      </form>`);
+    return shell(rq, {
+      title: `Edit ${p.name}`, active: '/properties', crumbs: [['Properties', '/properties'], [p.name, `/properties/${p.id}`]],
+      content: html`${card(null, propertyForm(p))}${dangerZone}`,
+    });
   });
 
   r.post('/properties/:id/edit', requirePerm('properties:manage'), (rq) => {
@@ -282,6 +296,31 @@ export function routes(r: Router): void {
     });
     audit(ctx, 'property', p.id, 'update', before, { name: rq.body.name, slug: rq.body.slug, type: rq.body.type, address1: rq.body.address1 });
     return redirect(`/properties/${p.id}`, 'Property saved.');
+  });
+
+  // Typed-name confirmed, books-safe delete. The typed name IS the
+  // confirmation — no script dialogs; the server re-checks it here.
+  r.post('/properties/:id/delete', requirePerm('properties:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const p = getProp(ctx, rq.params.id!);
+    if (!p) return notFound();
+    const typed = String(rq.body.confirm_name || '').trim();
+    if (typed !== p.name) {
+      return redirect(`/properties/${p.id}/edit`, 'The name you typed does not match this property — nothing was removed.', 'err');
+    }
+    try {
+      const { counts } = deleteProperty(ctx, p.id);
+      const n = (k: string): number => counts[k] || 0;
+      const bits = [
+        `${n('units')} unit${n('units') === 1 ? '' : 's'}`,
+        `${n('leases')} lease${n('leases') === 1 ? '' : 's'}`,
+        `${n('residents')} resident record${n('residents') === 1 ? '' : 's'}`,
+        `${n('journal_entries')} journal entr${n('journal_entries') === 1 ? 'y' : 'ies'}`,
+      ];
+      return redirect('/properties', `${p.name} was removed, along with ${bits.join(', ')}.`);
+    } catch (e) {
+      return redirect(`/properties/${p.id}/edit`, (e as Error).message, 'err');
+    }
   });
 
   r.post('/properties/:id/buildings', requirePerm('units:manage'), (rq) => {

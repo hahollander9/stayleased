@@ -126,7 +126,7 @@ export function mkSeoHead(path: string, title: string, description: string): Raw
 <meta property="og:url" content="${url}" />
 <meta property="og:image" content="${img}" />
 <meta property="og:image:width" content="2400" /><meta property="og:image:height" content="1260" />
-<meta property="og:image:alt" content="StayLeased — autonomous property management for buildings of 10–100 units" />
+<meta property="og:image:alt" content="StayLeased — property management that does the work, for buildings of 10–100 units" />
 <meta name="twitter:card" content="summary_large_image" />
 <meta name="twitter:title" content="${title}" />
 <meta name="twitter:description" content="${description}" />

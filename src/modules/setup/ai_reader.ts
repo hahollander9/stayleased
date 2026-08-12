@@ -110,30 +110,37 @@ export function mappingScore(cols: Record<number, string>, kind: ImportKind): nu
 
 export function applyReadingPlan(rows: string[][], plan: ReadingPlan, kind: ImportKind): ReadResult {
   const skip = new Set(plan.skip_rows);
-  const sectionRows = new Set(plan.sections.map((s) => s.row));
   const notes: string[] = [];
 
   const colCount = Math.max(...rows.map((r) => r.length), Object.keys(plan.cols).length ? Math.max(...Object.keys(plan.cols).map(Number)) + 1 : 1);
   let headers: string[];
+  let sections = plan.sections;
   if (plan.header_row >= 0) {
     // stacked two-row headers (Yardi): merge the sub-labels into the titles
-    // and consume the continuation row so it never reads as data
+    // and consume the continuation row so it never reads as data. The merge
+    // is attempted UNCONDITIONALLY — the plan's own row taxonomy (skip rows,
+    // section labels) never suppresses it, because a sub-label row ("Sq Ft" /
+    // "Deposit" / "Expiration") is not a property section. The 2026-08-11
+    // live import showed what happens when the model's labels win: raw
+    // one-word headers ("Lease", "Other"), deposits read from the wrong
+    // column, $0 applied where $99k was owed. Deterministic safety nets do
+    // not defer to model row labels.
     const base = Array.from({ length: colCount }, (_, i) => String(rows[plan.header_row]?.[i] ?? ''));
-    const stacked = sectionRows.has(plan.header_row + 1)
-      ? { headers: base, merged: false }
-      : mergeStackedHeader(base, rows[plan.header_row + 1]);
+    const stacked = mergeStackedHeader(base, rows[plan.header_row + 1]);
     if (stacked.merged) {
       skip.add(plan.header_row + 1);
+      sections = sections.filter((s) => s.row !== plan.header_row + 1);
       notes.push('Merged a stacked two-row header.');
     }
     headers = stacked.headers.map((h, i) => h || `Column ${i + 1}`);
   } else {
     headers = Array.from({ length: colCount }, (_, i) => plan.cols[i] ? fieldsFor(kind).find((f) => f.key === plan.cols[i])!.label : `Column ${i + 1}`);
   }
+  const sectionRows = new Set(sections.map((s) => s.row));
 
   const propertyFor = (rowIdx: number): string => {
     let name = '';
-    for (const s of plan.sections) {
+    for (const s of sections) {
       if (s.row < rowIdx) name = s.property;
       else break;
     }
@@ -147,18 +154,18 @@ export function applyReadingPlan(rows: string[][], plan: ReadingPlan, kind: Impo
     if (plan.header_row >= 0 && i < plan.header_row) { skipped++; return; }
     if (!r.some((c) => String(c).trim() !== '')) return;
     const base = Array.from({ length: colCount }, (_, ci) => String(r[ci] ?? ''));
-    dataRows.push(plan.sections.length ? [propertyFor(i), ...base] : base);
+    dataRows.push(sections.length ? [propertyFor(i), ...base] : base);
   });
 
   let cols: Record<number, string> = { ...plan.cols };
   let outHeaders = headers;
-  if (plan.sections.length) {
+  if (sections.length) {
     // inject a synthetic Property column so the standard multi-property path applies
     const shifted: Record<number, string> = { 0: 'property' };
     for (const [k, v] of Object.entries(plan.cols)) shifted[Number(k) + 1] = v;
     cols = shifted;
     outHeaders = ['Property', ...headers];
-    notes.push(`Found ${plan.sections.length} property section${plan.sections.length === 1 ? '' : 's'}: ${plan.sections.map((s) => s.property).slice(0, 6).join(', ')}${plan.sections.length > 6 ? '…' : ''}.`);
+    notes.push(`Found ${sections.length} property section${sections.length === 1 ? '' : 's'}: ${sections.map((s) => s.property).slice(0, 6).join(', ')}${sections.length > 6 ? '…' : ''}.`);
   }
   if (skipped) notes.push(`Skipped ${skipped} non-data row${skipped === 1 ? '' : 's'} (titles, totals, section labels).`);
 

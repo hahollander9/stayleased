@@ -157,7 +157,7 @@ ${mkHeader()}
   <div class="mk-wrap mk-hero-in">
     <div class="mk-hero-copy">
       <div class="mk-kicker">Property management software for buildings of 10–100 units</div>
-      <h1>Autonomous property management<span class="mk-dot">.</span></h1>
+      <h1>Property management that does the work<span class="mk-dot">.</span></h1>
       <p class="mk-sub">AI agents staff the leasing desk, collections, maintenance intake, and the books — drafting into an approval queue the operator controls, on one system of record built for small multifamily.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="#walkthrough">Book a live demo</a>
@@ -400,7 +400,7 @@ ${mkHeader()}
 <section class="mk-band mk-band-alt" id="walkthrough">
   <div class="mk-wrap mk-two-col">
     <div>
-      <h2 class="mk-h2">See autonomous property management in action.</h2>
+      <h2 class="mk-h2">See it do the work in a live demo.</h2>
       <p class="mk-lead">A live demo runs in the working system — every screen live, every agent at work, on a fully populated portfolio. Describe the portfolio and we will set one up.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-line mk-btn-lg" href="/login">Explore the self-guided demo</a>
@@ -626,7 +626,7 @@ ${mkFooter()}
 })();
 </script>`;
 
-  const TITLE = 'StayLeased — Autonomous Property Management';
+  const TITLE = 'StayLeased — Property Management That Does the Work';
   const DESC = "Property management software that does the work: AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft under the operator's approval. Built for buildings of 10–100 units.";
   const o = siteOrigin();
   const appLd = ldJson({

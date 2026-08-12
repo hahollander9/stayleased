@@ -27,7 +27,7 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   const resp = await page.goto(`${base}/`, { waitUntil: 'networkidle' });
   assert.equal(resp!.status(), 200);
   const body = await page.content();
-  assert.match(body, /Autonomous property management/);
+  assert.match(body, /Property management that does the work/);
   assert.match(body, /Property management software that does the work/i);
   assert.match(body, /Operational in an afternoon\./);
   // the differentiation build (2026-08-05): segment evidence band, records
@@ -161,7 +161,7 @@ test('gate: demo persona chips are hidden until "Explore the demo" is clicked', 
   assert.equal(await back.getAttribute('href'), '/', 'back link points home');
   await back.click();
   await page.waitForLoadState('networkidle');
-  assert.match(await page.content(), /Autonomous property management/, 'back link lands on the homepage');
+  assert.match(await page.content(), /Property management that does the work/, 'back link lands on the homepage');
   await page.goBack({ waitUntil: 'networkidle' });
   // the summary is present, but the chips are collapsed (not visible) by default
   const summary = page.locator('.demo-personas summary.dp-head');

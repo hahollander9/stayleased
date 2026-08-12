@@ -16,7 +16,7 @@ import {
 import {
   validateRentRoll, validateVendors, validateResidents, validateBalances,
   applyRentRoll, applyVendors, applyResidents, applyBalances, postBankOpeningBalance,
-  type BatchRow, type Validation,
+  type BatchRow, type Validation, type ImportRecon,
 } from './import_apply.ts';
 import { leasePdfRoutes, leasePdfLaneCard } from './import_leases.ts';
 import { aiPlanSpreadsheet, applyReadingPlan, aiReadPdfTable, mappingScore } from './ai_reader.ts';
@@ -33,7 +33,7 @@ const MAX_ROWS = 5000;
 const KINDS: { key: ImportKind; label: string; blurb: string }[] = [
   { key: 'rent_roll', label: 'Rent roll / units', blurb: 'One file builds everything: properties, floorplans, units, residents, leases, deposits, and balances owed.' },
   { key: 'vendors', label: 'Vendors', blurb: 'Your plumbers, electricians and landscapers — name, trade, contact info.' },
-  { key: 'residents', label: 'More residents', blurb: 'Co-tenants, occupants and guarantors attached to leases you already imported.' },
+  { key: 'residents', label: 'Resident directory', blurb: 'Emails, phones, co-tenants and guarantors for people on leases you already imported — matched by name and merged, never duplicated.' },
   { key: 'balances', label: 'Opening balances', blurb: 'Amounts owed per unit as of your switch date, onto existing leases.' },
 ];
 
@@ -310,7 +310,7 @@ export function routes(r: Router): void {
     try {
       const s =
         batch.kind === 'vendors' ? applyVendors(ctx, batch)
-        : batch.kind === 'residents' ? applyResidents(ctx, batch)
+        : batch.kind === 'residents' ? applyResidents(ctx, batch, { confirmDuplicates: String(rq.body.confirm_duplicates || '') === '1' })
         : batch.kind === 'balances' ? applyBalances(ctx, batch)
         : applyRentRoll(ctx, batch);
       const bits = summaryBits(s);
@@ -365,6 +365,30 @@ function summaryBits(s: Partial<import('./import_apply.ts').ApplySummary>): stri
   if (s.contactUpdates) bits.push(`${s.contactUpdates} contact update${s.contactUpdates === 1 ? '' : 's'}`);
   if (s.portalInvites) bits.push(`${s.portalInvites} portal invite${s.portalInvites === 1 ? '' : 's'} sent`);
   return bits;
+}
+
+/** The reconciliation strip: what the file adds up to, in the numbers the
+ * source system prints on its own summary page. Rendered on review (tie it
+ * out BEFORE applying) and kept on the applied record. */
+function reconStrip(recon: ImportRecon, applied: boolean): Raw {
+  const money = (c: number): string => `$${(c / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  const bits: string[] = [
+    `${recon.units} unit${recon.units === 1 ? '' : 's'}`,
+    `${recon.occupied} occupied`,
+    `${money(recon.rentCents)}/mo rent`,
+    ...(recon.extraMonthlyCents ? [`${money(recon.extraMonthlyCents)}/mo other charges`] : []),
+    `${money(recon.depositCents)} deposits held`,
+    `${money(recon.balanceCents)} balances owed`,
+    ...(recon.moveOuts ? [`${recon.moveOuts} move-out${recon.moveOuts === 1 ? '' : 's'}`] : []),
+  ];
+  return html`
+    <div class="callout ${recon.columnWarnings.length ? 'bad' : 'info'}">
+      <b>${applied ? 'What this file added up to:' : 'What this file adds up to:'}</b> ${bits.join(' · ')}.
+      ${applied
+        ? html`<span class="muted">These totals should match the summary block of the report that was uploaded.</span>`
+        : html`<span>Compare these to the summary (usually the last page) of the report you exported — <b>if a number is off, fix the mapping above before applying.</b></span>`}
+      ${when(recon.columnWarnings.length, () => html`<ul style="margin:8px 0 0;padding-left:18px">${hjoin(recon.columnWarnings.map((w) => html`<li>${w}</li>`), '')}</ul>`)}
+    </div>`;
 }
 
 // ---------- hub page ----------
@@ -426,8 +450,8 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
     ['vendors', 'Vendors', card('Import vendors', html`
       <p class="muted" style="margin-top:0">${KINDS[1]!.blurb} <a href="/setup/import/template?kind=vendors">CSV template</a>.</p>
       ${uploader('vendors')}`)],
-    ['residents', 'Residents', card('Attach co-tenants & occupants', html`
-      <p class="muted" style="margin-top:0">${KINDS[2]!.blurb} <a href="/setup/import/template?kind=residents">CSV template</a>.</p>
+    ['residents', 'Resident directory', card('Upload your resident directory', html`
+      <p class="muted" style="margin-top:0">${KINDS[2]!.blurb} Yardi calls this export the Tenant/Resident Directory; Buildium and AppFolio call it the tenant or contact list. <a href="/setup/import/template?kind=residents">Blank CSV template</a>.</p>
       ${uploader('residents')}`)],
     ['balances', 'Opening balances', html`
       ${card('Per-unit balances owed', html`
@@ -475,6 +499,7 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
         }),
         { empty: '' },
       ), { flush: true }))}
+      ${when(props.length, () => html`<p class="muted small" style="margin:-4px 0 12px 2px">Imported into the wrong place? <a href="/properties">Remove the property and start over →</a></p>`)}
       <div class="tabs">${lanes.map(([key, label]) => html`<a href="/setup/import?tab=${key}" class="${key === tab ? 'active' : ''}">${label}</a>`)}</div>
       ${(lanes.find(([key]) => key === tab) || lanes[0]!)[2]}
     `,
@@ -506,6 +531,7 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
           <span class="muted small">${String(rows.length)} data row${rows.length === 1 ? '' : 's'} in the file</span>
         </div>
         ${when(applied && !!s, () => html`<p style="margin:10px 0 0">${summaryBits(s!).join(' · ') || 'Nothing new was created.'}${s!.skipped ? html` <span class="muted">· ${String(s!.skipped)} row${s!.skipped === 1 ? '' : 's'} skipped</span>` : raw('')}</p>`)}
+        ${when(applied && !!s?.recon, () => reconStrip(s!.recon!, true))}
         ${when(!applied, () => html`<p class="muted" style="margin:10px 0 0">This upload was discarded — nothing was written. The file's mapping is kept below for reference.</p>`)}
         ${when(!!(mapping.notes || []).length, () => html`<p class="muted small" style="margin:8px 0 0">${(mapping.notes || []).join(' ')}</p>`)}
       `)}
@@ -545,6 +571,8 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     subtitle: `${rows.length} data row${rows.length === 1 ? '' : 's'} · ${KINDS.find((k) => k.key === kind)?.label || kind}${preset ? ` · detected ${preset.name} format` : ''}`,
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
+      ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}
+      ${when(!!validation.duplicateGuard, () => html`<div class="callout bad"><b>Hold on — this looks like it would duplicate residents.</b> ${validation.duplicateGuard!.message}</div>`)}
       ${when(!!preset, () => html`<div class="callout info">Recognized a <b>${preset!.name}</b> export — its columns were pre-mapped. Adjust anything below.</div>`)}
       ${when(mapping.reader === 'ai', () => html`<div class="callout info"><b>Read by AI.</b> The model read the whole document — header, columns, section labels and summary rows. ${(mapping.notes || []).join(' ')} Everything below is already pre-filled from that read — this screen is verification, not data entry. Nothing imports until you apply.</div>`)}
       ${when(mapping.reader !== 'ai' && !!(mapping.notes || []).length, () => html`<div class="callout info">${(mapping.notes || []).join(' ')}</div>`)}
@@ -600,7 +628,8 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
 
       <div class="wiz-actions">
         <form method="post" action="/setup/import/b/${batch.id}/discard"><button class="btn btn-ghost" type="submit">Discard</button></form>
-        <form method="post" action="/setup/import/b/${batch.id}/apply">
+        <form method="post" action="/setup/import/b/${batch.id}/apply" class="btn-row" style="align-items:center;gap:12px">
+          ${when(!!validation.duplicateGuard, () => html`<label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="confirm_duplicates" value="1" /> Add them as new residents — I checked, they aren't already on these leases</label>`)}
           <button class="btn" type="submit" ${applyable === 0 || validation.blockers.length ? 'disabled' : ''}>Apply ${String(applyable)} row${applyable === 1 ? '' : 's'}</button>
         </form>
       </div>
