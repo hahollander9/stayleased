@@ -661,6 +661,17 @@ function removePage(rq: Rq, batch: BatchRow & { created_at?: string; summary?: s
             ${hjoin(bits.map((x) => html`<b>${x}</b>`), ', ')} — everything this file put into your portfolio, and
             nothing else. Records that came in from another upload, or that were added by hand afterwards, are
             untouched.</p>
+            ${when(!!footprint!.propertyNames.length, () => html`<p style="margin:8px 0 0">The
+              ${footprint!.propertyNames.length === 1 ? 'property' : 'properties'}
+              ${hjoin(footprint!.propertyNames.map((n) => html`<b>${n}</b>`), ', ')}
+              ${footprint!.propertyNames.length === 1 ? 'was' : 'were'} created by this upload, so
+              ${footprint!.propertyNames.length === 1 ? 'it goes' : 'they go'} too — with every unit, lease,
+              resident and journal entry underneath.</p>`)}
+            ${when(!!footprint!.keptPropertyNames.length, () => html`<p class="small muted" style="margin:8px 0 0">
+              ${hjoin(footprint!.keptPropertyNames.map((n) => html`<b>${n}</b>`), ', ')}
+              ${footprint!.keptPropertyNames.length === 1 ? 'stays' : 'stay'} — this upload didn't create
+              ${footprint!.keptPropertyNames.length === 1 ? 'it' : 'them'}, so only the records it added there are
+              removed.</p>`)}
             <p class="small muted" style="margin:8px 0 0">If payments have been recorded against leases from this
             upload, or journal entries were posted to its properties by hand, the removal is declined to protect your
             financial history — void or reverse those first.</p>`

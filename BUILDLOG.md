@@ -396,3 +396,34 @@ that org standing. It also asserts the vendors upload is untouched — the stamp
 
 **Next:** unchanged — live-org recovery (this now does it in one action: remove the corrupted Station
 U&O uploads and the property goes with them, no separate delete), then the Yardi root-cause replay.
+
+## 2026-08-12 — Import reversal: the lease-PDF deposit-entry gap, and saying which property goes
+
+**Found by Henry asking the right question** ("I believe it is built in where if I remove PDF/source
+documents in the future the property will remove — if not, make that the case"). Verifying instead of
+answering from memory turned up a real gap in the reversal that shipped an hour earlier.
+
+**The bug:** the lease-PDF lane posts its own security-deposit conversion entries
+(`postBothBases`, `sourceKind='conversion'`, `sourceId=batch.id`) — but the `import_batch_id` stamp
+for conversion entries was only applied in `applyRentRoll`. Removing a lease-PDF upload therefore took
+out its leases, units and residents and **left the deposit entries on the books**: deposits held
+against leases that no longer existed, on both bases. One line in the PDF lane's apply, and a test
+that asserts the property's journal-entry count returns exactly to its pre-upload value.
+
+**The answer to the question, made visible.** Removing an upload removes the property when the upload
+CREATED it, and only then — the PDF lane always imports into a property that already exists, so it
+owns its leases and units but not the building. That is correct (pulling one lease PDF must not delete
+a 110-unit property) but invisible from outside, so the confirm screen now names both sides: which
+property is being removed *because this upload created it*, and which one *stays* because it didn't.
+`importFootprint` gained `propertyNames` / `keptPropertyNames` for it.
+
+**Decisions:** #37.
+
+**Verified:** tsc strict clean · unit suite · e2e setup + clientready + workingmodel + goldenpath +
+smoke. `tests/import_remove.test.ts` is now 9 tests, 2 new: a lease-PDF upload applied through its own
+route then removed — unit, lease and stored PDF gone, deposit entries back off the books, the host
+property and the rent roll's own unit untouched · a second rent roll into an EXISTING property removes
+its rows and leaves the building, with the first upload's unit still there.
+
+**Next:** unchanged — the Station U&O recovery is a direct property delete (those uploads predate the
+stamp and their confirm screen says so); Yardi root-cause replay when the files arrive.

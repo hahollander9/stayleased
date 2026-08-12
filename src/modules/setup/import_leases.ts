@@ -367,6 +367,9 @@ export function leasePdfRoutes(r: Router): void {
           ],
         });
       }
+      // the deposit conversion entries post with sourceId = this batch, on both
+      // bases — stamp them so removing the upload takes them off the books too
+      run(`UPDATE journal_entries SET import_batch_id=? WHERE org_id=? AND source_kind='conversion' AND source_id=?`, batch.id, ctx.orgId, batch.id);
       run('UPDATE import_batches SET status=?, applied_at=?, summary=?, staged=? WHERE id=?', 'applied', nowIso(), js({ leases, residents, units, skipped }), js(drafts), batch.id);
       audit(ctx, 'import_batch', batch.id, 'apply', null, { leases, residents, units, skipped });
     });
