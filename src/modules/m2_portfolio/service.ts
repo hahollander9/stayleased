@@ -1,7 +1,7 @@
 import { q, q1, run, tx, val, j } from '../../lib/db.ts';
 import { propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
-import { deleteFiles } from '../../lib/files.ts';
+import { deleteFiles, sweepOrphanBlobs } from '../../lib/files.ts';
 import { emit } from '../../lib/events.ts';
 
 /** M2 services: portfolio/unit math used by dashboards, quotes, pricing and
@@ -388,11 +388,14 @@ export function clearOrgData(ctx: Ctx): { counts: Record<string, number> } {
     // org-level rows a property delete leaves standing, by design
     bump('vendor_price_agreements', run('DELETE FROM vendor_price_agreements WHERE org_id=?', ctx.orgId).changes);
     bump('vendors', run('DELETE FROM vendors WHERE org_id=?', ctx.orgId).changes);
-    // uploads: the stored lease PDFs first, while the batches still name them
-    const fileIds = q<{ id: string }>(
-      `SELECT id FROM files WHERE org_id=? AND entity='import'`, ctx.orgId,
-    ).map((f) => f.id);
+    // Every stored byte the org owns. deleteProperty removes `files` ROWS and
+    // never the blobs behind them, so by now the property loop has already
+    // orphaned signed leases, ID scans and unit photos on disk. Sweep by
+    // sha-less id: whatever row survives here is deleted with its bytes, and
+    // any blob whose row the cascade already dropped is collected too.
+    const fileIds = q<{ id: string }>('SELECT id FROM files WHERE org_id=?', ctx.orgId).map((f) => f.id);
     bump('files', deleteFiles(fileIds));
+    bump('orphaned_blobs', sweepOrphanBlobs());
     bump('import_batches', run('DELETE FROM import_batches WHERE org_id=?', ctx.orgId).changes);
     audit(ctx, 'org', ctx.orgId, 'clear_portfolio_data', null, counts);
   });

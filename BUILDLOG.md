@@ -586,3 +586,54 @@ clientready + goldenpath · impeccable detector: three findings, all pre-existin
 
 **Next:** the settings page is the last of Henry's live-feedback items. Back to the standing queue:
 Yardi root-cause replay when the files arrive, then the production-readiness sweep.
+
+## 2026-08-12 — Code review of the settings + reset builds: 14 findings, all fixed
+
+**Ran `/code-review` over the two builds above; it earned its keep.** The serious ones, in order of
+what they would have cost:
+
+1. **The late-fee control offered a structure the engine ignores, and dropped one it implements.**
+   `lateFeeCandidates` branches on `flat | flat_plus_daily | percent`. The select offered a
+   "daily only" option (no branch → no late fee ever assessed, silently) and omitted `percent`, so an
+   org on a percentage policy would have been rewritten to `flat` with its `percent` field dropped on
+   any unrelated save. Options now match the engine and `percent` is an editable field. (#40a)
+2. **Partial property overrides rendered fabricated defaults.** `getSetting` replaces a stored object
+   wholesale, and m17 writes `ai_autonomy` as a partial (`{leasing:'auto'}`), so the other three dials
+   rendered as code defaults — and saving the screen would have pinned them, downgrading autonomy the
+   org had set to `approve`. New `layerSetting`/`getSettingMerged` in `lib/settings.ts` hold the rule
+   once; the page loads both levels in ONE query and layers them. (#40b)
+3. **"Clear all portfolio data" left every non-import blob on disk.** `deleteProperty` deletes `files`
+   ROWS by raw SQL and cannot reach the file store, so signed leases, ID scans and unit photos
+   survived as unreachable bytes — the exact condition #35 forbids, in the one operation whose
+   purpose is purging. New `sweepOrphanBlobs()` runs at the end of the reset.
+4. **Scope holes.** The settings routes took any `property` id with no `canAccessProperty`, the
+   property list ignored `propFilter`, and `/admin/settings/clear-data` had no scope check at all — a
+   property-scoped ORG_ADMIN could rewrite every property's late-fee policy and wipe the portfolio.
+   All four now check; the reset additionally requires `allProperties`.
+5. **Blank ≠ zero.** `Number('')` is 0, so clearing the income-multiple box would have stored 0 and
+   passed every applicant on income. Blank is now refused for `pct`/`num`/`money`; negative money is
+   refused too (a negative approval threshold inverts the rule it configures).
+6. **The BAH matrix parsed the STORED rows, not the submitted ones** — so a pay grade added by
+   someone else after page load was read as blank and zeroed. It now parses the rows the form
+   actually carried and leaves unseen rows alone; `__proto__` is stored as data (null-prototype
+   accumulator) instead of silently vanishing, and amounts with no pay-grade name are an error rather
+   than a silent drop.
+7. **Honesty:** `payment_methods`, `autopay_day`, `admin_fee_cents` and `renewal_offer_lead_days` have
+   no consumers in `src/`. Under the old JSON dump they were opaque keys; typed labels turned them
+   into promises. They now carry a "not enforced yet" badge and say so in their help text.
+8. Smaller: `specCoverage` now also catches a spec whose `group` the page never renders (the type is
+   a union, not `string`); the doc comment no longer claims a page-level assertion that only exists
+   in the suite; the matrix add row got its own grid template (three children in a four-column grid);
+   dead imports and a dead `DAYS` export removed.
+
+**Decisions:** #40.
+
+**Verified:** tsc strict clean · unit suite · e2e. `tests/settings_page.test.ts` 10 tests (4 new for
+the review fixes: engine-matched late-fee structures with a percent round-trip · blank and negative
+refused across pct/num/money · the matrix leaving unseen rows alone and refusing nonsense keys · a
+partial `ai_autonomy` override rendering the org's three dials rather than code defaults) ·
+`tests/org_clear.test.ts` 4 tests (2 new: a signed lease's BYTES gone after a reset, and a
+property-scoped admin refused with 403).
+
+**Worth remembering:** finding 1 came from authoring a control off the default object's shape instead
+of off the code that consumes it. Before shipping a control, read the consumer.

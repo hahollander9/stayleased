@@ -4,18 +4,19 @@ import {
 } from '../../lib/http.ts';
 import {
   requirePerm, requireUser, devOnly, hashPassword, tempPassword, type Ctx, sysCtx, requireStaff,
+  canAccessProperty, propFilter,
 } from '../../lib/auth.ts';
 import { q, q1, run, insert, j, js, val, update } from '../../lib/db.ts';
 import { id, token } from '../../lib/ids.ts';
 import { nowIso, fmtDate, fmtTs, addDays } from '../../lib/dates.ts';
 import { audit } from '../../lib/audit.ts';
-import { getSetting, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged, layerSetting, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
 import { receiveInbound } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
-import { SPECS, GROUPS, renderSetting, parseSetting, specCoverage } from './settings_spec.ts';
+import { SPECS, GROUPS, renderSetting, parseSetting } from './settings_spec.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, pager, checkbox,
@@ -211,7 +212,9 @@ export function routes(r: Router): void {
   r.get('/admin/settings', requirePerm('admin:settings'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const propId = rq.query.get('property') || '';
-    const props = q<any>('SELECT id, name FROM properties WHERE org_id=? ORDER BY name', ctx.orgId);
+    if (propId && !canAccessProperty(ctx, propId)) return notFound('Property not found');
+    const pf = propFilter(ctx, 'id');
+    const props = q<any>(`SELECT id, name FROM properties WHERE org_id=?${pf.sql} ORDER BY name`, ctx.orgId, ...pf.params);
     const org = q1<{ name: string; kind: string }>('SELECT name, kind FROM orgs WHERE id=?', ctx.orgId);
     const orgName = org?.name || 'this organization';
     // Onboarding takes several tries; clearing up after a bad import one
@@ -233,17 +236,29 @@ export function routes(r: Router): void {
           <div class="btn-row"><button class="btn btn-danger">Clear all portfolio data</button></div>
         </form>`);
     const propName = props.find((p: any) => p.id === propId)?.name || '';
-    // which settings differ at this property — one query, not one per setting
-    const overriddenKeys = new Set(
-      propId
-        ? q<{ key: string }>('SELECT key FROM settings WHERE org_id=? AND property_id=?', ctx.orgId, propId).map((r) => r.key)
-        : [],
+    // Two queries for the whole page, and — unlike getSetting, which replaces a
+    // stored object wholesale — levels are MERGED. A property that overrides
+    // only ai_autonomy.leasing must not render the other three dials as their
+    // code defaults, because saving that screen would then pin them.
+    const levelRows = q<{ key: string; value: string; property_id: string }>(
+      `SELECT key, value, property_id FROM settings WHERE org_id=? AND property_id IN ('', ?)`,
+      ctx.orgId, propId,
     );
+    const orgLevel = new Map<string, unknown>();
+    const propLevel = new Map<string, unknown>();
+    for (const r of levelRows) {
+      (r.property_id === '' ? orgLevel : propLevel).set(r.key, j<unknown>(r.value, undefined));
+    }
+    const overriddenKeys = new Set(propId ? [...propLevel.keys()] : []);
+    const effectiveFor = (key: string): unknown => {
+      const merged = layerSetting(SETTING_DEFAULTS[key], orgLevel.get(key));
+      return propId ? layerSetting(merged, propLevel.get(key)) : merged;
+    };
     return shell(rq, {
       title: 'Settings',
       active: '/admin/settings',
       subtitle: propId
-        ? `What differs at ${propName}. Anything left unchanged follows the organization default.`
+        ? `What applies at ${propName}. Saving a setting here records it for this property; clearing it hands that setting back to the organization.`
         : 'How this organization runs — what residents are charged, when, and how much the AI decides on its own. Every setting can be overridden per property.',
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
@@ -253,11 +268,11 @@ export function routes(r: Router): void {
           const inGroup = SPECS.filter((sp) => sp.group === group);
           if (!inGroup.length) return raw('');
           return card(group, html`${inGroup.map((sp) => {
-            const effective = getSetting(sysCtx(ctx.orgId), sp.key, propId || undefined);
+            const effective = effectiveFor(sp.key);
             const overridden = overriddenKeys.has(sp.key);
             return html`<div class="set-row">
-              <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}</h3>
-              <p class="muted small set-help">${sp.help}</p>
+              <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}${sp.pending ? html` <span class="badge">not enforced yet</span>` : ''}</h3>
+              <p class="muted small set-help">${sp.help}${sp.pending ? html` <b>This one is recorded but nothing acts on it yet.</b>` : ''}</p>
               <form method="post" action="/admin/settings">
                 <input type="hidden" name="key" value="${sp.key}" />
                 <input type="hidden" name="property" value="${propId}" />
@@ -280,12 +295,13 @@ export function routes(r: Router): void {
     const spec = SPECS.find((sp) => sp.key === key);
     if (!spec || !(key in SETTING_DEFAULTS)) return badRequest('Unknown setting');
     const propId = String(rq.body.property || '');
+    if (propId && !canAccessProperty(ctx, propId)) return notFound('Property not found');
     const back = `/admin/settings?property=${propId}`;
     let value: unknown;
     try {
       // the spec validates in the operator's terms — a bad late fee is a
       // sentence about the late fee, never a JSON parse error
-      value = parseSetting(spec, rq.body as Record<string, unknown>, getSetting(sysCtx(ctx.orgId), key, propId || undefined));
+      value = parseSetting(spec, rq.body as Record<string, unknown>, getSettingMerged(sysCtx(ctx.orgId), key, propId || undefined));
     } catch (e) {
       return redirect(back, (e as Error).message, 'err');
     }
@@ -296,7 +312,9 @@ export function routes(r: Router): void {
   r.post('/admin/settings/clear', requirePerm('admin:settings'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const key = String(rq.body.key || '');
-    run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, String(rq.body.property || ''), key);
+    const clearProp = String(rq.body.property || '');
+    if (clearProp && !canAccessProperty(ctx, clearProp)) return notFound('Property not found');
+    run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, clearProp, key);
     const label = SPECS.find((sp) => sp.key === key)?.label || key;
     return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${label} follows the organization default again.`);
   });
@@ -308,6 +326,9 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const org = q1<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId);
     if (!org) return notFound();
+    // deleting every property is an org-wide act; a property-scoped admin
+    // holding admin:settings must not be able to reach past their grant
+    if (!ctx.allProperties) return forbidden('Clearing the portfolio requires access to the whole organization.');
     if (ctx.orgKind === 'demo') {
       return redirect('/admin/settings', 'The demo organization cannot be cleared — its seeded world runs the public demo.', 'err');
     }

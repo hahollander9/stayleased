@@ -1,4 +1,4 @@
-import { html, when, join as hjoin, type Raw, type Child } from '../../lib/html.ts';
+import { html, type Raw, type Child } from '../../lib/html.ts';
 import { field, input, select, checkbox, moneyInput } from '../../ui/ui.ts';
 import { parseUsd } from '../../lib/money.ts';
 import { SETTING_DEFAULTS } from '../../lib/settings.ts';
@@ -13,8 +13,10 @@ import { SETTING_DEFAULTS } from '../../lib/settings.ts';
  * to what every resident is charged. Money is entered in dollars, days as
  * days, percentages as percentages, and nothing here accepts hand-written JSON.
  *
- * Adding a setting: add it to SETTING_DEFAULTS and add a spec here. The page
- * asserts the two lists match, so a new setting cannot quietly go unrendered. */
+ * Adding a setting: add it to SETTING_DEFAULTS and add a spec here, with a
+ * group drawn from GROUPS. `specCoverage()` is asserted by the unit suite, so
+ * a key with no spec, a spec naming a key that no longer exists, or a group
+ * the page does not render all fail the build rather than going unnoticed. */
 
 export type Ctl =
   | { t: 'money' }
@@ -34,7 +36,10 @@ export interface Sub { path: string; label: string; ctl: Ctl; hint?: string }
 
 export interface SettingSpec {
   key: string;
-  group: string;
+  /** stored and readable, but no code acts on it yet — say so rather than let
+   * a label promise behavior the product does not have */
+  pending?: boolean;
+  group: Group;
   label: string;
   /** what changes in the product when this changes — in the operator's terms */
   help: string;
@@ -56,7 +61,12 @@ const SCORER: [string, string][] = [
   ['active', 'Active — let agents act on the score'],
 ];
 
-export const GROUPS = [
+export type Group =
+  | 'Rent, fees and payments' | 'Deposits and move-out' | 'Leasing and screening'
+  | 'Renewals and pricing' | 'Communications' | 'Pets' | 'Insurance'
+  | 'AI and automation' | 'Approval thresholds' | 'Specialty housing';
+
+export const GROUPS: Group[] = [
   'Rent, fees and payments',
   'Deposits and move-out',
   'Leasing and screening',
@@ -67,7 +77,7 @@ export const GROUPS = [
   'AI and automation',
   'Approval thresholds',
   'Specialty housing',
-] as const;
+];
 
 export const SPECS: SettingSpec[] = [
   // ---------- Rent, fees and payments ----------
@@ -76,8 +86,11 @@ export const SPECS: SettingSpec[] = [
     help: 'When rent is late and what it costs. The grace period runs from the day rent is due; the daily charge stops once it reaches the cap.',
     subs: [
       { path: 'graceDays', label: 'Grace period', ctl: { t: 'int', unit: 'days', min: 0, max: 31 }, hint: 'No late fee before this many days past due.' },
-      { path: 'type', label: 'Structure', ctl: { t: 'select', options: [['flat', 'Flat fee only'], ['daily', 'Daily fee only'], ['flat_plus_daily', 'Flat fee, then daily']] } },
-      { path: 'flatCents', label: 'Flat fee', ctl: { t: 'money' } },
+      // these three are exactly what lateFeeCandidates implements — adding an
+      // option the engine has no branch for silently assesses nothing at all
+      { path: 'type', label: 'Structure', ctl: { t: 'select', options: [['flat', 'Flat fee only'], ['flat_plus_daily', 'Flat fee, then daily'], ['percent', 'Percentage of unpaid rent']] } },
+      { path: 'flatCents', label: 'Flat fee', ctl: { t: 'money' }, hint: 'Used by both flat structures.' },
+      { path: 'percent', label: 'Percentage', ctl: { t: 'pct' }, hint: 'Used only by the percentage structure.' },
       { path: 'dailyCents', label: 'Daily fee', ctl: { t: 'money' } },
       { path: 'dailyCapCents', label: 'Daily fee stops at', ctl: { t: 'money' }, hint: 'Total daily charges never exceed this.' },
       { path: 'minBalanceCents', label: 'Only charge above', ctl: { t: 'money' }, hint: 'Balances under this are never charged a late fee.' },
@@ -94,7 +107,7 @@ export const SPECS: SettingSpec[] = [
     ctl: { t: 'select', options: [['actual_days', 'Actual days in the month'], ['thirty_day', 'Thirty-day month']] },
   },
   {
-    key: 'payment_methods', group: 'Rent, fees and payments', label: 'Accepted payment methods',
+    key: 'payment_methods', pending: true, group: 'Rent, fees and payments', label: 'Accepted payment methods',
     help: 'What residents can pay with in the portal.',
     subs: [
       { path: 'ach', label: 'Bank transfer (ACH)', ctl: { t: 'bool', on: 'Accepted' } },
@@ -124,7 +137,7 @@ export const SPECS: SettingSpec[] = [
     ctl: { t: 'rank', options: [['deposit', 'Deposit'], ['rent', 'Rent'], ['utility', 'Utilities'], ['fee', 'Fees'], ['other', 'Other']] },
   },
   {
-    key: 'autopay_day', group: 'Rent, fees and payments', label: 'Autopay draft day',
+    key: 'autopay_day', pending: true, group: 'Rent, fees and payments', label: 'Autopay draft day',
     help: 'Day of the month enrolled residents are drafted.',
     ctl: { t: 'int', unit: 'of the month', min: 1, max: 28 },
   },
@@ -153,7 +166,7 @@ export const SPECS: SettingSpec[] = [
     ctl: { t: 'money' },
   },
   {
-    key: 'admin_fee_cents', group: 'Leasing and screening', label: 'Administrative fee',
+    key: 'admin_fee_cents', pending: true, group: 'Leasing and screening', label: 'Administrative fee',
     help: 'One-time fee charged at lease signing.',
     ctl: { t: 'money' },
   },
@@ -203,7 +216,7 @@ export const SPECS: SettingSpec[] = [
     ctl: { t: 'pct' },
   },
   {
-    key: 'renewal_offer_lead_days', group: 'Renewals and pricing', label: 'Renewal offer lead time',
+    key: 'renewal_offer_lead_days', pending: true, group: 'Renewals and pricing', label: 'Renewal offer lead time',
     help: 'How far before lease end the renewal offer goes out.',
     ctl: { t: 'int', unit: 'days before lease end', min: 15, max: 240 },
   },
@@ -358,12 +371,15 @@ const DAYS: [number, string][] = [[0, 'Sun'], [1, 'Mon'], [2, 'Tue'], [3, 'Wed']
 /** Every setting must be described exactly once, and every description must
  * name a real setting — checked at startup so a new key cannot slip in
  * unrendered and a renamed one cannot leave a dead control behind. */
-export function specCoverage(): { missing: string[]; extra: string[] } {
+export function specCoverage(): { missing: string[]; extra: string[]; strayGroups: string[] } {
   const specced = new Set(SPECS.map((s) => s.key));
   const real = new Set(Object.keys(SETTING_DEFAULTS));
+  const known = new Set<string>(GROUPS);
   return {
     missing: [...real].filter((k) => !specced.has(k)),
     extra: [...specced].filter((k) => !real.has(k)),
+    // a spec whose group the page never iterates renders nowhere at all
+    strayGroups: [...new Set(SPECS.filter((sp) => !known.has(sp.group)).map((sp) => `${sp.key} → ${sp.group}`))],
   };
 }
 
@@ -426,7 +442,7 @@ export function renderSetting(spec: SettingSpec, value: unknown): Raw {
             ${spec.matrix!.cols.map((c) => field(c.label, control(`f.${rank}.${c.path}`, c.ctl, at(at(value, rank), c.path))))}
             ${checkbox(`drop.${rank}`, 'Remove', false)}
           </div>`)}
-        <div class="matrix-row">
+        <div class="matrix-row matrix-add">
           ${field(spec.matrix.addLabel, input('add.key', { placeholder: 'E-7' }))}
           ${spec.matrix.cols.map((c) => field(c.label, control(`add.${c.path}`, c.ctl, 0)))}
         </div>
@@ -450,8 +466,15 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
   const raw = body[name];
   const str = raw === undefined || raw === null ? '' : String(raw);
   switch (ctl.t) {
-    case 'money':
-      try { return parseUsd(str || '0'); } catch { throw new Error(`${label}: enter an amount like 1,250.00.`); }
+    case 'money': {
+      if (!str.trim()) throw new Error(`${label}: enter an amount.`);
+      let cents: number;
+      try { cents = parseUsd(str); } catch { throw new Error(`${label}: enter an amount like 1,250.00.`); }
+      // every money setting here is a fee, a threshold or an allowance; a
+      // negative one inverts the rule it configures rather than relaxing it
+      if (cents < 0) throw new Error(`${label}: cannot be negative.`);
+      return cents;
+    }
     case 'int': {
       const n = parseInt(str, 10);
       if (!Number.isInteger(n)) throw new Error(`${label}: enter a whole number.`);
@@ -460,12 +483,14 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
       return n;
     }
     case 'pct': {
+      if (!str.trim()) throw new Error(`${label}: enter a percentage.`);
       const n = Number(str);
       if (!Number.isFinite(n)) throw new Error(`${label}: enter a percentage.`);
       if (n < 0 || n > 100) throw new Error(`${label}: must be between 0 and 100.`);
       return n;
     }
     case 'num': {
+      if (!str.trim()) throw new Error(`${label}: enter a number.`);
       const n = Number(str);
       if (!Number.isFinite(n) || n < 0) throw new Error(`${label}: enter a positive number.`);
       return n;
@@ -509,20 +534,40 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
  * silently changed how money worked. */
 export function parseSetting(spec: SettingSpec, body: Record<string, unknown>, current: unknown): unknown {
   if (spec.matrix) {
-    const out: Record<string, unknown> = {};
-    for (const rank of Object.keys((current as Record<string, unknown>) || {})) {
+    // null-prototype: a row keyed "__proto__" must become data, not a silent
+    // no-op against Object.prototype's setter
+    const out = Object.create(null) as Record<string, unknown>;
+    const stored = (current as Record<string, unknown>) || {};
+    // rows come from the SUBMITTED form, not from what is stored now: if
+    // someone else added a pay grade since this page loaded, it is absent from
+    // this body and must be left alone rather than read as blank and zeroed
+    const marker = `.${spec.matrix.cols[0]!.path}`;
+    const submitted = Object.keys(body)
+      .filter((k) => k.startsWith('f.') && k.endsWith(marker))
+      .map((k) => k.slice(2, k.length - marker.length))
+      .filter((r) => r.length > 0);
+    for (const rank of submitted) {
       if (String(body[`drop.${rank}`] || '') === '1') continue;
       const row: Record<string, unknown> = {};
       for (const c of spec.matrix.cols) row[c.path] = readOne(c.ctl, `f.${rank}.${c.path}`, body, `${rank} ${c.label}`);
       out[rank] = row;
     }
+    // rows this form never saw stay exactly as they are
+    for (const rank of Object.keys(stored)) {
+      if (!submitted.includes(rank) && !(rank in out)) out[rank] = stored[rank];
+    }
     const addKey = String(body['add.key'] || '').trim();
+    const addFilled = spec.matrix.cols.some((c) => String(body[`add.${c.path}`] || '').trim() !== '');
+    if (!addKey && addFilled) {
+      throw new Error(`${spec.matrix.addLabel}: name the pay grade, or clear the amounts beside it.`);
+    }
     if (addKey) {
+      if (addKey in out) throw new Error(`${addKey} is already listed — edit the existing row instead.`);
       const row: Record<string, unknown> = {};
       for (const c of spec.matrix.cols) row[c.path] = readOne(c.ctl, `add.${c.path}`, body, `${addKey} ${c.label}`);
       out[addKey] = row;
     }
-    return out;
+    return { ...out };
   }
   if (spec.subs) {
     const out: Record<string, unknown> = {};
@@ -535,5 +580,3 @@ export function parseSetting(spec: SettingSpec, body: Record<string, unknown>, c
   }
   return readOne(spec.ctl!, 'f', body, spec.label);
 }
-
-export { DAYS };

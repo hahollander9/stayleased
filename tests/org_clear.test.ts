@@ -9,6 +9,10 @@ import { trialBalance } from '../src/modules/m9_accounting/service.ts';
 import { autoMap } from '../src/modules/setup/mapping.ts';
 import { applyRentRoll, type BatchRow } from '../src/modules/setup/import_apply.ts';
 import { clearOrgData } from '../src/modules/m2_portfolio/service.ts';
+import { putFile } from '../src/lib/files.ts';
+import { existsSync } from 'node:fs';
+import { join } from 'node:path';
+import { ROOT } from '../src/lib/db.ts';
 import { startTestServer, loginAs, get, post } from './harness.ts';
 
 /** Org-level "clear all portfolio data" — the onboarding loop's reset. Every
@@ -128,6 +132,50 @@ test('the route needs the typed org name, and refuses the demo org outright', as
     const refused = await post(base, '/admin/settings/clear-data', { confirm_name: 'Demo World Co' }, demoCookie);
     assert.equal(refused.status, 303);
     assert.equal(refused.location, '/admin/settings');
+  } finally {
+    close();
+  }
+});
+
+test('clearing purges stored bytes too — not just the rows pointing at them', () => {
+  const pid = importProperty('Blob Court', [['C1', 'Cy Blob', 'cy@orgclear.test', '1500', '1500', '0', '2026-01-01', '2026-12-31']]);
+  const ctx = sysCtx(orgId, AS_OF);
+  const lease = q1<{ id: string }>('SELECT id FROM leases WHERE property_id=?', pid)!;
+  // a signed lease attached to the property, and a Migration Center upload
+  const signed = putFile(ctx, Buffer.from('%PDF-1.4 signed lease'), { name: 'signed.pdf', mime: 'application/pdf', entity: 'lease', entityId: lease.id });
+  const upload = putFile(ctx, Buffer.from('%PDF-1.4 uploaded'), { name: 'upload.pdf', mime: 'application/pdf', entity: 'import' });
+  const blob = (fid: string): string => join(ROOT, 'data', 'files', fid + '.bin');
+  assert.ok(existsSync(blob(signed.id)) && existsSync(blob(upload.id)));
+
+  clearOrgData(ctx);
+
+  // deleteProperty removes files ROWS with raw SQL and cannot reach the disk,
+  // so without the sweep the signed lease would survive as unreachable bytes
+  assert.equal(q1('SELECT id FROM files WHERE id=?', signed.id), undefined, 'lease file row gone');
+  assert.equal(existsSync(blob(signed.id)), false, 'and so are its bytes');
+  assert.equal(q1('SELECT id FROM files WHERE id=?', upload.id), undefined, 'upload row gone');
+  assert.equal(existsSync(blob(upload.id)), false, 'and so are its bytes');
+});
+
+test('a property-scoped admin cannot clear the whole organization', async () => {
+  importProperty('Scoped Court', [['S1', 'Sam Scope', 'sam@orgclear.test', '1500', '1500', '0', '2026-01-01', '2026-12-31']]);
+  const onlyProp = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? LIMIT 1', orgId)!.id;
+  const uid = id('usr');
+  insert('users', {
+    id: uid, org_id: orgId, email: 'scoped@orgclear-test.test', name: 'Scoped Admin',
+    kind: 'staff', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+  });
+  insert('role_assignments', {
+    id: id('ra'), org_id: orgId, user_id: uid, role: 'ORG_ADMIN',
+    scope_type: 'property', property_ids: JSON.stringify([onlyProp]), created_at: nowIso(),
+  });
+
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'scoped@orgclear-test.test');
+    const res = await post(base, '/admin/settings/clear-data', { confirm_name: 'Clear Test Co' }, cookie);
+    assert.equal(res.status, 403, 'deleting every property needs whole-organization access');
+    assert.ok((val<number>('SELECT COUNT(*) FROM properties WHERE org_id=?', orgId) || 0) > 0, 'nothing was cleared');
   } finally {
     close();
   }

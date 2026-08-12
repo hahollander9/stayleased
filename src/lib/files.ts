@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync, readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { insert, q1, run } from './db.ts';
 import { ROOT } from './db.ts';
@@ -160,6 +160,27 @@ export function deleteFiles(fileIds: string[]): number {
   for (const fid of fileIds) {
     rmSync(join(dir(), fid + '.bin'), { force: true }); // force: a missing blob is not an error
     removed += run('DELETE FROM files WHERE id=?', fid).changes;
+  }
+  return removed;
+}
+
+/** Delete stored bytes that no `files` row points at any more.
+ *
+ * Rows are deleted by raw SQL in several cascades (property delete being the
+ * big one) which cannot reach the disk, so blobs outlive them. That is only
+ * acceptable until something claims to have purged: unreachable bytes still
+ * hold resident data. The org-level reset calls this so "clear all portfolio
+ * data" is true of the file store as well as the database. Returns bytes
+ * removed as a count of files. */
+export function sweepOrphanBlobs(): number {
+  const d = dir();
+  let removed = 0;
+  for (const name of readdirSync(d)) {
+    if (!name.endsWith('.bin')) continue;
+    const fid = name.slice(0, -4);
+    if (q1('SELECT id FROM files WHERE id=?', fid)) continue;
+    rmSync(join(d, name), { force: true });
+    removed++;
   }
   return removed;
 }

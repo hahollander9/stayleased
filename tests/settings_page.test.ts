@@ -91,11 +91,11 @@ test('saving goes through the spec: dollars become cents, objects rebuild, schem
     // object with mixed control types
     await post(base, '/admin/settings', {
       key: 'late_fee_policy', property: '',
-      'f.graceDays': '5', 'f.type': 'flat', 'f.flatCents': '75.00',
+      'f.graceDays': '5', 'f.type': 'flat', 'f.flatCents': '75.00', 'f.percent': '5',
       'f.dailyCents': '10.00', 'f.dailyCapCents': '200.00', 'f.minBalanceCents': '25.00',
     }, cookie);
     assert.deepEqual(val('late_fee_policy'), {
-      graceDays: 5, type: 'flat', flatCents: 7500, dailyCents: 1000, dailyCapCents: 20000, minBalanceCents: 2500,
+      graceDays: 5, type: 'flat', flatCents: 7500, percent: 5, dailyCents: 1000, dailyCapCents: 20000, minBalanceCents: 2500,
     });
 
     // `version` is schema, not a control — it must survive a save untouched
@@ -148,7 +148,7 @@ test('a bad value is refused with a sentence about that setting, and nothing is 
     // out-of-range integers are caught by the spec's bounds, not by the DB
     const grace = await post(base, '/admin/settings', {
       key: 'late_fee_policy', property: '',
-      'f.graceDays': '400', 'f.type': 'flat', 'f.flatCents': '10.00',
+      'f.graceDays': '400', 'f.type': 'flat', 'f.flatCents': '10.00', 'f.percent': '5',
       'f.dailyCents': '0', 'f.dailyCapCents': '0', 'f.minBalanceCents': '0',
     }, cookie);
     assert.equal(grace.status, 303);
@@ -216,6 +216,129 @@ test('a property override saves, is badged, and can be handed back to the org de
 
     await post(base, '/admin/settings/clear', { key: 'nsf_fee_cents', property: propId }, cookie);
     assert.equal(val<number>('nsf_fee_cents', propId), 3500, 'back to the org default');
+  } finally {
+    close();
+  }
+});
+
+test('the late-fee structures offered are exactly the ones the engine implements', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    const page = await get(base, '/admin/settings', cookie);
+    // lateFeeCandidates branches on flat | flat_plus_daily | percent. An option
+    // it has no branch for would assess nothing at all, silently.
+    assert.match(page.text, /value="percent"/, 'percent is offered — the engine implements it');
+    assert.doesNotMatch(page.text, /value="daily"/, 'a daily-only structure the engine ignores is not offered');
+
+    const res = await post(base, '/admin/settings', {
+      key: 'late_fee_policy', property: '',
+      'f.graceDays': '3', 'f.type': 'percent', 'f.flatCents': '50.00', 'f.percent': '5',
+      'f.dailyCents': '10.00', 'f.dailyCapCents': '150.00', 'f.minBalanceCents': '50.00',
+    }, cookie);
+    assert.equal(res.status, 303);
+    const policy = val<Record<string, unknown>>('late_fee_policy');
+    assert.equal(policy.type, 'percent');
+    assert.equal(policy.percent, 5, 'the percentage the engine reads is stored, not dropped');
+  } finally {
+    close();
+  }
+});
+
+test('blank and negative numbers are refused rather than silently becoming zero', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+
+    // Number('') === 0 would have zeroed the income test for every applicant
+    const before = val<Record<string, number>>('screening_criteria');
+    const blank = await post(base, '/admin/settings', {
+      key: 'screening_criteria', property: '',
+      'f.incomeMultiple': '', 'f.minCreditScore': '640', 'f.conditionalCreditScore': '580',
+      'f.conditionalDepositMultiplier': '2', 'f.evictionLookbackYears': '7', 'f.felonyLookbackYears': '7',
+    }, cookie);
+    assert.equal(blank.status, 303);
+    assert.equal(val<Record<string, number>>('screening_criteria').incomeMultiple, before.incomeMultiple, 'unchanged');
+
+    const blankPct = await post(base, '/admin/settings', { key: 'deposit_interest_pct', property: '', f: '' }, cookie);
+    assert.equal(blankPct.status, 303);
+
+    // a negative threshold inverts the rule it configures
+    const je = val<number>('je_approval_threshold_cents');
+    await post(base, '/admin/settings', { key: 'je_approval_threshold_cents', property: '', f: '-500.00' }, cookie);
+    assert.equal(val<number>('je_approval_threshold_cents'), je, 'negative money refused');
+
+    const blankMoney = await post(base, '/admin/settings', { key: 'nsf_fee_cents', property: '', f: '' }, cookie);
+    assert.equal(blankMoney.status, 303);
+    assert.notEqual(val<number>('nsf_fee_cents'), 0, 'a cleared money box is not zero');
+  } finally {
+    close();
+  }
+});
+
+test('the matrix leaves rows this form never saw alone, and refuses nonsense keys', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    const start = val<Record<string, Record<string, number>>>('bah_table');
+    const stale: Record<string, string> = {};
+    for (const rank of Object.keys(start)) {
+      stale[`f.${rank}.with_deps`] = (start[rank]!.with_deps! / 100).toFixed(2);
+      stale[`f.${rank}.without_deps`] = (start[rank]!.without_deps! / 100).toFixed(2);
+    }
+
+    // someone else adds a grade after this page was rendered
+    await post(base, '/admin/settings', {
+      key: 'bah_table', property: '', ...stale,
+      'add.key': 'E-9', 'add.with_deps': '2600.00', 'add.without_deps': '2200.00',
+    }, cookie);
+    assert.ok(val<Record<string, unknown>>('bah_table')['E-9'], 'E-9 added');
+
+    // the stale form (no E-9 fields) must not read it as blank and zero it
+    await post(base, '/admin/settings', { key: 'bah_table', property: '', ...stale }, cookie);
+    const after = val<Record<string, Record<string, number>>>('bah_table');
+    assert.deepEqual(after['E-9'], { with_deps: 260000, without_deps: 220000 }, 'the row this form never saw is untouched');
+
+    // a prototype key must become data, not a silent no-op
+    await post(base, '/admin/settings', {
+      key: 'bah_table', property: '', ...stale,
+      'add.key': '__proto__', 'add.with_deps': '10.00', 'add.without_deps': '10.00',
+    }, cookie);
+    const proto = val<Record<string, unknown>>('bah_table');
+    assert.ok(Object.prototype.hasOwnProperty.call(proto, '__proto__'), 'stored as an own property');
+    assert.equal(({} as Record<string, unknown>).polluted, undefined, 'nothing leaked onto Object.prototype');
+
+    // amounts with no pay grade beside them are a mistake, not a silent drop
+    const nameless = await post(base, '/admin/settings', {
+      key: 'bah_table', property: '', ...stale, 'add.key': '', 'add.with_deps': '99.00', 'add.without_deps': '99.00',
+    }, cookie);
+    assert.equal(nameless.status, 303);
+    assert.equal(Object.keys(val<Record<string, unknown>>('bah_table')).includes(''), false);
+  } finally {
+    close();
+  }
+});
+
+test('a partial property override renders merged, so saving cannot pin the untouched dials', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    // org sets every dial to approve
+    await post(base, '/admin/settings', {
+      key: 'ai_autonomy', property: '',
+      'f.leasing': 'approve', 'f.maintenance': 'approve', 'f.payments': 'approve', 'f.renewals': 'approve',
+    }, cookie);
+    // a PARTIAL property override, as m17 writes them
+    insert('settings', {
+      id: id('set'), org_id: orgId, property_id: propId, key: 'ai_autonomy',
+      value: JSON.stringify({ leasing: 'auto' }), updated_at: nowIso(),
+    });
+
+    const page = await get(base, `/admin/settings?property=${propId}`, cookie);
+    // the three dials the property does not override must render the ORG value
+    const block = page.text.slice(page.text.indexOf('Autonomy by area'), page.text.indexOf('Autonomy by area') + 4000);
+    assert.equal((block.match(/value="approve" selected/g) || []).length, 3, 'maintenance, payments and renewals show the org value');
+    assert.match(block, /value="auto" selected/, 'and leasing shows the property override');
   } finally {
     close();
   }

@@ -99,6 +99,29 @@ export function getSetting<T = any>(ctx: Ctx, key: string, propertyId?: string |
   return out as T;
 }
 
+/** Layer one settings level over another. Objects MERGE key-by-key; anything
+ * else replaces. This is the rule `getSetting` does not apply — it swaps a
+ * stored object wholesale — which is why callers holding partial overrides
+ * (autonomyFor, the settings page) have to merge for themselves. Exported so
+ * there is one implementation of the rule rather than one per caller. */
+export function layerSetting(base: unknown, over: unknown): unknown {
+  if (over === undefined) return base;
+  const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  return plain(base) && plain(over) ? { ...base, ...over } : over;
+}
+
+/** getSetting, but levels merge instead of replace — the value a screen should
+ * SHOW and edit, so saving it back cannot pin fields the property never set. */
+export function getSettingMerged<T = any>(ctx: Ctx, key: string, propertyId?: string | null): T {
+  const level = (pid: string): unknown => {
+    const row = q1<{ value: string }>('SELECT value FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, pid, key);
+    return row ? j<unknown>(row.value, undefined) : undefined;
+  };
+  let out = layerSetting(SETTING_DEFAULTS[key], level(''));
+  if (propertyId) out = layerSetting(out, level(propertyId));
+  return out as T;
+}
+
 export function setSetting(ctx: Ctx, key: string, value: any, propertyId?: string | null): void {
   const pid = propertyId || '';
   const before = q1<{ id: string; value: string }>(
