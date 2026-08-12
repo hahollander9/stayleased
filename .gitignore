@@ -9,3 +9,4 @@ tmp/
 *.zip
 shots/
 data/clientready-*
+graphify-out/

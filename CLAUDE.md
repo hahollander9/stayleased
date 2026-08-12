@@ -171,3 +171,28 @@ file instead of patch hunks (precedent: 2026-08-12).
 Checked, skipped: `docs` (BUILDLOG is hand-written; main's commit messages are web-upload
 noise), `site-audit`/`frontend-design` (covered by the impeccable workflow), `brainstorm`/
 `memplan` (superpowers + this file cover them).
+
+## graphify (knowledge graph over this codebase)
+
+Installed project-scoped: skill in `.claude/skills/graphify/`, `PreToolUse` hooks in
+`.claude/settings.json`. The **graph itself is NOT committed** — `graphify-out/` is
+gitignored, so each clone builds its own. The hooks are guarded by `command -v graphify`
+and no-op silently when the CLI is absent; nothing here is required to work on the repo.
+
+```bash
+uv tool install "graphifyy[sql]"   # PyPI name is graphifyy, binary is graphify; [sql] is
+                                   # required or src/db/schema.sql is silently omitted
+graphify update .                  # build/refresh graphify-out/ — AST-only, no LLM, no cost
+```
+
+Rules, once `graphify-out/graph.json` exists:
+- For codebase questions, run `graphify query "<question>"` first. `graphify path "<A>" "<B>"`
+  for relationships, `graphify explain "<concept>"` for one concept. These return a scoped
+  subgraph — usually far smaller than GRAPH_REPORT.md or raw grep output.
+- `graphify-out/wiki/index.md`, when present, beats raw source browsing for broad navigation.
+- Read `graphify-out/GRAPH_REPORT.md` only for architecture review, or when query/path/explain
+  don't surface enough.
+- After modifying code, `graphify update .` to keep the graph current.
+
+Community labels and the wiki/report layer call an LLM (`graphify label`, `cluster-only`);
+`update` does not. Full `/graphify .` runs the semantic pass over docs — budget for it.
