@@ -637,3 +637,24 @@ property-scoped admin refused with 403).
 
 **Worth remembering:** finding 1 came from authoring a control off the default object's shape instead
 of off the code that consumes it. Before shipping a control, read the consumer.
+
+## 2026-08-12 — The DECISIONS collision happened again, and now fails the build
+
+**Event, not a feature.** While this branch was in flight, a parallel session merged PR #4 (graphify +
+SessionStart hook) claiming DECISIONS **#38 and #39**. This branch had claimed #38–#40 against a tail
+cached before that landed — exactly the hazard CLAUDE.md's parallel-session rule warns about, and its
+second occurrence. Rebased onto the new main and renumbered to **#40–#42**, updating the BUILDLOG
+cross-references (`**Decisions:** #40/#41/#42`) and the review entry's own `#42a`/`#42b` citations in
+the same pass. Both sessions' entries survive; the numbering is contiguous.
+
+**The part worth keeping:** git only surfaces this as a conflict while the two appends touch the same
+lines. Resolve it carelessly — or append after a clean auto-merge — and the file quietly carries two
+#38s. `tests/doclog.test.ts` now asserts DECISIONS is numbered 1..N with no duplicates and no gaps,
+that every `#N` cited from either log resolves to a decision that exists, and that BUILDLOG headers
+are unique. A collision is now a red suite instead of a thing someone notices months later.
+
+**Deliberately NOT done:** a `merge=union` driver in `.gitattributes` for these two files. It would
+auto-resolve the text and thereby destroy the signal — two sessions claiming #38 would merge cleanly
+into a file with two #38s. The conflict is the useful part; the test is the backstop.
+
+**Verified:** tsc strict clean · unit 329/329 on the rebased tree · e2e re-run against the new base.
