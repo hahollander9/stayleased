@@ -44,6 +44,24 @@ registerSearch((ctx, query) => {
   ).map((u) => ({ kind: 'staff', label: u.name, sub: u.email, href: `/admin/staff/${u.id}` }));
 });
 
+/** What a property override should actually store: only the fields that differ
+ * from what the organization already gives it. Keeping a full copy would turn
+ * "I changed one dial here" into "this property no longer follows the
+ * organization for any of these fields" — the operator edits one autonomy dial
+ * and the other three quietly stop tracking org-wide changes. Returns
+ * undefined when nothing differs, meaning the override row should not exist. */
+function narrowOverride(orgValue: unknown, next: unknown): unknown {
+  const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!plain(orgValue) || !plain(next)) {
+    return JSON.stringify(orgValue) === JSON.stringify(next) ? undefined : next;
+  }
+  const diff: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(next)) {
+    if (JSON.stringify(orgValue[k]) !== JSON.stringify(v)) diff[k] = v;
+  }
+  return Object.keys(diff).length ? diff : undefined;
+}
+
 export function routes(r: Router): void {
   // ---------- staff & roles ----------
   r.get('/admin/staff', requirePerm('admin:staff'), (rq) => {
@@ -325,8 +343,23 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect(back, (e as Error).message, 'err');
     }
-    setSetting(ctx, key, value, propId || null);
-    return redirect(back, propId ? `${spec.label} saved for this property.` : `${spec.label} saved.`);
+    if (!propId) {
+      setSetting(ctx, key, value, null);
+      return redirect(back, `${spec.label} saved.`);
+    }
+    // A property override records what DIFFERS here, not a full copy of the
+    // effective value. Writing the whole object would pin every field the
+    // property never overrode — the operator edits one autonomy dial and the
+    // other three stop following the organization, silently. If nothing
+    // differs, there is no override to keep.
+    const orgEffective = getSettingMerged(sysCtx(ctx.orgId), key, null);
+    const narrowed = spec.matrix ? value : narrowOverride(orgEffective, value);
+    if (narrowed === undefined) {
+      run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, propId, key);
+      return redirect(back, `${spec.label} matches the organization default, so this property no longer overrides it.`);
+    }
+    setSetting(ctx, key, narrowed, propId);
+    return redirect(back, `${spec.label} saved for this property.`);
   });
 
   r.post('/admin/settings/clear', requirePerm('admin:settings'), (rq) => {

@@ -166,7 +166,7 @@ export function deleteFileRows(fileIds: string[]): number {
  * row over bytes that are permanently gone, leaving a portfolio of dead
  * download links. The safe order is: delete rows in the transaction, commit,
  * then unlink. A crash in the gap leaves unreachable bytes instead, which
- * sweepOrphanBlobs collects and which no user can see. */
+ * only unreachable bytes, which no user can see. */
 export function unlinkBlobs(fileIds: string[]): number {
   let removed = 0;
   for (const fid of fileIds) {
@@ -187,26 +187,13 @@ export function deleteFiles(fileIds: string[]): number {
   return removed;
 }
 
-/** Delete stored bytes that no `files` row points at any more.
- *
- * Rows are deleted by raw SQL in several cascades (property delete being the
- * big one) which cannot reach the disk, so blobs outlive them. That is only
- * acceptable until something claims to have purged: unreachable bytes still
- * hold resident data. The org-level reset calls this so "clear all portfolio
- * data" is true of the file store as well as the database. Returns bytes
- * removed as a count of files. */
-export function sweepOrphanBlobs(): number {
-  const d = dir();
-  let removed = 0;
-  for (const name of readdirSync(d)) {
-    if (!name.endsWith('.bin')) continue;
-    const fid = name.slice(0, -4);
-    if (q1('SELECT id FROM files WHERE id=?', fid)) continue;
-    rmSync(join(d, name), { force: true });
-    removed++;
-  }
-  return removed;
-}
+/* A global "delete every blob with no row" sweep used to live here. It is
+ * unsafe by construction: every database in a checkout shares data/files, so
+ * sweeping while pointed at one database unlinks bytes owned by rows in
+ * another (verified: running it against a scratch db removed every blob
+ * data/e2e.db still referenced). The file store has no database affinity, so
+ * orphans can only be collected by an id the caller actually owns — which is
+ * what deleteFileRows + unlinkBlobs do at every deliberate delete site. */
 
 /** authorization for downloads: staff of the org, the owning user, or public */
 export function canDownload(ctx: Ctx | undefined, row: FileRow): boolean {

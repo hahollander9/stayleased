@@ -6,7 +6,7 @@ import { db, q1, insert, ROOT } from '../src/lib/db.ts';
 import { id } from '../src/lib/ids.ts';
 import { nowIso } from '../src/lib/dates.ts';
 import { hashPassword, sysCtx } from '../src/lib/auth.ts';
-import { getSetting, SETTING_DEFAULTS } from '../src/lib/settings.ts';
+import { getSetting, getSettingMerged, SETTING_DEFAULTS } from '../src/lib/settings.ts';
 import { ensureCoa } from '../src/modules/m9_accounting/coa.ts';
 import { specCoverage, SPECS } from '../src/modules/m1_admin/settings_spec.ts';
 import { startTestServer, loginAs, get, post } from './harness.ts';
@@ -46,7 +46,11 @@ before(() => {
   });
 });
 
+// the plain runtime read — replaces wholesale, exactly as most consumers see
+// it. Tests that care about a PARTIAL override use merged() instead, matching
+// the consumers that merge for themselves (autonomyFor).
 const val = <T>(key: string, property?: string): T => getSetting<T>(sysCtx(orgId), key, property);
+const merged = <T>(key: string, property?: string): T => getSettingMerged<T>(sysCtx(orgId), key, property);
 
 test('every setting is described exactly once — no key renders unhandled, no spec is dead', () => {
   const { missing, extra, strayGroups } = specCoverage();
@@ -589,4 +593,51 @@ test('the "not enforced yet" badges match reality in both directions', () => {
     if (!spec.pending && !used) wrong.push(`${spec.key}: nothing reads it, so the page promises behavior that does not exist — mark it pending`);
   }
   assert.deepEqual(wrong, []);
+});
+
+test('a property override records only what differs, so the rest keeps following the organization', () => {
+  // Rendering the merged value fixed the display; saving it back still wrote a
+  // full copy, which pinned every field the property never overrode. An
+  // operator changing one autonomy dial would silently stop the other three
+  // from tracking org-wide changes.
+  const raw = (): unknown => {
+    const row = q1<{ value: string }>('SELECT value FROM settings WHERE org_id=? AND property_id=? AND key=?', orgId, propId, 'ai_autonomy');
+    return row ? JSON.parse(row.value) : undefined;
+  };
+  return (async () => {
+    const { base, close } = await startTestServer();
+    try {
+      const cookie = await loginAs(base, 'admin@setpage.test');
+      await post(base, '/admin/settings', {
+        key: 'ai_autonomy', property: '',
+        'f.leasing': 'approve', 'f.maintenance': 'approve', 'f.payments': 'approve', 'f.renewals': 'approve',
+      }, cookie);
+
+      // change ONE dial at the property, submitting the full rendered form
+      await post(base, '/admin/settings', {
+        key: 'ai_autonomy', property: propId,
+        'f.leasing': 'auto', 'f.maintenance': 'approve', 'f.payments': 'approve', 'f.renewals': 'approve',
+      }, cookie);
+      assert.deepEqual(raw(), { leasing: 'auto' }, 'only the changed dial is recorded');
+
+      // the organization moves the others; the property must follow
+      await post(base, '/admin/settings', {
+        key: 'ai_autonomy', property: '',
+        'f.leasing': 'approve', 'f.maintenance': 'draft', 'f.payments': 'auto', 'f.renewals': 'auto',
+      }, cookie);
+      const effective = merged<Record<string, string>>('ai_autonomy', propId);
+      assert.equal(effective.leasing, 'auto', 'the override still stands');
+      assert.equal(effective.payments, 'auto', 'and the untouched dials followed the organization');
+      assert.equal(effective.maintenance, 'draft');
+
+      // setting a property back to the org value removes the override entirely
+      await post(base, '/admin/settings', {
+        key: 'ai_autonomy', property: propId,
+        'f.leasing': 'approve', 'f.maintenance': 'draft', 'f.payments': 'auto', 'f.renewals': 'auto',
+      }, cookie);
+      assert.equal(raw(), undefined, 'nothing differs, so there is no override row left');
+    } finally {
+      close();
+    }
+  })();
 });

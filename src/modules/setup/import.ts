@@ -1,7 +1,7 @@
 import { html, raw, when, join as hjoin, type Raw, type Child } from '../../lib/html.ts';
 import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, canAccessProperty, type Ctx } from '../../lib/auth.ts';
-import { q, q1, insert, run, tx, j, js } from '../../lib/db.ts';
+import { q, q1, insert, run, tx, j, js, afterCommit } from '../../lib/db.ts';
 import { deleteFileRows, unlinkBlobs } from '../../lib/files.ts';
 import { reverseImport, importFootprint, footprintBits, totalFootprint, type ReverseCounts } from './import_reverse.ts';
 import { id } from '../../lib/ids.ts';
@@ -77,7 +77,7 @@ function removeBatch(ctx: Ctx, batch: BatchRow, opts?: { force?: boolean }): { f
   });
   // only once the removal is durable: unlinking cannot be rolled back, so
   // doing it inside the tx would leave rows pointing at missing bytes
-  if (fileIds.length) unlinkBlobs(fileIds);
+  if (fileIds.length) afterCommit(() => unlinkBlobs(fileIds));
   audit(ctx, 'import_batch', batch.id, 'remove', null, {
     kind: batch.kind, filename: batch.filename, status: batch.status, rows, files,
     uploaded: (batch as { created_at?: string }).created_at || null,

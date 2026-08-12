@@ -1,7 +1,7 @@
-import { q, q1, run, tx, val, j } from '../../lib/db.ts';
+import { q, q1, run, tx, val, j, afterCommit } from '../../lib/db.ts';
 import { propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
-import { unlinkBlobs, sweepOrphanBlobs } from '../../lib/files.ts';
+import { unlinkBlobs } from '../../lib/files.ts';
 import { emit } from '../../lib/events.ts';
 
 /** M2 services: portfolio/unit math used by dashboards, quotes, pricing and
@@ -359,9 +359,14 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
 
     audit(ctx, 'property', p, 'delete', { name: prop.name, slug: prop.slug }, { counts });
   });
-  // committed: the rows are gone for good, so the bytes can go too. Doing this
-  // inside the tx would leave rows pointing at nothing if it rolled back.
-  if (doomedBlobs.length) counts.file_blobs = unlinkBlobs(doomedBlobs);
+  // Deferred to the OUTERMOST commit, not to this function returning: tx()
+  // nests via savepoints, so when clearOrgData calls this inside its own
+  // transaction, returning here is a savepoint release and an outer rollback
+  // would restore these rows over bytes already gone.
+  if (doomedBlobs.length) {
+    counts.file_blobs = doomedBlobs.length;
+    afterCommit(() => unlinkBlobs(doomedBlobs));
+  }
   emit(ctx, 'property.deleted', 'property', p, { name: prop.name, counts });
   return { counts };
 }
@@ -407,10 +412,11 @@ export function clearOrgData(ctx: Ctx): { counts: Record<string, number> } {
     bump('import_batches', run('DELETE FROM import_batches WHERE org_id=?', ctx.orgId).changes);
     audit(ctx, 'org', ctx.orgId, 'clear_portfolio_data', null, counts);
   });
-  // after the commit: this org's remaining bytes, then anything the property
-  // cascade orphaned along the way
-  bump('file_blobs', unlinkBlobs(orgBlobs));
-  bump('orphaned_blobs', sweepOrphanBlobs());
+  // the property loop's blobs are already queued on the same commit hook
+  if (orgBlobs.length) {
+    bump('file_blobs', orgBlobs.length);
+    afterCommit(() => unlinkBlobs(orgBlobs));
+  }
   emit(ctx, 'org.data_cleared', 'org', ctx.orgId, { counts });
   return { counts };
 }

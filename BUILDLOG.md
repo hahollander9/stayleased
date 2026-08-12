@@ -773,3 +773,34 @@ passes today, which is the first empirical confirmation that the four marks are 
 **Verified:** tsc strict clean · unit 336/336 · e2e 41/41 across smoke, hubs, clientready, goldenpath,
 setup, workingmodel, payments and comms (the last two because the late-fee and quiet-hours engines
 were touched). `tests/settings_page.test.ts` is 16 tests.
+
+## 2026-08-12 — The critic agent refutes the fix that was written to prevent exactly this
+
+**`tx()` nests via savepoints, so "after the transaction" was not after the commit.** The previous
+entry moved blob unlinking out of the transaction — but `deleteProperty` is called INSIDE
+`clearOrgData`'s `tx()`, where returning is a savepoint RELEASE. The critic reproduced the exact state
+the fix was written to prevent: mid-transaction the bytes were already gone, and a rollback restored
+the rows over them. `db.ts` now has **`afterCommit(fn)`** — queued while any transaction is open, run
+when the outermost one commits, dropped on rollback, immediate outside a transaction — and all three
+delete paths use it. (#46)
+
+**The orphan sweep is deleted, not fixed.** Every database in a checkout shares `data/files`, so
+`sweepOrphanBlobs` run while pointed at one database unlinks bytes owned by rows in another; the agent
+reproduced it wiping every blob `data/e2e.db` referenced, from an unrelated database — meaning
+`sh scripts/test.sh` was quietly destroying the e2e fixture's files on every run. The file store has
+no database affinity, so a global sweep cannot be made safe. Orphans are collected only by ids the
+caller owns, which is what every delete site now does.
+
+**A property override now records what DIFFERS.** Rendering merged levels fixed the display; saving
+still wrote a full copy, so changing one autonomy dial at a property silently pinned the other three
+and stopped them tracking org-wide changes (reproduced by submitting the rendered form with no edits).
+The save narrows to the differing fields, and an override that differs in nothing is deleted — which
+is what the page already promised in words. (#47)
+
+**Verified:** tsc strict clean · unit suite · e2e. `tests/settings_page.test.ts` is 17 tests; the new
+one changes one dial at a property, moves the others organization-wide, and asserts the property
+followed — then sets it back to the org value and asserts the override row is gone entirely.
+
+**On the method:** nine of the defects across today's two review rounds were introduced by the fix for
+an earlier defect. Every one was found by an agent told to refute a specific claim and to read the
+consumer rather than the control. The tests shipped alongside each fix passed throughout.
