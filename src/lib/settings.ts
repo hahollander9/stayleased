@@ -62,6 +62,14 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   ai_autonomy: { leasing: 'approve', maintenance: 'approve', payments: 'draft', renewals: 'draft' },
   ai_plan_bounds: { maxInstallments: 4, minInstallmentCents: 15000 },
   ai_renewal_max_discount_pct: 2.5,
+  // M19 agent scoring — scorer #1 (delinquency). mode: 'shadow' writes
+  // assessments + shows chips but changes NO behavior; 'active' lets the
+  // payments agent grade tone by bucket, hold escalations for humans, and
+  // hold renewal offers for escalated households.
+  delinquency_scoring: { mode: 'shadow', noticeThresholdDays: 45 },
+  // M19 scorer #2 (lead heat). shadow: assessments + chips only; active:
+  // Leasing Center orders hot-first and silent hot leads get a call task.
+  lead_scoring: { mode: 'shadow' },
   pet_policy: { maxPets: 2, petRentCents: 3500, depositCents: 25000, restricted: 'per city ordinance list' },
   // approvals
   je_approval_threshold_cents: 500000,

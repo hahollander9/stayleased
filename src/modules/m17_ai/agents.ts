@@ -12,8 +12,9 @@ import { sendEmail } from '../../lib/sim/messaging.ts';
 import { propose, registerExecutor, type ActionOutput } from './framework.ts';
 import { messageLead, bookTour, tourSlots, quotedRent } from '../m3_crm/service.ts';
 import { triageWo, woEvent } from '../m10_facilities/service.ts';
-import { createPaymentPlan } from '../m8_receivables/payments.ts';
+import { createPaymentPlan, openCollectionCase } from '../m8_receivables/payments.ts';
 import { leaseBalance } from '../m8_receivables/service.ts';
+import { latestAssessment } from '../m19_scoring/service.ts';
 import { renewalMatrix } from '../m6_leases/service.ts';
 
 /** M17 agents 1-4: Leasing, Maintenance, Payments, Renewals. Each grounds
@@ -29,24 +30,11 @@ export function setAiHooksLive(v: boolean): void {
 
 // ---------- 1. Leasing AI ----------
 
-export interface LeadIntent {
-  wantsTour: boolean;
-  asksPets: boolean;
-  asksPrice: boolean;
-  asksAvailability: boolean;
-  wantsHuman: boolean;
-}
-
-export function detectLeadIntent(message: string): LeadIntent {
-  const m = message.toLowerCase();
-  return {
-    wantsTour: /\b(tour|visit|see (it|the place|the unit)|come by|look at|showing|stop by)\b/.test(m),
-    asksPets: /\b(pets?|dogs?|cats?|puppy|puppies|kittens?|breeds?)\b/.test(m),
-    asksPrice: /\b(price|pricing|rent|cost|how much|rate|special|deal)\b/.test(m),
-    asksAvailability: /\b(available|availability|vacan|open|move.?in|when can)\b/.test(m),
-    wantsHuman: /\b(human|real person|an agent|call me|speak to someone|talk to a person|manager)\b/.test(m),
-  };
-}
+// LeadIntent + detectLeadIntent moved to src/lib/lead_intent.ts (the lead-heat
+// scorer reads them too, and m19 importing m17 would cycle). Imported for
+// local use and re-exported so existing importers keep working.
+import { detectLeadIntent, type LeadIntent } from '../../lib/lead_intent.ts';
+export { detectLeadIntent, type LeadIntent };
 
 function afterHours(ctx: Ctx): boolean {
   const hours = getSetting<{ start: string; end: string }>(ctx, 'business_hours');
@@ -237,13 +225,49 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
     leaseId,
   ) || ctx.businessDate;
   const days = Math.max(0, Math.round((Date.parse(ctx.businessDate) - Date.parse(oldestDue)) / 86400000));
-  const tone = days <= 15 ? 'friendly' : days <= 45 ? 'firm' : 'final';
+
+  // M19 delinquency scorer (active mode only): the agent reads the bucket as a
+  // fact and computes no severity of its own. Shadow mode (the default)
+  // leaves everything below exactly as it always was. A stale 'clear' row
+  // with money newly owed falls back to legacy — the assessment is an
+  // authority on severity, never a reason to ignore a real balance.
+  const scoringMode = getSetting<{ mode: string }>(ctx, 'delinquency_scoring')?.mode;
+  const assessRow = scoringMode === 'active' ? latestAssessment(ctx, leaseId) : null;
+  const assess = assessRow && assessRow.bucket !== 'clear' ? assessRow : null;
+
+  if (assess && assess.bucket === 'escalate') {
+    // The regulated moment: no resident-facing prose past the notice
+    // threshold. The AI assembles the packet; a human decides what happens.
+    const lastPay = val<string>(
+      `SELECT MAX(received_date) FROM payments WHERE lease_id=? AND status IN ('pending','settled')`, leaseId,
+    );
+    const planCount = val<number>(`SELECT COUNT(*) FROM payment_plans WHERE lease_id=?`, leaseId) || 0;
+    const nsfCount = val<number>(`SELECT COUNT(*) FROM payments WHERE lease_id=? AND status='nsf'`, leaseId) || 0;
+    const summary = `${assess.reason} Balance ${usd(bal)} at ${days} days past due; last payment ${lastPay ? fmtDate(lastPay) : 'none on record'}; payment plans to date: ${planCount}; NSF returns: ${nsfCount}. State notice requirements may apply — human review required; the AI sends nothing at this stage.`;
+    return propose(ctx, {
+      agent: 'payments',
+      propertyId: lease.property_id,
+      entity: 'lease',
+      entityId: leaseId,
+      title: `Escalation packet — ${lease.household_name} (${usd(bal)}, ${days}d)`,
+      input: { balanceCents: bal, daysPastDue: days, bucket: assess.bucket, rule: assess.rule_fired },
+      rationale: `Delinquency scorer: ${assess.reason} Escalations produce a staff packet, never resident-facing prose.`,
+      output: { kind: 'payments.escalation_packet', leaseId, summary },
+      confidence: 0.6,
+      guardrailNote: `delinquency scorer escalate (${assess.rule_fired}) — resident-facing outreach suppressed; confidence pinned below the auto floor so this can never auto-execute`,
+    });
+  }
+
+  const tone = assess ? (assess.bucket === 'engage' ? 'firm' : 'friendly') : days <= 15 ? 'friendly' : days <= 45 ? 'firm' : 'final';
   const contact = q1<any>(
     `SELECT r.* FROM household_members hm JOIN residents r ON r.id=hm.resident_id WHERE hm.lease_id=? AND hm.role='primary'`,
     leaseId,
   );
   const bounds = getSetting<{ maxInstallments: number; minInstallmentCents: number }>(ctx, 'ai_plan_bounds');
-  const planEligible = bal >= bounds.minInstallmentCents * 2 && !q1<any>(`SELECT id FROM payment_plans WHERE lease_id=? AND status='active'`, leaseId);
+  const planEligible =
+    bal >= bounds.minInstallmentCents * 2 &&
+    !q1<any>(`SELECT id FROM payment_plans WHERE lease_id=? AND status='active'`, leaseId) &&
+    (!assess || assess.bucket === 'engage'); // watch = a nudge, not plan pressure
   const planLine = planEligible
     ? `Money tight? We can split this into ${Math.min(bounds.maxInstallments, 3)} installments — no judgment, takes two minutes to set up.`
     : null;
@@ -264,8 +288,8 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
     entity: 'lease',
     entityId: leaseId,
     title: `${tone[0]!.toUpperCase()}${tone.slice(1)} outreach — ${lease.household_name} (${usd(bal)}, ${days}d)`,
-    input: { balanceCents: bal, daysPastDue: days, tone },
-    rationale: `${usd(bal)} open at ${days} days past due → tone graded “${tone}” by the dunning ladder${planEligible ? '; an installment plan is offered because the balance clears the org plan bounds' : ''}; the dispute path is always embedded${banned ? '; the threat filter scrubbed a flagged phrase' : ''}.`,
+    input: { balanceCents: bal, daysPastDue: days, tone, ...(assess ? { bucket: assess.bucket, rule: assess.rule_fired } : {}) },
+    rationale: `${usd(bal)} open at ${days} days past due → tone graded “${tone}” by ${assess ? `the delinquency scorer — ${assess.reason}` : 'the dunning ladder'}${planEligible ? '; an installment plan is offered because the balance clears the org plan bounds' : ''}; the dispute path is always embedded${banned ? '; the threat filter scrubbed a flagged phrase' : ''}.`,
     output: { kind: 'payments.send_outreach', draft: cleanDraft, subject: `About your ${lease.prop_name} account`, leaseId, residentId: contact?.id },
     confidence: 0.9,
     guardrailNote: `compliance: dispute path embedded; threat filter ${banned ? 'TRIGGERED and scrubbed' : 'clean'}; tone graded ${tone} at ${days} days`,
@@ -315,6 +339,14 @@ registerExecutor('payments.create_plan', (ctx, action, output) => {
   return `plan ${planId.slice(-6)} created`;
 });
 
+/** Escalation packets never touch the resident. Approving one opens (or
+ * joins) the collection case with the packet as its opening note — the
+ * human handles every step from there. openCollectionCase is idempotent. */
+registerExecutor('payments.escalation_packet', (ctx, _action, output) => {
+  const caseId = openCollectionCase(ctx, String(output.leaseId), String(output.summary));
+  return `collection case ${caseId.slice(-6)} open — human handles next steps`;
+});
+
 // ---------- 4. Renewals AI ----------
 
 export function onTimeStreak(ctx: Ctx, leaseId: string): number {
@@ -336,6 +368,12 @@ export function draftRenewalOutreach(ctx: Ctx, leaseId: string): { id: string; s
     leaseId,
   );
   if (!lease) return null;
+  // M19 cross-guard (active mode): never draft renewal warmth at a household
+  // whose delinquency is escalated — the collections side is already holding
+  // it for a human.
+  if (getSetting<{ mode: string }>(ctx, 'delinquency_scoring')?.mode === 'active' && latestAssessment(ctx, leaseId)?.bucket === 'escalate') {
+    return null;
+  }
   const contact = q1<any>(
     `SELECT r.* FROM household_members hm JOIN residents r ON r.id=hm.resident_id WHERE hm.lease_id=? AND hm.role='primary'`, leaseId,
   );

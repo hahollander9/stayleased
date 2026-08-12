@@ -13,7 +13,7 @@ import {
 } from '../../ui/ui.ts';
 import {
   leaseFromApplication, buildPacket, startSignatureRequest, recordSignature, activateLease,
-  createRenewalOffer, renewalMatrix, ensureLeaseTemplates, templateFor,
+  createRenewalOffer, renewalHeldForDelinquency, renewalMatrix, ensureLeaseTemplates, templateFor,
 } from './service.ts';
 import { registerLeaseTab, registerLeaseAction } from '../people/pages.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
@@ -255,8 +255,17 @@ export function routes(r: Router): void {
        AND NOT EXISTS (SELECT 1 FROM renewal_offers ro WHERE ro.lease_id=l.id AND ro.status IN ('sent','accepted','countered'))`,
       ctx.orgId, addDays(ctx.businessDate, 60), addDays(ctx.businessDate, 90), ...pf.params,
     );
-    for (const t of targets) createRenewalOffer(ctx, t.id);
-    return redirect('/renewals', `${targets.length} offers sent.`);
+    let sent = 0;
+    let held = 0;
+    for (const t of targets) {
+      if (renewalHeldForDelinquency(ctx, t.id)) {
+        held++; // M19 active mode: escalated delinquency holds the offer
+        continue;
+      }
+      createRenewalOffer(ctx, t.id);
+      sent++;
+    }
+    return redirect('/renewals', `${sent} offers sent.${held ? ` ${held} held (delinquency escalation — see the workbench).` : ''}`);
   });
 
   // ---------- lease template designer ----------

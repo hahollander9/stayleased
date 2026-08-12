@@ -6,6 +6,7 @@ import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, addDays, diffDays, fmtTs } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
+import { getSetting } from '../../lib/settings.ts';
 import { audit } from '../../lib/audit.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea, moneyInput,
@@ -78,11 +79,25 @@ export function routes(r: Router): void {
       ...params, (page - 1) * 50,
     );
     const exposureByProp = new Map<string, Set<number>>();
+    // M19 lead-heat chips: latest assessment per lead; the tooltip carries the
+    // scorer's deterministic reason. Shadow mode: chips inform, nothing else.
+    const heatMode = getSetting<{ mode: string }>(ctx, 'lead_scoring')?.mode;
+    const heatRows = q<any>(
+      `SELECT la.lead_id, la.bucket, la.reason FROM lead_assessments la
+        WHERE la.org_id=? AND la.as_of_date=(SELECT MAX(a2.as_of_date) FROM lead_assessments a2 WHERE a2.lead_id=la.lead_id AND a2.as_of_date<=?)`,
+      ctx.orgId, ctx.businessDate,
+    );
+    const heatBy = new Map<string, any>(heatRows.map((h) => [h.lead_id as string, h]));
+    const HEAT_TONE: Record<string, string> = { hot: 'accent', warm: 'warn', cold: '' };
+    const heatChip = (leadId: string) => {
+      const h = heatBy.get(leadId);
+      return h ? html` <span class="badge ${HEAT_TONE[h.bucket] || ''}" title="${h.reason}">${h.bucket}</span>` : null;
+    };
     return shell(rq, {
       title: 'Lead inbox',
       active: '/leads',
       actions: html`<a class="btn" href="/leads/new">Log walk-in / call</a>`,
-      subtitle: `Leads arrive from the ILS feed, website, phone and walk-ins — duplicates merge into one guest card.`,
+      subtitle: `Leads arrive from the ILS feed, website, phone and walk-ins — duplicates merge into one guest card.${heatBy.size && heatMode === 'shadow' ? ' · scoring: shadow (chips inform, behavior unchanged)' : ''}`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Status', select('status', [['active', 'Active pipeline'], ...LEAD_STATUSES.map((s): [string, string] => [s, s])], status))}
@@ -98,7 +113,7 @@ export function routes(r: Router): void {
             return {
               href: `/leads/${l.id}`,
               cells: [
-                html`<b>${l.first_name} ${l.last_name}</b>${hot ? html` <span class="badge warn" title="High-exposure floorplan — prioritize">high exposure</span>` : ''}<span class="sub">${l.email || l.phone || ''}</span>`,
+                html`<b>${l.first_name} ${l.last_name}</b>${heatChip(l.id) || ''}${hot ? html` <span class="badge warn" title="High-exposure floorplan — prioritize">high exposure</span>` : ''}<span class="sub">${l.email || l.phone || ''}</span>`,
                 l.prop_name,
                 html`<span class="small">${l.beds === null ? '—' : l.beds === 0 ? 'Studio' : `${l.beds} bd`}${l.budget_cents ? ` · ~${usd(l.budget_cents)}` : ''}${l.desired_move_in ? ` · ${fmtDate(l.desired_move_in)}` : ''}</span>`,
                 statusBadge(undefined, l.source.replaceAll('_', ' ')),
@@ -421,17 +436,28 @@ export function routes(r: Router): void {
   // ---------- Leasing Center ----------
   r.get('/leasing-center', requirePerm('leasing:center'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    // M19 lead heat: chips always; hot-first ordering only in active mode
+    // (shadow must not change behavior, and ordering IS behavior).
+    const heatMode = getSetting<{ mode: string }>(ctx, 'lead_scoring')?.mode;
+    const heatOrder = heatMode === 'active'
+      ? `CASE COALESCE(heat.bucket,'') WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'cold' THEN 3 ELSE 2 END, `
+      : '';
     // cross-property by design: ignores the property switcher
     const needsResponse = q<any>(
-      `SELECT l.*, p.name AS prop_name,
+      `SELECT l.*, p.name AS prop_name, heat.bucket AS heat_bucket, heat.reason AS heat_reason,
         (SELECT MIN(due_date) FROM followup_tasks t WHERE t.lead_id=l.id AND t.status='open') AS next_task,
         (SELECT name FROM users u WHERE u.id=l.assigned_to_user_id) AS agent
        FROM leads l JOIN properties p ON p.id=l.property_id
+       LEFT JOIN (
+         SELECT la.lead_id, la.bucket, la.reason FROM lead_assessments la
+          WHERE la.org_id=? AND la.as_of_date=(SELECT MAX(a2.as_of_date) FROM lead_assessments a2 WHERE a2.lead_id=la.lead_id AND a2.as_of_date<=?)
+       ) heat ON heat.lead_id=l.id
        WHERE l.org_id=? AND l.status IN ('new','contacted','touring','toured')
          AND EXISTS (SELECT 1 FROM followup_tasks t WHERE t.lead_id=l.id AND t.status='open' AND t.due_date<=?)
-       ORDER BY CASE WHEN l.status='new' THEN 0 ELSE 1 END, l.created_at LIMIT 60`,
-      ctx.orgId, ctx.businessDate,
+       ORDER BY ${heatOrder}CASE WHEN l.status='new' THEN 0 ELSE 1 END, l.created_at LIMIT 60`,
+      ctx.orgId, ctx.businessDate, ctx.orgId, ctx.businessDate,
     );
+    const HEAT_TONE_LC: Record<string, string> = { hot: 'accent', warm: 'warn', cold: '' };
     const unassigned = val<number>(`SELECT COUNT(*) FROM leads WHERE org_id=? AND assigned_to_user_id IS NULL AND status IN ('new','contacted','touring')`, ctx.orgId) || 0;
     const inbound = q<any>(
       `SELECT m.*, l.first_name || ' ' || l.last_name AS lead_name, l.id AS lead_id FROM outbox_messages m
@@ -450,7 +476,7 @@ export function routes(r: Router): void {
           needsResponse.map((l) => ({
             href: `/leads/${l.id}`,
             cells: [
-              html`<b>${l.first_name} ${l.last_name}</b><span class="sub">${l.message ? l.message.slice(0, 60) : l.email || ''}</span>`,
+              html`<b>${l.first_name} ${l.last_name}</b>${l.heat_bucket ? html` <span class="badge ${HEAT_TONE_LC[l.heat_bucket] || ''}" title="${l.heat_reason}">${l.heat_bucket}</span>` : ''}<span class="sub">${l.message ? l.message.slice(0, 60) : l.email || ''}</span>`,
               l.prop_name, statusBadge(l.status),
               html`<span class="${l.next_task < ctx.businessDate ? 'neg' : ''}">${fmtDate(l.next_task)}</span>`,
               l.agent || html`<span class="muted">—</span>`,

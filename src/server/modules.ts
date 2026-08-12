@@ -37,6 +37,7 @@ import { homepageRoutes } from '../modules/m4_marketing/homepage.ts'; // platfor
 import { featureRoutes } from '../modules/m4_marketing/features.ts'; // dedicated marketing pages behind the nav dropdowns
 import '../modules/m8_receivables/service.ts'; // registers rent_posting job
 import '../modules/m8_receivables/payments.ts'; // registers settlement/late-fee/autopay/plan jobs
+import '../modules/m19_scoring/service.ts'; // registers score_delinquency job (AFTER m8 money jobs: mutators first, scorer reads after)
 
 /** Phase modules mount here as they are built (Phase 1+). Keeping the list in
  * one place makes the build order visible. */

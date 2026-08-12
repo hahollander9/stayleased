@@ -7,6 +7,7 @@ import { nowIso, fmtDate, monthKey, addMonths, addDays, fmtMonth, diffDays } fro
 import { usd, splitCents } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
 import { audit } from '../../lib/audit.ts';
+import { getSetting } from '../../lib/settings.ts';
 import { notify } from '../../lib/templates.ts';
 import { toCsv } from '../../lib/csv.ts';
 import {
@@ -218,10 +219,27 @@ export function routes(r: Router): void {
       `SELECT cc.*, l.household_name FROM collection_cases cc JOIN leases l ON l.id=cc.lease_id WHERE cc.org_id=? AND cc.status='open' ORDER BY cc.opened_date DESC LIMIT 15`,
       ctx.orgId,
     );
+    // M19 delinquency scorer: latest behavioral bucket per lease. The chip's
+    // tooltip carries the deterministic reason — the same sentence the agent
+    // is allowed to quote. In shadow mode chips inform; nothing else changes.
+    const scoring = getSetting<{ mode: string }>(ctx, 'delinquency_scoring');
+    const scoreRows = q<any>(
+      `SELECT da.lease_id, da.bucket, da.reason FROM delinquency_assessments da
+        WHERE da.org_id=? AND da.as_of_date=(SELECT MAX(a2.as_of_date) FROM delinquency_assessments a2 WHERE a2.lease_id=da.lease_id AND a2.as_of_date<=?)`,
+      ctx.orgId, ctx.businessDate,
+    );
+    const scoreBy = new Map<string, any>(scoreRows.map((s) => [s.lease_id as string, s]));
+    const SCORE_TONE: Record<string, string> = { watch: 'warn', engage: 'bad', escalate: 'bad', clear: 'ok' };
+    const scoreChip = (leaseId: string) => {
+      const s = scoreBy.get(leaseId);
+      return s
+        ? html`<span class="badge ${SCORE_TONE[s.bucket] || ''}" title="${s.reason}">${s.bucket}</span>`
+        : html`<span class="mut">—</span>`;
+    };
     return shell(rq, {
       title: 'Delinquency workbench',
       active: '/delinquency',
-      subtitle: `${aging.length} delinquent households · ${usd(total)} open · as of ${fmtDate(ctx.businessDate)}`,
+      subtitle: `${aging.length} delinquent households · ${usd(total)} open · as of ${fmtDate(ctx.businessDate)}${scoreBy.size && scoring?.mode === 'shadow' ? ' · scoring: shadow (chips inform, behavior unchanged)' : ''}`,
       actions: html`<a class="btn btn-ghost" href="/delinquency/export">Export CSV</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
@@ -229,11 +247,11 @@ export function routes(r: Router): void {
           ${field('Bucket', select('bucket', [['1_30', '1–30 days'], ['31_60', '31–60'], ['61_90', '61–90'], ['90p', '90+']], bucket, { blank: 'All buckets' }))}
         </form>
         ${card(null, tbl(
-          [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Current', num: true }, { label: '1–30', num: true }, { label: '31–60', num: true }, { label: '61–90', num: true }, { label: '90+', num: true }, { label: 'Total', num: true }],
+          [{ label: 'Household' }, { label: 'Score' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Current', num: true }, { label: '1–30', num: true }, { label: '31–60', num: true }, { label: '61–90', num: true }, { label: '90+', num: true }, { label: 'Total', num: true }],
           aging.map((a) => ({
             href: `/delinquency/${a.lease_id}`,
             cells: [
-              html`<b>${a.household_name}</b>`, a.unit_number, a.property_name,
+              html`<b>${a.household_name}</b>`, scoreChip(a.lease_id), a.unit_number, a.property_name,
               a.current ? usd(a.current) : '', a.d1_30 ? usd(a.d1_30) : '', a.d31_60 ? usd(a.d31_60) : '',
               a.d61_90 ? html`<span class="neg">${usd(a.d61_90)}</span>` : '', a.d90p ? html`<span class="neg">${usd(a.d90p)}</span>` : '',
               html`<b>${usd(a.balance)}</b>`,
@@ -241,7 +259,7 @@ export function routes(r: Router): void {
           })),
           {
             empty: 'No delinquent households — everyone is current. 🎉',
-            foot: ['Totals', '', '',
+            foot: ['Totals', '', '', '',
               usd(aging.reduce((s, a) => s + a.current, 0)), usd(aging.reduce((s, a) => s + a.d1_30, 0)),
               usd(aging.reduce((s, a) => s + a.d31_60, 0)), usd(aging.reduce((s, a) => s + a.d61_90, 0)),
               usd(aging.reduce((s, a) => s + a.d90p, 0)), usd(total)],

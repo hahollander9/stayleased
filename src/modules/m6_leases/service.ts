@@ -8,6 +8,7 @@ import { sysCtx, hashPassword , tempPassword } from '../../lib/auth.ts';
 import { sendPortalInvite } from '../people/portal.ts';
 import { emit, on } from '../../lib/events.ts';
 import { getSetting } from '../../lib/settings.ts';
+import { latestAssessment } from '../m19_scoring/service.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { audit } from '../../lib/audit.ts';
 import { sendEmail } from '../../lib/sim/messaging.ts';
@@ -588,11 +589,26 @@ export function renewalMatrix(ctx: Ctx, lease: any): { term_months: number; rent
   })));
 }
 
+/** M19 cross-guard: true when active-mode scoring has the lease in the
+ * escalate bucket. Shadow mode never holds anything. */
+export function renewalHeldForDelinquency(ctx: Ctx, leaseId: string): boolean {
+  const scoring = getSetting<{ mode: string }>(ctx, 'delinquency_scoring');
+  if (scoring?.mode !== 'active') return false;
+  return latestAssessment(ctx, leaseId)?.bucket === 'escalate';
+}
+
 export function createRenewalOffer(ctx: Ctx, leaseId: string): string {
   const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
   if (!lease) throw new Error('lease not found');
   const existing = q1<any>(`SELECT id FROM renewal_offers WHERE lease_id=? AND status IN ('sent','accepted','countered')`, leaseId);
   if (existing) return existing.id as string;
+  // M19 cross-guard (active mode): an escalated delinquency holds the
+  // renewal offer — nothing today stopped the system from cheerfully
+  // offering 12 more months to a household 60 days behind. Resolving the
+  // balance (or the scorer's recovery path) releases the hold.
+  if (renewalHeldForDelinquency(ctx, leaseId)) {
+    throw new Error('renewal held: delinquency escalation — resolve the balance (or its recovery plan) before offering');
+  }
   const options = renewalMatrix(ctx, lease);
   const offerId = id('rno');
   insert('renewal_offers', {

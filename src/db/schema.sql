@@ -2070,3 +2070,41 @@ CREATE TABLE IF NOT EXISTS vendor_price_agreements (
   created_at TEXT NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_vpa ON vendor_price_agreements(org_id, vendor_id, catalog_item_id);
+
+-- M19: agent scoring — behavioral delinquency assessments (scorer #1 of the
+-- agent-scoring architecture). Distinct from GL aging buckets (agingRows):
+-- that is the accounting view of how old the money is; this is the behavioral
+-- view of how likely it is to collect and what to do about it. Rules score,
+-- models phrase, humans decide the regulated moments.
+CREATE TABLE IF NOT EXISTS delinquency_assessments (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  lease_id TEXT NOT NULL REFERENCES leases(id),
+  as_of_date TEXT NOT NULL, -- business date
+  bucket TEXT NOT NULL, -- clear|watch|engage|escalate
+  prev_bucket TEXT,
+  components TEXT NOT NULL, -- JSON: every input value the rules saw
+  rule_fired TEXT NOT NULL, -- machine key, e.g. 'exposure_2x'
+  reason TEXT NOT NULL, -- deterministic sentence: staff-visible, agent-quotable
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_delinq_assess ON delinquency_assessments(lease_id, as_of_date);
+CREATE INDEX IF NOT EXISTS ix_delinq_assess_org ON delinquency_assessments(org_id, as_of_date);
+
+-- M19 scorer #2: lead heat — allocates staff attention and after-hours
+-- autonomy scope. Inputs are structurally text-free (intent flags, inventory
+-- fit, counts, dates) so protected-topic content can never move a bucket.
+CREATE TABLE IF NOT EXISTS lead_assessments (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  lead_id TEXT NOT NULL REFERENCES leads(id),
+  as_of_date TEXT NOT NULL,
+  bucket TEXT NOT NULL, -- hot|warm|cold
+  prev_bucket TEXT,
+  components TEXT NOT NULL,
+  rule_fired TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS ux_lead_assess ON lead_assessments(lead_id, as_of_date);
+CREATE INDEX IF NOT EXISTS ix_lead_assess_org ON lead_assessments(org_id, as_of_date);
