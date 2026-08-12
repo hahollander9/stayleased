@@ -544,3 +544,45 @@ property name hits the nav chrome on every page.)
 **Next:** the org settings page itself — Henry flagged it as unpolished and full of raw JSON. Scope
 question open with him: typed controls for the settings an operator actually sets, everything
 structural behind an Advanced disclosure.
+
+## 2026-08-12 — Org settings become a settings page (all 40 typed, no JSON)
+
+**Built (Henry: "org settings are not polished and also are filled with code. what is the point of
+that page and should it be editable?"):** the point is real — it is the org's policy layer, the
+numbers that decide what residents are charged, when, and how much the AI does on its own, with
+per-property overrides. It should absolutely be editable; the alternative is emailing support to
+change a late fee. What it was, though, was a database console: every key rendered as raw JSON in a
+text box, `bah_table` at the same visual weight as the late fee, no units, no bounds, no statement of
+consequence, and a typo in `late_fee_policy` a silent change to what every resident is charged.
+
+New `m1_admin/settings_spec.ts` describes each of the 40 keys once — group, plain-language label, what
+changes in the product when it changes, and its control — and both the form and the parse are
+generated from that single description, so a control and its validation cannot drift apart. Ten
+groups (Rent/fees/payments · Deposits and move-out · Leasing and screening · Renewals and pricing ·
+Communications · Pets · Insurance · AI and automation · Approval thresholds · Specialty housing).
+Money in dollars, stored in cents through `parseUsd` (#13 unchanged); days as days; percentages as
+percentages. Henry chose full typing over an Advanced JSON hatch, so nothing takes JSON:
+`payment_application_order` is numbered positions with a duplicate-position error,
+`tour_hours.days`/`business_hours.days` are weekday checkboxes, `followup_cadence_days` is a comma
+list, and `bah_table` is a matrix with per-row edit, remove, and an add row. `screening_criteria.
+version` is declared `preserve` — schema, not a control — and survives a save.
+
+Page structure is one card per group with hairline-separated setting blocks inside (a card per
+setting would nest cards, which the craft floor rules out) and a per-setting Save, keeping the
+existing per-property override model: the override badge now reads "overridden here" and the clear
+button reads "Use the organization default". Errors come back as a sentence about that setting.
+
+**Decisions:** #41.
+
+**Verified:** tsc strict clean · unit suite (6 new in `tests/settings_page.test.ts`: the coverage
+assertion that every key has exactly one spec and no spec is dead · the page renders group headings
+and labels with $50.00 in dollars and no `name="value"` JSON input anywhere · saves across scalar
+money, mixed-type object, preserved schema field, unchecked-box booleans, weekdays, comma list and
+ranked order · bad money, an out-of-range integer, a duplicated rank position and an unknown key all
+refused with the stored value unchanged · the BAH matrix edits, removes and adds a pay grade · a
+property override saves, is badged, and hands back to the org default) · e2e smoke + hubs +
+clientready + goldenpath · impeccable detector: three findings, all pre-existing theme patterns
+(timeline border-left, the app font, a legacy gradient), none in this diff.
+
+**Next:** the settings page is the last of Henry's live-feedback items. Back to the standing queue:
+Yardi root-cause replay when the files arrive, then the production-readiness sweep.

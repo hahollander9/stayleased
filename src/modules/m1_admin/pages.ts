@@ -15,6 +15,7 @@ import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dia
 import { receiveInbound } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
+import { SPECS, GROUPS, renderSetting, parseSetting, specCoverage } from './settings_spec.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, pager, checkbox,
@@ -231,37 +232,44 @@ export function routes(r: Router): void {
           ${field(html`To confirm, type the organization name exactly — <b>${orgName}</b>`, input('confirm_name', { required: true, placeholder: orgName }))}
           <div class="btn-row"><button class="btn btn-danger">Clear all portfolio data</button></div>
         </form>`);
-    const keys = Object.keys(SETTING_DEFAULTS);
-    const rows = keys.map((k) => {
-      const orgVal = getSetting(sysCtx(ctx.orgId), k);
-      const effective = getSetting(sysCtx(ctx.orgId), k, propId || undefined);
-      const overridden = propId && q1('SELECT id FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, propId, k);
-      return { k, orgVal, effective, overridden: !!overridden };
-    });
+    const propName = props.find((p: any) => p.id === propId)?.name || '';
+    // which settings differ at this property — one query, not one per setting
+    const overriddenKeys = new Set(
+      propId
+        ? q<{ key: string }>('SELECT key FROM settings WHERE org_id=? AND property_id=?', ctx.orgId, propId).map((r) => r.key)
+        : [],
+    );
     return shell(rq, {
       title: 'Settings',
       active: '/admin/settings',
-      subtitle: 'Organization defaults with per-property overrides. Values are stored as JSON.',
+      subtitle: propId
+        ? `What differs at ${propName}. Anything left unchanged follows the organization default.`
+        : 'How this organization runs — what residents are charged, when, and how much the AI decides on its own. Every setting can be overridden per property.',
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Level', select('property', [['', 'Organization defaults'], ...props.map((p): [string, string] => [p.id, `Override: ${p.name}`])], propId))}
         </form>
-        ${card(null, tbl(
-          [{ label: 'Setting' }, { label: propId ? 'Effective value' : 'Value' }, { label: '', w: '220px' }],
-          rows.map(({ k, effective, overridden }) => ({
-            cells: [
-              html`<b>${k}</b>${overridden ? html` <span class="badge accent">override</span>` : ''}`,
-              html`<code class="small">${JSON.stringify(effective)}</code>`,
-              html`<form method="post" action="/admin/settings" style="display:flex;gap:6px">
-                <input type="hidden" name="key" value="${k}" />
+        ${GROUPS.map((group) => {
+          const inGroup = SPECS.filter((sp) => sp.group === group);
+          if (!inGroup.length) return raw('');
+          return card(group, html`${inGroup.map((sp) => {
+            const effective = getSetting(sysCtx(ctx.orgId), sp.key, propId || undefined);
+            const overridden = overriddenKeys.has(sp.key);
+            return html`<div class="set-row">
+              <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}</h3>
+              <p class="muted small set-help">${sp.help}</p>
+              <form method="post" action="/admin/settings">
+                <input type="hidden" name="key" value="${sp.key}" />
                 <input type="hidden" name="property" value="${propId}" />
-                <input name="value" value="${JSON.stringify(effective)}" style="width:280px;font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);border-radius:6px;padding:4px 6px" />
-                <button class="btn btn-sm">Save</button>
-                ${overridden ? html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Clear</button>` : ''}
-              </form>`,
-            ],
-          })),
-        ), { flush: true })}
+                ${renderSetting(sp, effective)}
+                <div class="btn-row">
+                  <button class="btn btn-sm">Save</button>
+                  ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
+                </div>
+              </form>
+            </div>`;
+          })}`);
+        })}
         ${dangerZone}`,
     });
   });
@@ -269,21 +277,28 @@ export function routes(r: Router): void {
   r.post('/admin/settings', requirePerm('admin:settings'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const key = String(rq.body.key || '');
-    if (!(key in SETTING_DEFAULTS)) return badRequest('Unknown setting');
+    const spec = SPECS.find((sp) => sp.key === key);
+    if (!spec || !(key in SETTING_DEFAULTS)) return badRequest('Unknown setting');
+    const propId = String(rq.body.property || '');
+    const back = `/admin/settings?property=${propId}`;
     let value: unknown;
     try {
-      value = JSON.parse(String(rq.body.value));
-    } catch {
-      return redirect(`/admin/settings?property=${rq.body.property || ''}`, `Invalid JSON for ${key}.`, 'err');
+      // the spec validates in the operator's terms — a bad late fee is a
+      // sentence about the late fee, never a JSON parse error
+      value = parseSetting(spec, rq.body as Record<string, unknown>, getSetting(sysCtx(ctx.orgId), key, propId || undefined));
+    } catch (e) {
+      return redirect(back, (e as Error).message, 'err');
     }
-    setSetting(ctx, key, value, String(rq.body.property || '') || null);
-    return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${key} saved.`);
+    setSetting(ctx, key, value, propId || null);
+    return redirect(back, propId ? `${spec.label} saved for this property.` : `${spec.label} saved.`);
   });
 
   r.post('/admin/settings/clear', requirePerm('admin:settings'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, String(rq.body.property || ''), String(rq.body.key || ''));
-    return redirect(`/admin/settings?property=${rq.body.property || ''}`, 'Override cleared.');
+    const key = String(rq.body.key || '');
+    run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, String(rq.body.property || ''), key);
+    const label = SPECS.find((sp) => sp.key === key)?.label || key;
+    return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${label} follows the organization default again.`);
   });
 
   // Org-level reset for the onboarding loop. The typed organization name is
