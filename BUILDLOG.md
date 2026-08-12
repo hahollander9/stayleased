@@ -427,3 +427,80 @@ its rows and leaves the building, with the first upload's unit still there.
 
 **Next:** unchanged — the Station U&O recovery is a direct property delete (those uploads predate the
 stamp and their confirm screen says so); Yardi root-cause replay when the files arrive.
+
+## 2026-08-12 — graphify installed project-scoped: a queryable graph over the codebase
+
+**What.** `Graphify-Labs/graphify` (PyPI `graphifyy`, CLI `graphify`, v0.9.41) installed **project-scoped**
+rather than into a user profile: skill at `.claude/skills/graphify/` (SKILL.md + 8 reference docs),
+`PreToolUse` hooks in `.claude/settings.json`, pointer in `.claude/CLAUDE.md`, doctrine section appended
+to root `CLAUDE.md`. It builds a knowledge graph of the repo — tree-sitter AST parsing, Leiden community
+detection — and answers `query` / `path` / `explain` against it instead of grepping. First build:
+**2371 nodes, 12122 edges, 118 communities in 12s**, zero LLM calls.
+
+**Three things changed from what the installer wrote**, each because this repo is not a single-machine repo:
+
+1. **The hook command was `/root/.local/bin/graphify`** — an absolute path inside this ephemeral
+   container. Committed as-is it would have fired a hook error on every Read/Grep/Glob/Bash for every
+   parallel session and on Henry's machine. Rewritten to
+   `command -v graphify >/dev/null 2>&1 && graphify hook-guard <mode> || true`: portable, and a silent
+   no-op where the CLI isn't installed. Nothing in this install is required to work on the repo.
+2. **`graphify-out/` is gitignored** — 14M of generated artifact (graph.json, graph.html, a wiki tree,
+   a SHA256 cache) that `graphify update .` rebuilds in 12s from nothing. Each clone builds its own.
+3. **The generated CLAUDE.md section asserted "This project has a knowledge graph at graphify-out/"** —
+   false on a fresh clone, and this file is the engineering memory. Rewritten to say what is actually
+   committed, what has to be built, and what costs an LLM call (`label` / `cluster-only` / full
+   `/graphify .` do; `update` does not).
+
+**One real gap found and closed.** The first build warned that `src/db/schema.sql` contributed nothing —
+`tree_sitter_sql` ships as an extra, not a default. `uv tool install "graphifyy[sql]"` and a rebuild
+brought the schema in: +137 nodes, +201 edges. The install line in CLAUDE.md carries the `[sql]` extra
+so the next person doesn't silently lose the schema. (`hook-guard` is non-blocking without `--strict`,
+which was deliberately not used — it would gate the first raw file read of every session behind a query.)
+
+**Decisions:** #38.
+
+**Verified:** tsc strict clean · unit suite 310/312 · `graphify explain "ensurePortalAccess"` resolves
+`src/modules/people/portal.ts:L45` with its callers including `import_apply.ts`, matching this file's own
+account of the import pipeline · `graphify query` returns a scoped subgraph over the setup lane. No
+product source changed — `git diff origin/main -- src tests e2e scripts package.json` is empty, this
+build is `.claude/`, `CLAUDE.md`, `.gitignore` and the logs, so no suite could be affected by it and
+e2e was not run.
+
+**Flake note, worth recording:** the two known accounting failures (`AP void/reissue`, `bank feed
+reconcile`) went red on **both** full-suite runs today, not the documented ~1-in-3. They still pass
+solo — one solo run red, the next green — so it is the same order/timing flake, but it is running much
+hotter than CLAUDE.md's estimate on 2026-08-12. Pre-existing on main and out of scope here; flagged
+because "re-run once before believing a red" may no longer be enough of a filter.
+
+**Next:** unchanged — Station U&O recovery, then Yardi root-cause replay when the files arrive.
+
+## 2026-08-12 — SessionStart hook: web containers arrive with deps and a current graph
+
+**Why.** Claude Code on the web starts every session from a fresh clone: no `node_modules`, no
+`graphify` CLI. Two consequences, both hit live in this session — `npx tsc --noEmit` reported five
+phantom errors that were only a missing `pdf-lib`, and the graphify `PreToolUse` guards no-opped
+because the binary they check for did not exist. `.claude/hooks/session-start.sh` closes both before
+the session takes its first turn.
+
+**What it does**, in order: `npm install` (not `ci` — warm containers are cached and skip the work) ·
+`uv tool install "graphifyy[sql]"` when `graphify` is absent, falling back to pipx · `graphify update .`
+· persists `PATH` through `$CLAUDE_ENV_FILE`.
+
+**Three properties it holds.** (1) **Web only** — the `CLAUDE_CODE_REMOTE` guard means a local
+machine gets a silent exit 0 and nothing is installed behind anyone's back. (2) **Never fatal** —
+every step is `|| echo WARN`, because tooling that stops a session from starting is worse than the
+tooling being absent. (3) **Cheap when warm** — SessionStart also fires on resume/clear/compact, so
+the graph rebuild is skipped unless a file under `src`/`tests`/`e2e` is newer than `graph.json`.
+That one condition took the warm re-run from **9.5s to 0.35s**; cold is 17.1s, and a real source
+change still rebuilds in ~9s.
+
+**Decisions:** #39.
+
+**Verified** against a genuinely cold container (`rm -rf node_modules graphify-out` +
+`uv tool uninstall graphifyy`): hook exit 0 in 17.1s · `npm run typecheck` clean · `tests/migration.test.ts`
+29/29 · graph 2375 nodes / 12125 links with `src/db/schema.sql` present (403 refs) · remote guard
+silently no-ops with `CLAUDE_CODE_REMOTE` unset and with it set to `false` · warm re-run 0.35s and
+prints `graph current` · `touch src/lib/db.ts` triggers the rebuild as intended.
+
+**Note for whoever restores CI:** this hook is the honest description of what a fresh container needs
+to run the gates — `npm install` first, everything else after.
