@@ -1,7 +1,8 @@
 import { html, raw, when, join as hjoin, type Raw, type Child } from '../../lib/html.ts';
 import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, canAccessProperty, type Ctx } from '../../lib/auth.ts';
-import { q, q1, insert, run, j, js } from '../../lib/db.ts';
+import { q, q1, insert, run, tx, j, js } from '../../lib/db.ts';
+import { deleteFiles } from '../../lib/files.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate } from '../../lib/dates.ts';
 import { audit } from '../../lib/audit.ts';
@@ -39,6 +40,36 @@ const KINDS: { key: ImportKind; label: string; blurb: string }[] = [
 
 function batchById(ctx: Ctx, batchId: string): BatchRow | undefined {
   return q1<BatchRow>('SELECT * FROM import_batches WHERE id=? AND org_id=?', batchId, ctx.orgId);
+}
+
+/** What an upload is called on screen. Pasted grids have no filename, and the
+ * typed confirm has to be typeable, so they answer to "(pasted)". */
+function batchLabel(batch: BatchRow): string {
+  return batch.filename || '(pasted)';
+}
+
+/** Remove an upload for good. Two things go: the batch row — which holds the
+ * whole grid the file carried, every name, email, phone and balance in it —
+ * and, on the lease-PDF lane, the stored PDFs themselves. Nothing the import
+ * WROTE is touched: properties, units, leases and residents an applied batch
+ * created stay exactly where they are, because they are the portfolio now, not
+ * the file. The audit event keeps the metadata (never the contents), so "what
+ * was that upload?" is still answerable after the record is gone. */
+function removeBatch(ctx: Ctx, batch: BatchRow): { files: number; rows: number } {
+  const rows = j<string[][]>(batch.rows, []).length;
+  const fileIds = batch.kind === 'lease_pdf'
+    ? j<{ fileId?: string | null }[]>(batch.staged, []).map((d) => d.fileId).filter((f): f is string => !!f)
+    : [];
+  let files = 0;
+  tx(() => {
+    if (fileIds.length) files = deleteFiles(fileIds);
+    run('DELETE FROM import_batches WHERE id=? AND org_id=?', batch.id, ctx.orgId);
+  });
+  audit(ctx, 'import_batch', batch.id, 'remove', null, {
+    kind: batch.kind, filename: batch.filename, status: batch.status, rows, files,
+    uploaded: (batch as { created_at?: string }).created_at || null,
+  });
+  return { files, rows };
 }
 
 function validate(ctx: Ctx, batch: BatchRow): Validation {
@@ -332,6 +363,31 @@ export function routes(r: Router): void {
     return redirect('/setup/import', 'Import discarded — nothing was written.');
   });
 
+  // Removing an upload is destructive and cannot be undone, so it gets the
+  // house pattern for destructive acts: a confirm screen that states exactly
+  // what goes and what stays, no script dialogs, and — once the upload has
+  // been applied — the typed-name confirm the property danger zone uses.
+  r.get('/setup/import/b/:id/remove', requirePerm('properties:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const batch = batchById(ctx, rq.params.id!);
+    if (!batch) return notFound('Import not found');
+    return removePage(rq, batch);
+  });
+
+  r.post('/setup/import/b/:id/remove', requirePerm('properties:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const batch = batchById(ctx, rq.params.id!);
+    if (!batch) return notFound('Import not found');
+    const label = batchLabel(batch);
+    if (batch.status === 'applied' && String(rq.body.confirm_name || '').trim() !== label) {
+      return redirect(`/setup/import/b/${batch.id}/remove`, 'The file name you typed does not match this upload — nothing was removed.', 'err');
+    }
+    const { files } = removeBatch(ctx, batch);
+    const alsoFiles = files ? ` and ${files} stored PDF${files === 1 ? '' : 's'}` : '';
+    const kept = batch.status === 'applied' ? ' Everything it imported stays in your portfolio.' : '';
+    return redirect('/setup/import', `Removed ${label}${alsoFiles} from the Migration Center.${kept}`);
+  });
+
   r.post('/setup/import/bank-balance', requirePerm('accounting:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const propertyId = String(rq.body.property || '');
@@ -494,7 +550,10 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
             fmtDate(b.created_at.slice(0, 10)),
             statusBadge(b.status === 'applied' ? 'ok' : b.status === 'staged' ? 'pending' : 'error', b.status === 'applied' ? 'Applied' : b.status === 'staged' ? 'Staged' : 'Discarded'),
             html`<span class="muted small">${result}</span>`,
-            href ? html`<a class="btn btn-ghost" href="${href}">${b.status === 'staged' ? 'Review' : 'View'}</a>` : raw(''),
+            html`<div class="btn-row" style="gap:6px;flex-wrap:nowrap;justify-content:flex-end">
+              ${href ? html`<a class="btn btn-ghost" href="${href}">${b.status === 'staged' ? 'Review' : 'View'}</a>` : raw('')}
+              <a class="btn btn-ghost" href="/setup/import/b/${b.id}/remove">Remove</a>
+            </div>`,
           ] };
         }),
         { empty: '' },
@@ -540,7 +599,51 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
         mapped.map((x) => ({ cells: [html`<b>${x.h || `(column ${String(x.i + 1)})`}</b>`, fields.find((f) => f.key === x.f)?.label || x.f!] })),
         { empty: 'No columns were mapped.' },
       ), { flush: true })}
-      <div class="wiz-actions"><a class="btn btn-ghost" href="/setup/import">Back to Migration Center</a></div>
+      <div class="wiz-actions">
+        <a class="btn btn-ghost" href="/setup/import">Back to Migration Center</a>
+        <a class="btn btn-ghost" href="/setup/import/b/${batch.id}/remove">Remove this upload</a>
+      </div>
+    `,
+  });
+}
+
+// ---------- remove-upload confirm ----------
+
+function removePage(rq: Rq, batch: BatchRow & { created_at?: string }): ReturnType<typeof shell> {
+  const label = batchLabel(batch);
+  const applied = batch.status === 'applied';
+  const isPdfLane = batch.kind === 'lease_pdf';
+  const rows = j<string[][]>(batch.rows, []).length;
+  const pdfs = isPdfLane ? j<{ fileId?: string | null }[]>(batch.staged, []).filter((d) => d.fileId).length : 0;
+  const kindLabel = KINDS.find((k) => k.key === batch.kind)?.label || (isPdfLane ? 'Lease PDFs' : batch.kind);
+  const held = isPdfLane
+    ? `${pdfs} stored PDF${pdfs === 1 ? '' : 's'}`
+    : `${rows} data row${rows === 1 ? '' : 's'} read from the file`;
+
+  return shell(rq, {
+    title: 'Remove this upload',
+    active: '/setup/import',
+    crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Remove']],
+    subtitle: `${kindLabel} · ${label}`,
+    content: html`
+      ${card('Remove this upload', html`
+        <p style="margin-top:0"><b>${label}</b> and everything the Migration Center is holding from it —
+        ${held}${isPdfLane ? '' : ', the column mapping, and the reader’s notes'} — are deleted permanently.
+        This cannot be undone.</p>
+        ${applied
+          ? html`<p style="margin:0"><b>What it imported stays.</b> The properties, units, leases and resident records
+            this upload created are your portfolio now, not part of the file — removing the upload leaves every one of
+            them in place. What you lose is the record of the upload itself: what was in the file, how its columns were
+            mapped, and what the apply produced.</p>`
+          : html`<p style="margin:0">Nothing was ever written from this upload, so removing it changes nothing else in
+            your portfolio.</p>`}
+        <form method="post" action="/setup/import/b/${batch.id}/remove" style="margin-top:14px">
+          ${when(applied, () => field(html`To confirm, type the file name exactly — <b>${label}</b>`, input('confirm_name', { required: true, placeholder: label })))}
+          <div class="btn-row">
+            <button class="btn btn-danger">Remove this upload permanently</button>
+            <a class="btn btn-ghost" href="/setup/import">Cancel</a>
+          </div>
+        </form>`)}
     `,
   });
 }

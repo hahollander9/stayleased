@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
-import { writeFileSync, readFileSync, mkdirSync, existsSync } from 'node:fs';
+import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { insert, q1 } from './db.ts';
+import { insert, q1, run } from './db.ts';
 import { ROOT } from './db.ts';
 import { id } from './ids.ts';
 import { nowIso } from './dates.ts';
@@ -148,6 +148,20 @@ export function getFile(fileId: string): { row: FileRow; data: Buffer } | null {
   const p = join(dir(), fileId + '.bin');
   if (!existsSync(p)) return null;
   return { row, data: readFileSync(p) };
+}
+
+/** Delete stored files for good — the bytes on disk AND the row, together.
+ * Only deliberate, audited paths call this (removing an upload from the
+ * Migration Center): a row without its blob is a dead download link, and a
+ * blob without its row is unreachable bytes that still hold resident data.
+ * A missing blob is not an error — the row still goes. Returns rows deleted. */
+export function deleteFiles(fileIds: string[]): number {
+  let removed = 0;
+  for (const fid of fileIds) {
+    rmSync(join(dir(), fid + '.bin'), { force: true }); // force: a missing blob is not an error
+    removed += run('DELETE FROM files WHERE id=?', fid).changes;
+  }
+  return removed;
 }
 
 /** authorization for downloads: staff of the org, the owning user, or public */

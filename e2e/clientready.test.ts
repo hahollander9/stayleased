@@ -95,6 +95,23 @@ test('client walk 1: signup → rent-roll upload → applied with portal invites
   assert.match(record, /Applied/, 'read-only record renders for an applied batch');
   assert.match(record, /Cedar Yard|3 leases/, 'record shows what the import did');
   assert.doesNotMatch(record, /Apply \d+ rows?/, 'no apply button on an applied batch');
+
+  // …and the upload can be removed once it has served its purpose. An applied
+  // upload takes the typed-name confirm; what it imported stays, which walk 2
+  // then proves independently against the dashboard, books and delinquency.
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('a:has-text("Remove this upload")')]);
+  const confirm = await body(page);
+  assert.match(confirm, /What it imported stays/, 'confirm screen says the portfolio survives');
+  await page.fill('input[name=confirm_name]', 'wrong-name.xlsx');
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Remove this upload permanently")')]);
+  assert.match(await body(page), /does not match/, 'a mismatched name removes nothing');
+  await page.fill('input[name=confirm_name]', 'clientready-rentroll.xlsx');
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Remove this upload permanently")')]);
+  const hubAfter = await body(page);
+  assert.match(hubAfter, /Everything it imported stays in your portfolio/, 'the flash says what survived');
+  // it was the org's only upload, so the whole history section goes with it.
+  // (The flash names the file, so asserting on the filename would match itself.)
+  assert.doesNotMatch(hubAfter, /Import history/, 'the upload is gone from Import history');
   await page.close();
 });
 
