@@ -9,7 +9,11 @@ import type { Ctx } from './auth.ts';
 
 export const SETTING_DEFAULTS: Record<string, any> = {
   // receivables / late fees
-  late_fee_policy: { graceDays: 3, type: 'flat_plus_daily', flatCents: 5000, dailyCents: 1000, dailyCapCents: 15000, minBalanceCents: 5000 },
+  // `percent` is explicit even though the default structure does not use it:
+  // the engine reads `policy.percent || 5`, and a field the settings form
+  // renders must have a value to render (an absent one makes the whole policy
+  // unsavable until someone types into a box the hints call optional).
+  late_fee_policy: { graceDays: 3, type: 'flat_plus_daily', flatCents: 5000, percent: 5, dailyCents: 1000, dailyCapCents: 15000, minBalanceCents: 5000 },
   nsf_fee_cents: 3500,
   prorate_method: 'actual_days', // actual_days | thirty_day
   payment_methods: { ach: true, card: true, cash_equivalent: true },
@@ -96,6 +100,29 @@ export function getSetting<T = any>(ctx: Ctx, key: string, propertyId?: string |
     );
     if (propRow) out = j(propRow.value, out);
   }
+  return out as T;
+}
+
+/** Layer one settings level over another. Objects MERGE key-by-key; anything
+ * else replaces. This is the rule `getSetting` does not apply — it swaps a
+ * stored object wholesale — which is why callers holding partial overrides
+ * (autonomyFor, the settings page) have to merge for themselves. Exported so
+ * there is one implementation of the rule rather than one per caller. */
+export function layerSetting(base: unknown, over: unknown): unknown {
+  if (over === undefined) return base;
+  const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  return plain(base) && plain(over) ? { ...base, ...over } : over;
+}
+
+/** getSetting, but levels merge instead of replace — the value a screen should
+ * SHOW and edit, so saving it back cannot pin fields the property never set. */
+export function getSettingMerged<T = any>(ctx: Ctx, key: string, propertyId?: string | null): T {
+  const level = (pid: string): unknown => {
+    const row = q1<{ value: string }>('SELECT value FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, pid, key);
+    return row ? j<unknown>(row.value, undefined) : undefined;
+  };
+  let out = layerSetting(SETTING_DEFAULTS[key], level(''));
+  if (propertyId) out = layerSetting(out, level(propertyId));
   return out as T;
 }
 

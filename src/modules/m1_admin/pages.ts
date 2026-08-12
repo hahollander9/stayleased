@@ -4,16 +4,19 @@ import {
 } from '../../lib/http.ts';
 import {
   requirePerm, requireUser, devOnly, hashPassword, tempPassword, type Ctx, sysCtx, requireStaff,
+  canAccessProperty, propFilter,
 } from '../../lib/auth.ts';
 import { q, q1, run, insert, j, js, val, update } from '../../lib/db.ts';
 import { id, token } from '../../lib/ids.ts';
 import { nowIso, fmtDate, fmtTs, addDays } from '../../lib/dates.ts';
 import { audit } from '../../lib/audit.ts';
-import { getSetting, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged, layerSetting, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
 import { receiveInbound } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
+import { clearOrgData } from '../m2_portfolio/service.ts';
+import { SPECS, GROUPS, renderSetting, parseSetting } from './settings_spec.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, pager, checkbox,
@@ -40,6 +43,24 @@ registerSearch((ctx, query) => {
     ctx.orgId, like, like,
   ).map((u) => ({ kind: 'staff', label: u.name, sub: u.email, href: `/admin/staff/${u.id}` }));
 });
+
+/** What a property override should actually store: only the fields that differ
+ * from what the organization already gives it. Keeping a full copy would turn
+ * "I changed one dial here" into "this property no longer follows the
+ * organization for any of these fields" — the operator edits one autonomy dial
+ * and the other three quietly stop tracking org-wide changes. Returns
+ * undefined when nothing differs, meaning the override row should not exist. */
+function narrowOverride(orgValue: unknown, next: unknown): unknown {
+  const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
+  if (!plain(orgValue) || !plain(next)) {
+    return JSON.stringify(orgValue) === JSON.stringify(next) ? undefined : next;
+  }
+  const diff: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(next)) {
+    if (JSON.stringify(orgValue[k]) !== JSON.stringify(v)) diff[k] = v;
+  }
+  return Object.keys(diff).length ? diff : undefined;
+}
 
 export function routes(r: Router): void {
   // ---------- staff & roles ----------
@@ -209,59 +230,180 @@ export function routes(r: Router): void {
   r.get('/admin/settings', requirePerm('admin:settings'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const propId = rq.query.get('property') || '';
-    const props = q<any>('SELECT id, name FROM properties WHERE org_id=? ORDER BY name', ctx.orgId);
-    const keys = Object.keys(SETTING_DEFAULTS);
-    const rows = keys.map((k) => {
-      const orgVal = getSetting(sysCtx(ctx.orgId), k);
-      const effective = getSetting(sysCtx(ctx.orgId), k, propId || undefined);
-      const overridden = propId && q1('SELECT id FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, propId, k);
-      return { k, orgVal, effective, overridden: !!overridden };
-    });
+    if (propId && !canAccessProperty(ctx, propId)) return notFound('Property not found');
+    const pf = propFilter(ctx, 'id');
+    const props = q<any>(`SELECT id, name FROM properties WHERE org_id=?${pf.sql} ORDER BY name`, ctx.orgId, ...pf.params);
+    const org = q1<{ name: string; kind: string }>('SELECT name, kind FROM orgs WHERE id=?', ctx.orgId);
+    const orgName = org?.name || 'this organization';
+    // Onboarding takes several tries; clearing up after a bad import one
+    // property at a time is the chore that makes people live with bad data.
+    const dangerZone = ctx.orgKind === 'demo'
+      ? card('Danger zone', html`<p class="muted" style="margin:0">Clearing the portfolio is disabled on the demo
+          organization — its seeded world is what the public demo runs on.</p>`)
+      : card('Danger zone', html`
+        <p style="margin-top:0"><b>Clear all portfolio data.</b> This permanently deletes every property in
+        ${orgName} and everything recorded under it — units, leases, resident records and their portal access,
+        vendors, uploads in the Migration Center, and every journal entry on both the accrual and cash books.
+        It is meant for starting an onboarding over: import, check the result, clear, import again.</p>
+        <p class="small muted" style="margin-top:0">Your organization, staff accounts and roles, chart of accounts,
+        settings and audit trail all stay. Unlike removing a single property, this clears recorded payments and
+        manually posted entries too — there is nothing left to protect once the portfolio goes. This cannot be
+        undone.</p>
+        <form method="post" action="/admin/settings/clear-data">
+          ${field(html`To confirm, type the organization name exactly — <b>${orgName}</b>`, input('confirm_name', { required: true, placeholder: orgName }))}
+          <div class="btn-row"><button class="btn btn-danger">Clear all portfolio data</button></div>
+        </form>`);
+    const propName = props.find((p: any) => p.id === propId)?.name
+      || q1<{ name: string }>('SELECT name FROM properties WHERE id=? AND org_id=?', propId, ctx.orgId)?.name
+      || '';
+    // Organization defaults apply to every property, including ones outside a
+    // property-scoped admin's grant — so that level is read-only for them.
+    // Their own properties' overrides stay fully editable.
+    const orgLevelReadOnly = !propId && !ctx.allProperties;
+    // Two queries for the whole page, and — unlike getSetting, which replaces a
+    // stored object wholesale — levels are MERGED. A property that overrides
+    // only ai_autonomy.leasing must not render the other three dials as their
+    // code defaults, because saving that screen would then pin them.
+    const levelRows = q<{ key: string; value: string; property_id: string }>(
+      `SELECT key, value, property_id FROM settings WHERE org_id=? AND property_id IN ('', ?)`,
+      ctx.orgId, propId,
+    );
+    const orgLevel = new Map<string, unknown>();
+    const propLevel = new Map<string, unknown>();
+    for (const r of levelRows) {
+      (r.property_id === '' ? orgLevel : propLevel).set(r.key, j<unknown>(r.value, undefined));
+    }
+    const overriddenKeys = new Set(propId ? [...propLevel.keys()] : []);
+    // Closed-shape settings MERGE, so a partial override does not render the
+    // other fields as code defaults. Open-ended key maps (the matrix specs)
+    // REPLACE: merging a stored table over the default re-supplies any row the
+    // operator deleted, and a merge cannot express "this key is gone".
+    const openEnded = new Set(SPECS.filter((sp) => sp.matrix).map((sp) => sp.key));
+    const effectiveFor = (key: string): unknown => {
+      const pick = (base: unknown, over: unknown): unknown =>
+        openEnded.has(key) ? (over === undefined ? base : over) : layerSetting(base, over);
+      const merged = pick(SETTING_DEFAULTS[key], orgLevel.get(key));
+      return propId ? pick(merged, propLevel.get(key)) : merged;
+    };
     return shell(rq, {
       title: 'Settings',
       active: '/admin/settings',
-      subtitle: 'Organization defaults with per-property overrides. Values are stored as JSON.',
+      subtitle: orgLevelReadOnly
+        ? 'Organization defaults, shown for reference. They apply to every property, so changing them needs access to the whole organization — pick one of your properties above to set an override there.'
+        : propId
+        ? `What applies at ${propName}. Saving a setting here records it for this property; clearing it hands that setting back to the organization.`
+        : 'How this organization runs — what residents are charged, when, and how much the AI decides on its own. Every setting can be overridden per property.',
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Level', select('property', [['', 'Organization defaults'], ...props.map((p): [string, string] => [p.id, `Override: ${p.name}`])], propId))}
         </form>
-        ${card(null, tbl(
-          [{ label: 'Setting' }, { label: propId ? 'Effective value' : 'Value' }, { label: '', w: '220px' }],
-          rows.map(({ k, effective, overridden }) => ({
-            cells: [
-              html`<b>${k}</b>${overridden ? html` <span class="badge accent">override</span>` : ''}`,
-              html`<code class="small">${JSON.stringify(effective)}</code>`,
-              html`<form method="post" action="/admin/settings" style="display:flex;gap:6px">
-                <input type="hidden" name="key" value="${k}" />
+        ${GROUPS.map((group) => {
+          const inGroup = SPECS.filter((sp) => sp.group === group);
+          if (!inGroup.length) return raw('');
+          return card(group, html`${inGroup.map((sp) => {
+            const effective = effectiveFor(sp.key);
+            const overridden = overriddenKeys.has(sp.key);
+            return html`<div class="set-row">
+              <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}${sp.pending ? html` <span class="badge">not enforced yet</span>` : ''}</h3>
+              <p class="muted small set-help">${sp.help}${sp.pending ? html` <b>This one is recorded but nothing acts on it yet.</b>` : ''}</p>
+              <form method="post" action="/admin/settings">
+                <input type="hidden" name="key" value="${sp.key}" />
                 <input type="hidden" name="property" value="${propId}" />
-                <input name="value" value="${JSON.stringify(effective)}" style="width:280px;font-family:var(--mono);font-size:11.5px;border:1px solid var(--line);border-radius:6px;padding:4px 6px" />
-                <button class="btn btn-sm">Save</button>
-                ${overridden ? html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Clear</button>` : ''}
-              </form>`,
-            ],
-          })),
-        ), { flush: true })}`,
+                ${renderSetting(sp, effective)}
+                ${orgLevelReadOnly ? raw('') : html`<div class="btn-row">
+                  <button class="btn btn-sm">Save</button>
+                  ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
+                </div>`}
+              </form>
+            </div>`;
+          })}`);
+        })}
+        ${dangerZone}`,
     });
   });
 
   r.post('/admin/settings', requirePerm('admin:settings'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const key = String(rq.body.key || '');
-    if (!(key in SETTING_DEFAULTS)) return badRequest('Unknown setting');
+    const spec = SPECS.find((sp) => sp.key === key);
+    if (!spec || !(key in SETTING_DEFAULTS)) return badRequest('Unknown setting');
+    const propId = String(rq.body.property || '');
+    if (propId && !canAccessProperty(ctx, propId)) return notFound('Property not found');
+    // an org default reaches every property, including ones outside the grant
+    if (!propId && !ctx.allProperties) return forbidden('Changing an organization default requires access to the whole organization.');
+    const back = `/admin/settings?property=${propId}`;
     let value: unknown;
     try {
-      value = JSON.parse(String(rq.body.value));
-    } catch {
-      return redirect(`/admin/settings?property=${rq.body.property || ''}`, `Invalid JSON for ${key}.`, 'err');
+      // the spec validates in the operator's terms — a bad late fee is a
+      // sentence about the late fee, never a JSON parse error
+      const current = spec.matrix
+        ? getSetting(sysCtx(ctx.orgId), key, propId || undefined)   // open-ended: replace, so deletions stick
+        : getSettingMerged(sysCtx(ctx.orgId), key, propId || undefined);
+      value = parseSetting(spec, rq.body as Record<string, unknown>, current);
+    } catch (e) {
+      return redirect(back, (e as Error).message, 'err');
     }
-    setSetting(ctx, key, value, String(rq.body.property || '') || null);
-    return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${key} saved.`);
+    if (!propId) {
+      setSetting(ctx, key, value, null);
+      return redirect(back, `${spec.label} saved.`);
+    }
+    // A property override records what DIFFERS here, not a full copy of the
+    // effective value. Writing the whole object would pin every field the
+    // property never overrode — the operator edits one autonomy dial and the
+    // other three stop following the organization, silently. If nothing
+    // differs, there is no override to keep.
+    const orgEffective = getSettingMerged(sysCtx(ctx.orgId), key, null);
+    const narrowed = spec.matrix ? value : narrowOverride(orgEffective, value);
+    if (narrowed === undefined) {
+      run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, propId, key);
+      return redirect(back, `${spec.label} matches the organization default, so this property no longer overrides it.`);
+    }
+    setSetting(ctx, key, narrowed, propId);
+    return redirect(back, `${spec.label} saved for this property.`);
   });
 
   r.post('/admin/settings/clear', requirePerm('admin:settings'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, String(rq.body.property || ''), String(rq.body.key || ''));
-    return redirect(`/admin/settings?property=${rq.body.property || ''}`, 'Override cleared.');
+    const key = String(rq.body.key || '');
+    const clearProp = String(rq.body.property || '');
+    if (clearProp && !canAccessProperty(ctx, clearProp)) return notFound('Property not found');
+    if (!clearProp && !ctx.allProperties) return forbidden('Changing an organization default requires access to the whole organization.');
+    run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, clearProp, key);
+    const label = SPECS.find((sp) => sp.key === key)?.label || key;
+    return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${label} follows the organization default again.`);
+  });
+
+  // Org-level reset for the onboarding loop. The typed organization name is
+  // the confirmation (the server re-checks it); demo orgs are refused outright
+  // because the seeded world is what the public demo runs on.
+  r.post('/admin/settings/clear-data', requirePerm('admin:settings'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const org = q1<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId);
+    if (!org) return notFound();
+    // deleting every property is an org-wide act; a property-scoped admin
+    // holding admin:settings must not be able to reach past their grant
+    if (!ctx.allProperties) return forbidden('Clearing the portfolio requires access to the whole organization.');
+    if (ctx.orgKind === 'demo') {
+      return redirect('/admin/settings', 'The demo organization cannot be cleared — its seeded world runs the public demo.', 'err');
+    }
+    if (String(rq.body.confirm_name || '').trim() !== org.name) {
+      return redirect('/admin/settings', 'The name you typed does not match this organization — nothing was cleared.', 'err');
+    }
+    const { counts } = clearOrgData(ctx);
+    const n = (k: string): number => counts[k] || 0;
+    const bits: string[] = [];
+    const add = (v: number, one: string, many = one + 's'): void => { if (v) bits.push(`${v} ${v === 1 ? one : many}`); };
+    add(n('properties'), 'property', 'properties');
+    add(n('units'), 'unit');
+    add(n('leases'), 'lease');
+    add(n('residents'), 'resident record');
+    add(n('vendors'), 'vendor');
+    add(n('import_batches'), 'upload');
+    add(n('journal_entries'), 'journal entry', 'journal entries');
+    // land where the next attempt starts
+    return redirect('/setup/import', bits.length
+      ? `${org.name} cleared — ${bits.join(', ')} removed. Import when you're ready.`
+      : `${org.name} had no portfolio data to clear.`);
   });
 
   // ---------- audit log ----------

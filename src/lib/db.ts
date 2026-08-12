@@ -128,6 +128,22 @@ export function val<T = number>(sql: string, ...params: unknown[]): T {
 }
 
 let txDepth = 0;
+let afterCommitQueue: (() => void)[] = [];
+
+/** Run `fn` once the OUTERMOST transaction commits — never on rollback.
+ *
+ * For side effects that cannot be undone by the database: unlinking a stored
+ * file being the one that matters here. `tx()` nests via savepoints, so a
+ * nested `tx()` returning is NOT a commit; doing the irreversible work there
+ * means an outer rollback restores rows over bytes that are already gone.
+ * Outside a transaction the callback runs immediately, so callers do not have
+ * to know which context they are in. A throwing callback is swallowed: the
+ * data is already committed, and one failed cleanup must not look like a
+ * failed write. */
+export function afterCommit(fn: () => void): void {
+  if (txDepth === 0) { fn(); return; }
+  afterCommitQueue.push(fn);
+}
 
 /** transaction with savepoint nesting */
 export function tx<T>(fn: () => T): T {
@@ -140,11 +156,19 @@ export function tx<T>(fn: () => T): T {
     txDepth--;
     if (txDepth === 0) d.exec('COMMIT');
     else d.exec(`RELEASE sp${txDepth}`);
+    if (txDepth === 0) {
+      const queued = afterCommitQueue;
+      afterCommitQueue = [];
+      for (const cb of queued) {
+        try { cb(); } catch { /* the write stands; a failed cleanup is not a failed write */ }
+      }
+    }
     return out;
   } catch (e) {
     txDepth--;
     if (txDepth === 0) d.exec('ROLLBACK');
     else d.exec(`ROLLBACK TO sp${txDepth}; RELEASE sp${txDepth}`);
+    if (txDepth === 0) afterCommitQueue = []; // rolled back: the side effects must not happen
     throw e;
   }
 }

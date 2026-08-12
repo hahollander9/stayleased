@@ -415,7 +415,9 @@ export function lateFeeCandidates(ctx: Ctx, date: string, propertyId?: string | 
     if (!existing.length) {
       let fee = 0;
       if (policy.type === 'flat' || policy.type === 'flat_plus_daily') fee = policy.flatCents || 0;
-      else if (policy.type === 'percent') fee = Math.round((unpaidRent * (policy.percent || 5)) / 100);
+      // ?? not ||: percent is an operator-editable control now, so an explicit
+      // 0 means "no percentage fee", not "fall back to five"
+      else if (policy.type === 'percent') fee = Math.round((unpaidRent * (policy.percent ?? 5)) / 100);
       if (fee > 0) {
         out.push({ leaseId: l.id, householdName: l.household_name, unit: l.unit_number, propertyId: l.property_id, propertyName: l.property_name, unpaidRent, fee, kind: 'initial', daysLate });
       }

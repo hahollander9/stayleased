@@ -504,3 +504,303 @@ prints `graph current` · `touch src/lib/db.ts` triggers the rebuild as intended
 
 **Note for whoever restores CI:** this hook is the honest description of what a fresh container needs
 to run the gates — `npm install` first, everything else after.
+
+## 2026-08-12 — Clear all portfolio data: the onboarding loop's reset
+
+**Built (Henry: "i just want it cleared so that there is no property or data in the account so i can
+test other rent rolls and uploading documents"):** the Station U&O uploads predate the provenance
+stamp, so removing them could not take their data back, and clearing an org by hand meant a property
+delete per property plus the leftovers. `clearOrgData` in `m2_portfolio/service.ts` does it in one
+action: every property through `deleteProperty` (once per property — the tested ~80-table cascade
+stays the only code that knows that map) plus the org-level residue a property delete leaves standing
+by design — vendors, vendor price agreements, and the Migration Center's uploads with their stored
+files. Keeps the org, staff accounts and roles, the chart of accounts, settings, and the audit trail.
+
+Surfaced as a **Danger zone on Admin → Settings**, matching the property danger zone's vocabulary
+exactly (typed-name confirm, `btn-danger`, no script dialog) — Operate mode pays for consistency, not
+invention. Typed confirm is the ORGANIZATION name. Demo orgs are refused outright and told why: the
+seeded world runs the public demo, and no typed confirm should be able to take it down. Success lands
+on the Migration Center, since the only reason to clear is to import again.
+
+Unlike the per-property delete this passes `force` — see #38 for why that rail exists for one building
+and not for the whole portfolio.
+
+**Decisions:** #40.
+
+**Verified:** tsc strict clean · unit suite (2 new in `tests/org_clear.test.ts`: two imported
+properties + a vendor + a recorded payment all cleared, with the org, its staff, their roles, the
+chart of accounts and an audit row surviving and the trial balance empty rather than unbalanced · the
+route refuses a mismatched org name, lands on /setup/import on success, and refuses the demo org even
+with its name typed correctly) · e2e setup + clientready + workingmodel + goldenpath + smoke ·
+impeccable detector clean on the changed file.
+
+**Test-writing note worth keeping:** an assertion on rendered copy must not span a line break in the
+template — `/disabled on the demo organization/` failed against real output where the source wrapped
+between "demo" and "organization". Match a phrase that cannot straddle the wrap. (Two sibling traps
+from today: the removal flash names the file it removed, so a body-text check for the filename matches
+itself; and the org "Cedar Yard Management" contains the property name "Cedar Yard", so matching a
+property name hits the nav chrome on every page.)
+
+**Next:** the org settings page itself — Henry flagged it as unpolished and full of raw JSON. Scope
+question open with him: typed controls for the settings an operator actually sets, everything
+structural behind an Advanced disclosure.
+
+## 2026-08-12 — Org settings become a settings page (all 40 typed, no JSON)
+
+**Built (Henry: "org settings are not polished and also are filled with code. what is the point of
+that page and should it be editable?"):** the point is real — it is the org's policy layer, the
+numbers that decide what residents are charged, when, and how much the AI does on its own, with
+per-property overrides. It should absolutely be editable; the alternative is emailing support to
+change a late fee. What it was, though, was a database console: every key rendered as raw JSON in a
+text box, `bah_table` at the same visual weight as the late fee, no units, no bounds, no statement of
+consequence, and a typo in `late_fee_policy` a silent change to what every resident is charged.
+
+New `m1_admin/settings_spec.ts` describes each of the 40 keys once — group, plain-language label, what
+changes in the product when it changes, and its control — and both the form and the parse are
+generated from that single description, so a control and its validation cannot drift apart. Ten
+groups (Rent/fees/payments · Deposits and move-out · Leasing and screening · Renewals and pricing ·
+Communications · Pets · Insurance · AI and automation · Approval thresholds · Specialty housing).
+Money in dollars, stored in cents through `parseUsd` (#13 unchanged); days as days; percentages as
+percentages. Henry chose full typing over an Advanced JSON hatch, so nothing takes JSON:
+`payment_application_order` is numbered positions with a duplicate-position error,
+`tour_hours.days`/`business_hours.days` are weekday checkboxes, `followup_cadence_days` is a comma
+list, and `bah_table` is a matrix with per-row edit, remove, and an add row. `screening_criteria.
+version` is declared `preserve` — schema, not a control — and survives a save.
+
+Page structure is one card per group with hairline-separated setting blocks inside (a card per
+setting would nest cards, which the craft floor rules out) and a per-setting Save, keeping the
+existing per-property override model: the override badge now reads "overridden here" and the clear
+button reads "Use the organization default". Errors come back as a sentence about that setting.
+
+**Decisions:** #41.
+
+**Verified:** tsc strict clean · unit suite (6 new in `tests/settings_page.test.ts`: the coverage
+assertion that every key has exactly one spec and no spec is dead · the page renders group headings
+and labels with $50.00 in dollars and no `name="value"` JSON input anywhere · saves across scalar
+money, mixed-type object, preserved schema field, unchecked-box booleans, weekdays, comma list and
+ranked order · bad money, an out-of-range integer, a duplicated rank position and an unknown key all
+refused with the stored value unchanged · the BAH matrix edits, removes and adds a pay grade · a
+property override saves, is badged, and hands back to the org default) · e2e smoke + hubs +
+clientready + goldenpath · impeccable detector: three findings, all pre-existing theme patterns
+(timeline border-left, the app font, a legacy gradient), none in this diff.
+
+**Next:** the settings page is the last of Henry's live-feedback items. Back to the standing queue:
+Yardi root-cause replay when the files arrive, then the production-readiness sweep.
+
+## 2026-08-12 — Code review of the settings + reset builds: 14 findings, all fixed
+
+**Ran `/code-review` over the two builds above; it earned its keep.** The serious ones, in order of
+what they would have cost:
+
+1. **The late-fee control offered a structure the engine ignores, and dropped one it implements.**
+   `lateFeeCandidates` branches on `flat | flat_plus_daily | percent`. The select offered a
+   "daily only" option (no branch → no late fee ever assessed, silently) and omitted `percent`, so an
+   org on a percentage policy would have been rewritten to `flat` with its `percent` field dropped on
+   any unrelated save. Options now match the engine and `percent` is an editable field. (#40a)
+2. **Partial property overrides rendered fabricated defaults.** `getSetting` replaces a stored object
+   wholesale, and m17 writes `ai_autonomy` as a partial (`{leasing:'auto'}`), so the other three dials
+   rendered as code defaults — and saving the screen would have pinned them, downgrading autonomy the
+   org had set to `approve`. New `layerSetting`/`getSettingMerged` in `lib/settings.ts` hold the rule
+   once; the page loads both levels in ONE query and layers them. (#40b)
+3. **"Clear all portfolio data" left every non-import blob on disk.** `deleteProperty` deletes `files`
+   ROWS by raw SQL and cannot reach the file store, so signed leases, ID scans and unit photos
+   survived as unreachable bytes — the exact condition #35 forbids, in the one operation whose
+   purpose is purging. New `sweepOrphanBlobs()` runs at the end of the reset.
+4. **Scope holes.** The settings routes took any `property` id with no `canAccessProperty`, the
+   property list ignored `propFilter`, and `/admin/settings/clear-data` had no scope check at all — a
+   property-scoped ORG_ADMIN could rewrite every property's late-fee policy and wipe the portfolio.
+   All four now check; the reset additionally requires `allProperties`.
+5. **Blank ≠ zero.** `Number('')` is 0, so clearing the income-multiple box would have stored 0 and
+   passed every applicant on income. Blank is now refused for `pct`/`num`/`money`; negative money is
+   refused too (a negative approval threshold inverts the rule it configures).
+6. **The BAH matrix parsed the STORED rows, not the submitted ones** — so a pay grade added by
+   someone else after page load was read as blank and zeroed. It now parses the rows the form
+   actually carried and leaves unseen rows alone; `__proto__` is stored as data (null-prototype
+   accumulator) instead of silently vanishing, and amounts with no pay-grade name are an error rather
+   than a silent drop.
+7. **Honesty:** `payment_methods`, `autopay_day`, `admin_fee_cents` and `renewal_offer_lead_days` have
+   no consumers in `src/`. Under the old JSON dump they were opaque keys; typed labels turned them
+   into promises. They now carry a "not enforced yet" badge and say so in their help text.
+8. Smaller: `specCoverage` now also catches a spec whose `group` the page never renders (the type is
+   a union, not `string`); the doc comment no longer claims a page-level assertion that only exists
+   in the suite; the matrix add row got its own grid template (three children in a four-column grid);
+   dead imports and a dead `DAYS` export removed.
+
+**Decisions:** #40.
+
+**Verified:** tsc strict clean · unit suite · e2e. `tests/settings_page.test.ts` 10 tests (4 new for
+the review fixes: engine-matched late-fee structures with a percent round-trip · blank and negative
+refused across pct/num/money · the matrix leaving unseen rows alone and refusing nonsense keys · a
+partial `ai_autonomy` override rendering the org's three dials rather than code defaults) ·
+`tests/org_clear.test.ts` 4 tests (2 new: a signed lease's BYTES gone after a reset, and a
+property-scoped admin refused with 403).
+
+**Worth remembering:** finding 1 came from authoring a control off the default object's shape instead
+of off the code that consumes it. Before shipping a control, read the consumer.
+
+## 2026-08-12 — The DECISIONS collision happened again, and now fails the build
+
+**Event, not a feature.** While this branch was in flight, a parallel session merged PR #4 (graphify +
+SessionStart hook) claiming DECISIONS **#38 and #39**. This branch had claimed #38–#40 against a tail
+cached before that landed — exactly the hazard CLAUDE.md's parallel-session rule warns about, and its
+second occurrence. Rebased onto the new main and renumbered to **#40–#42**, updating the BUILDLOG
+cross-references (`**Decisions:** #40/#41/#42`) and the review entry's own `#42a`/`#42b` citations in
+the same pass. Both sessions' entries survive; the numbering is contiguous.
+
+**The part worth keeping:** git only surfaces this as a conflict while the two appends touch the same
+lines. Resolve it carelessly — or append after a clean auto-merge — and the file quietly carries two
+#38s. `tests/doclog.test.ts` now asserts DECISIONS is numbered 1..N with no duplicates and no gaps,
+that every `#N` cited from either log resolves to a decision that exists, and that BUILDLOG headers
+are unique. A collision is now a red suite instead of a thing someone notices months later.
+
+**Deliberately NOT done:** a `merge=union` driver in `.gitattributes` for these two files. It would
+auto-resolve the text and thereby destroy the signal — two sessions claiming #38 would merge cleanly
+into a file with two #38s. The conflict is the useful part; the test is the backstop.
+
+**Verified:** tsc strict clean · unit 329/329 on the rebased tree · e2e re-run against the new base.
+
+## 2026-08-12 — Adversarial verification of the review fixes: two more defects, one of them mine
+
+**Ran an 8-agent refutation pass over the 14 code-review fixes** rather than trusting the tests that
+came with them — each agent told to default to "does not hold" and to read executable code, not
+comments. Two of the fixes had real problems, both invisible to the tests written alongside them.
+
+1. **The percent fix made the late fee policy unsavable out of the box.** `late_fee_policy`'s default
+   has no `percent` key, so the new control rendered an empty box, and the pct parser (correctly)
+   refuses blank — meaning an org that had never saved this setting could not change its grace period
+   without first typing into a field whose own hint says it is only used by another structure. My test
+   passed because it supplied `f.percent`; a browser never would. `percent: 5` is now explicit in
+   SETTING_DEFAULTS, matching what the engine already assumed.
+2. **The merge fix broke deletion in the BAH matrix — a regression I introduced.** Layering the stored
+   table over the code default re-supplies any pay grade the operator just removed, and the next save
+   writes it back. Closed-shape settings merge; open-ended key maps must replace. The spec already
+   encodes which is which (`subs` vs `matrix`). (#43)
+
+Also fixed in passing: `policy.percent || 5` swallowed an explicit zero. Harmless while percent was
+unreachable; now that it is an editable control, "no percentage fee" has to mean zero, so it is `??`.
+
+**The test that would have caught both, and now does:** `every setting round-trips` renders the real
+page, parses each form the way a browser would submit it (rendered input values, selected options,
+CHECKED checkboxes only), posts it back, and asserts a 303 with no error flash and an unchanged stored
+value — for all 40 settings. It reads the actual markup rather than rebuilding a body from the spec,
+because a body built from the spec agrees with the spec even when the form disagrees with both. A
+companion test asserts every sub-field a spec declares exists in that setting's default object.
+
+**Decisions:** #43.
+
+**Verified:** tsc strict clean · unit suite · e2e. `tests/settings_page.test.ts` is now 13 tests.
+
+**Method note:** every defect in this entry came from an agent instructed to REFUTE a fix, reading the
+consumer rather than the control. The fixes' own tests all passed, both before and after.
+
+## 2026-08-12 — Blob deletion moves after the commit, and the leak is closed at its source
+
+**Two more from the refutation pass, both about the file store.**
+
+1. **Deleting bytes inside a transaction is not crash-safe, and it fails into the state the codebase
+   forbids.** `clearOrgData`, `removeBatch` and the new sweep all unlinked blobs inside `tx()`.
+   Unlinking cannot be rolled back, so any abort after it — a failing commit, a disk-full audit
+   insert, any throw — restores every `files` row over bytes that are permanently gone: a portfolio of
+   dead download links. The safe order is rows in the transaction, commit, then unlink; a crash in
+   that gap leaves unreachable bytes instead, which `sweepOrphanBlobs` collects and no user can see.
+   `lib/files.ts` now exposes `deleteFileRows` (tx-safe) and `unlinkBlobs` (never in a tx) with the
+   reason written where a future caller will read it; `deleteFiles` keeps both in the safe order for
+   callers outside a transaction.
+2. **The leak was only closed for the org reset, not at its source.** `deleteProperty` deletes `files`
+   rows by raw SQL, so the ordinary property danger zone — the path Henry is about to use on Station
+   U&O — still left every signed lease and ID scan on disk as unreachable bytes. It now collects those
+   ids inside the transaction and unlinks after it commits, reporting the count as `file_blobs`.
+
+**Verified:** tsc strict clean · unit suite · e2e incl. payments (the late-fee engine was touched by
+the `??` fix). `tests/org_clear.test.ts` gains a fifth test: a signed lease attached to a property has
+both its row and its BYTES gone after an ordinary `deleteProperty`.
+
+## 2026-08-12 — Refutation pass, second half: the org-defaults hole and validating for the consumer
+
+**The scope agent found the fix I shipped was the wrong half.** Guarding the `property` parameter left
+`property=''` — the organization defaults — writable by any `admin:settings` holder. That is the level
+that reaches every property, so a property-scoped admin could not touch another building's override
+but could rewrite the default it inherits. Org defaults are now read-only for a scoped admin (the page
+says why, the server enforces it on both save and clear), and their own properties stay fully
+editable. Recorded, not fixed: `admin:settings` travels with `admin:staff` in the role model, so a
+determined scoped admin can still widen their own grant — a role-model change, not a settings patch.
+(#44)
+
+**The validation agent found five holes, each one a control validated as its input TYPE rather than as
+its CONSUMER reads it** (#45): `99:99` passed a `\d{2}:\d{2}` regex and reaches m15's `inQuietHours`,
+which `parseInt`s the hour — the quiet window would simply never open · `parseInt` accepted `0x10` as
+0 for any min-0 integer · a blank comma list stored `[]`, silently switching lead follow-up off ·
+a MISSING field (as opposed to a blank one) let a truncated post clear a text field it never mentioned
+· money had no ceiling, so a misplaced decimal could post a $1e12 approval threshold into the books.
+All six control paths now parse strictly, refuse absence where the form always submits (checkbox-backed
+types excepted — absence IS the value there), and carry ceilings where the number reaches money.
+
+**Process note worth more than the fixes.** Two edit passes silently no-opped: python string
+replacements written against text that an earlier pass had already changed, and then an `Edit` call
+that wrote from a stale snapshot and clobbered a python pass entirely. Both printed success. The
+lesson is to verify a change landed by grepping the file for it, not by trusting the tool's exit —
+and not to mix `Edit` with external rewrites of the same file inside one turn.
+
+**Verified:** tsc strict clean · unit suite · e2e incl. payments. `tests/settings_page.test.ts` is now
+15 tests: two new cover a property-scoped admin (read-only org defaults, 403 on save and on clear, 404
+on a foreign property, full control of their own) and the five consumer-shaped validation holes.
+
+## 2026-08-12 — The guard that was passing vacuously, and the BAH form nobody could save
+
+**The round-trip test was a false negative, and it was hiding a total failure.** It posted each
+rendered form, then re-fetched the redirect target with the ORIGINAL cookie — dropping the one-shot
+`sl_fl` flash, so "no error on the page" was true no matter what happened. Both the accepted and the
+rejected path redirect to the same URL, so nothing else distinguished them either. It now reads the
+flash straight off the POST's `Set-Cookie` and asserts the kind is not `err`.
+
+The moment it could see, it failed: **`bah_table` could not be saved at all through the browser.** The
+add row rendered its money boxes as `0.00`, and the "did you fill the add row?" check read that as
+user input — so every save hit "name the pay grade, or clear the amounts beside it". An absent amount
+now renders an empty box rather than a fake `$0.00`, which is both the fix and the more honest render.
+
+**Three more from the coverage agent:** `strayGroups` was computed and thrown away (the test only
+destructured `missing` and `extra`), so the group check caught nothing; the `Group` union and the
+`GROUPS` array were maintained separately and could drift in the direction that matters (adding to the
+union alone typechecks, and a spec on that group renders nowhere) — the union is now derived from the
+array with `as const`; and the doc comment was corrected again, to claim only what the code does.
+
+**The "not enforced yet" badges now have a rot-guard.** A badge is a promise about the product, and
+left alone it decays in both directions: wire a setting up and the badge keeps saying nothing reads
+it; ship a new unconsumed one and the page silently promises behavior that does not exist. A test
+walks `src/`, and fails if a pending setting has gained a consumer or a non-pending one has none. It
+passes today, which is the first empirical confirmation that the four marks are accurate.
+
+**Verified:** tsc strict clean · unit 336/336 · e2e 41/41 across smoke, hubs, clientready, goldenpath,
+setup, workingmodel, payments and comms (the last two because the late-fee and quiet-hours engines
+were touched). `tests/settings_page.test.ts` is 16 tests.
+
+## 2026-08-12 — The critic agent refutes the fix that was written to prevent exactly this
+
+**`tx()` nests via savepoints, so "after the transaction" was not after the commit.** The previous
+entry moved blob unlinking out of the transaction — but `deleteProperty` is called INSIDE
+`clearOrgData`'s `tx()`, where returning is a savepoint RELEASE. The critic reproduced the exact state
+the fix was written to prevent: mid-transaction the bytes were already gone, and a rollback restored
+the rows over them. `db.ts` now has **`afterCommit(fn)`** — queued while any transaction is open, run
+when the outermost one commits, dropped on rollback, immediate outside a transaction — and all three
+delete paths use it. (#46)
+
+**The orphan sweep is deleted, not fixed.** Every database in a checkout shares `data/files`, so
+`sweepOrphanBlobs` run while pointed at one database unlinks bytes owned by rows in another; the agent
+reproduced it wiping every blob `data/e2e.db` referenced, from an unrelated database — meaning
+`sh scripts/test.sh` was quietly destroying the e2e fixture's files on every run. The file store has
+no database affinity, so a global sweep cannot be made safe. Orphans are collected only by ids the
+caller owns, which is what every delete site now does.
+
+**A property override now records what DIFFERS.** Rendering merged levels fixed the display; saving
+still wrote a full copy, so changing one autonomy dial at a property silently pinned the other three
+and stopped them tracking org-wide changes (reproduced by submitting the rendered form with no edits).
+The save narrows to the differing fields, and an override that differs in nothing is deleted — which
+is what the page already promised in words. (#47)
+
+**Verified:** tsc strict clean · unit suite · e2e. `tests/settings_page.test.ts` is 17 tests; the new
+one changes one dial at a property, moves the others organization-wide, and asserts the property
+followed — then sets it back to the org value and asserts the override row is gone entirely.
+
+**On the method:** nine of the defects across today's two review rounds were introduced by the fix for
+an earlier defect. Every one was found by an agent told to refute a specific claim and to read the
+consumer rather than the control. The tests shipped alongside each fix passed throughout.

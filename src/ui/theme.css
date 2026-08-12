@@ -536,6 +536,29 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
 .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 16px; }
 .form-grid .full { grid-column: 1 / -1; }
 .check { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; margin: 8px 0; }
+
+/* org settings: one editable block per setting, hairline-separated inside a
+   group card (a card per setting would nest cards and lose the grouping) */
+.set-row { padding: 20px 0 18px; border-top: 1px solid var(--line-2); }
+.set-row:first-child { padding-top: 4px; border-top: 0; }
+.set-row h3 { margin: 0; font-size: 14px; font-weight: 620; letter-spacing: -.01em; }
+.set-row .set-help { margin: 5px 0 12px; max-width: 68ch; }
+.set-row .btn-row { margin-top: 4px; }
+.check-row { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.check-row .check { margin: 4px 0; }
+.rank-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px 16px; }
+.rank-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
+.rank-item input { width: 68px; }
+.matrix-row { display: grid; grid-template-columns: 78px repeat(2, minmax(0, 1fr)) auto; gap: 0 14px; align-items: end; }
+.matrix-row + .matrix-row { border-top: 1px solid var(--line-2); padding-top: 10px; margin-top: 4px; }
+.matrix-key { align-self: center; padding-bottom: 14px; font-variant-numeric: tabular-nums; }
+/* the add row names its own key instead of showing one, so it spans the
+   narrow rank column and the trailing remove column it has no checkbox for */
+.matrix-add { grid-template-columns: minmax(120px, 1fr) repeat(2, minmax(0, 1fr)); }
+@media (max-width: 720px) {
+  .matrix-row { grid-template-columns: 1fr 1fr; }
+  .matrix-key { grid-column: 1 / -1; padding-bottom: 0; }
+}
 .check input { margin-top: 2px; }
 
 /* bare form controls (outside .field wrappers) pick up the same styling,
