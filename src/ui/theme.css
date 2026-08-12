@@ -742,6 +742,10 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 .err-box .err-code { font-size: 64px; font-weight: 700; line-height: 1; background: var(--grad-wide); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
 .err-box .err-head { font-size: 20px; margin: 4px 0 6px; color: var(--ink); }
 .err-box .err-actions { margin-top: 18px; display: flex; gap: 8px; justify-content: center; }
+.err-box .err-links { margin-top: 18px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; font-size: 13.5px; }
+.err-box .err-links span { color: var(--muted); }
+.err-box .err-links a { color: var(--accent); text-decoration: none; }
+.err-box .err-links a:hover { text-decoration: underline; text-underline-offset: 3px; }
 .site .foot .foot-copy { margin-top: 8px; font-size: 12px; opacity: .72; }
 
 /* ---------- accessibility: visible focus rings (WCAG AA) ---------- */

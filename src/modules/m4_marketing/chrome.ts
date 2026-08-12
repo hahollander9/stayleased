@@ -74,6 +74,80 @@ export function mkSignupOpen(): boolean {
   return !!env('SIGNUP_CODE');
 }
 
+// ---------------------------------------------------------------------------
+// SEO plumbing shared by every marketing page (2026-08-12 SEO/UX pass)
+
+/** Canonical public origin for absolute URLs in canonical/og/schema tags.
+ * The live site serves from the bare domain (verified 2026-08-12); override
+ * with STAYLEASED_SITE_ORIGIN if that ever changes. */
+export function siteOrigin(): string {
+  return env('SITE_ORIGIN') || 'https://stayleased.com';
+}
+
+/** Serialize a JSON-LD block safely inside <script> (escapes `<` so content
+ * can never terminate the tag). The send() CSP nonce pass covers this tag;
+ * ld+json is inert data either way. */
+export function ldJson(obj: unknown): Raw {
+  return raw(`<script type="application/ld+json">${JSON.stringify(obj).replaceAll('<', '\\u003c')}</script>`);
+}
+
+/** Organization + WebSite schema, emitted once per marketing page. No street
+ * address by decision (Henry, 2026-08-11): the company publishes no office
+ * address yet, so areaServed carries the local signal instead. */
+export function orgLd(): Raw {
+  const o = siteOrigin();
+  return ldJson({
+    '@context': 'https://schema.org',
+    '@graph': [
+      {
+        '@type': 'Organization',
+        '@id': `${o}/#org`,
+        name: 'StayLeased',
+        url: `${o}/`,
+        logo: { '@type': 'ImageObject', url: `${o}/assets/mk/og-image.png`, width: 2400, height: 1260 },
+        description: 'Property management software for buildings of 10–100 units: AI agents staff leasing, collections, maintenance intake, and the books — every draft under the operator’s approval.',
+        areaServed: [
+          { '@type': 'AdministrativeArea', name: 'Washington–Arlington–Alexandria, DC–VA–MD–WV metropolitan area' },
+          { '@type': 'Country', name: 'United States' },
+        ],
+      },
+      { '@type': 'WebSite', '@id': `${o}/#site`, url: `${o}/`, name: 'StayLeased', publisher: { '@id': `${o}/#org` } },
+    ],
+  });
+}
+
+/** Per-page canonical + share meta (Open Graph URL/image + Twitter card).
+ * `path` is the site-relative canonical path, e.g. '/platform/rent-collection'. */
+export function mkSeoHead(path: string, title: string, description: string): Raw {
+  const o = siteOrigin();
+  const url = `${o}${path}`;
+  const img = `${o}/assets/mk/og-image.png`;
+  return html`<link rel="canonical" href="${url}" />
+<meta property="og:url" content="${url}" />
+<meta property="og:image" content="${img}" />
+<meta property="og:image:width" content="2400" /><meta property="og:image:height" content="1260" />
+<meta property="og:image:alt" content="StayLeased — autonomous property management for buildings of 10–100 units" />
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content="${title}" />
+<meta name="twitter:description" content="${description}" />
+<meta name="twitter:image" content="${img}" />`;
+}
+
+/** Google Analytics 4, marketing pages ONLY (never the app, portals, or
+ * tenant property sites) and only when STAYLEASED_GA_ID is set — until then
+ * this renders nothing and the CSP stays unchanged (send() gates its GA
+ * hosts on the same env var). Signals + ad personalization are off. */
+export function gaSnippet(): Raw {
+  const id = env('GA_ID');
+  if (!id) return raw('');
+  const safe = id.replace(/[^A-Za-z0-9-]/g, '');
+  return raw(
+    `<script async src="https://www.googletagmanager.com/gtag/js?id=${safe}"></script>` +
+    `<script>window.dataLayer=window.dataLayer||[];function gtag(){dataLayer.push(arguments);}` +
+    `gtag('js',new Date());gtag('config','${safe}',{anonymize_ip:true,allow_google_signals:false,allow_ad_personalization_signals:false});</script>`,
+  );
+}
+
 /** Sticky marketing header with dropdown nav, CTAs, and the mobile menu. */
 export function mkHeader(): Raw {
   const signupOpen = mkSignupOpen();
@@ -113,7 +187,8 @@ export function mkHeader(): Raw {
         <a class="mk-btn mk-btn-solid" href="/#walkthrough">Book a live demo</a>
       </div>
     </div>
-</div>`;
+</div>
+<div class="mk-mcta" id="mk-mcta"><a class="mk-btn mk-btn-solid" href="/#walkthrough">Book a live demo</a></div>`;
 }
 
 /** Marketing mega-footer, shared by every logged-out page. */
@@ -142,8 +217,10 @@ export function mkFooter(): Raw {
 
 /** Wrap a marketing page body in the full document with chrome CSS + JS.
  * The homepage builds its own document (it carries extra scripts); feature
- * and legal pages use this. */
-export function mkDoc(title: string, description: string, body: Raw): Res {
+ * and legal pages use this. `path` is the page's canonical site-relative
+ * path — it drives canonical/og:url/og:image/twitter meta and the
+ * sitewide Organization schema. */
+export function mkDoc(title: string, description: string, body: Raw, path: string): Res {
   return htmlRes(`<!doctype html>${html`<html lang="en"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${title}</title>
@@ -151,11 +228,13 @@ export function mkDoc(title: string, description: string, body: Raw): Res {
 <meta property="og:title" content="${title}" />
 <meta property="og:description" content="${description}" />
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
+${mkSeoHead(path, title, description)}
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
 ${raw(`<script>${THEME_BOOT_JS}</script>`)}
 <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
 <style>${raw(MARKETING_CSS)}</style>
+${orgLd()}${gaSnippet()}
 </head><body class="mk">${body}${mkChromeScript()}</body></html>`.s}`);
 }
 
@@ -281,9 +360,16 @@ const CHROME_JS = `
 
   // ---------- condensed nav on scroll (shared) ----------
   var nav = document.querySelector('.mk-nav');
+  var mcta = document.getElementById('mk-mcta');
   function onScroll() {
     var y = window.pageYOffset || document.documentElement.scrollTop;
     if (nav) nav.classList.toggle('scrolled', y > 8);
+    // sticky mobile CTA: state-toggled like #mktop (never scroll-scrubbed);
+    // CSS gates it to small viewports and lifts the chat/back-to-top widgets
+    if (mcta) {
+      mcta.classList.toggle('show', y > 520);
+      document.body.classList.toggle('mk-mcta-vis', y > 520);
+    }
   }
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();

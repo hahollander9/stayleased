@@ -6,7 +6,7 @@ import { id } from '../../lib/ids.ts';
 import { nowIso } from '../../lib/dates.ts';
 import { askRoutes } from './ask.ts';
 import { llmStatus } from '../../lib/sim/llm.ts';
-import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, MARKETING_CSS } from './chrome.ts';
+import { mkHeader, mkFooter, mkChromeScript, mkSignupOpen, mkSeoHead, orgLd, ldJson, gaSnippet, siteOrigin, MARKETING_CSS } from './chrome.ts';
 import { THEME_BOOT_JS } from '../../ui/ui.ts';
 
 /** The platform marketing homepage — the front door for logged-out visitors.
@@ -88,6 +88,19 @@ const SOLUTIONS: { name: string; body: string }[] = [
   { name: 'Self-managing owners', body: 'Full operating coverage, every decision retained.' },
   { name: 'Small management companies', body: 'Every property in one system, owner-ready financials.' },
   { name: 'Growing portfolios', body: 'Add buildings without adding headcount.' },
+];
+
+/** Homepage FAQ (2026-08-12). Every answer restates claims already made and
+ * pinned elsewhere on the site — approval default, real double-entry, the
+ * afternoon import, early-access pricing, staged-rollout honesty — so the
+ * FAQPage schema introduces no new claims to defend. Register: operator
+ * language, no invented customers or metrics. */
+const HOME_FAQ: { q: string; a: string }[] = [
+  { q: 'What does the AI send without a human seeing it first?', a: 'Nothing, by default. Every agent drafts into an approval queue — Approve, Edit, or Reject — and autonomy is granted per task type, within set limits, only when the operator turns it up. It is reversible at any time, and every action lands on the audit trail either way.' },
+  { q: 'Is the accounting real double-entry bookkeeping?', a: 'Yes. Every charge and payment posts as a balanced journal entry to a real general ledger — trial balance, bank reconciliation, and financial statements run from the same books as the 50-report catalog. Nothing on the screen is a display layer over a spreadsheet.' },
+  { q: 'How long does getting started take?', a: 'About an afternoon. A rent roll from Buildium, AppFolio, or a spreadsheet builds the portfolio — units, leases, rents, and balances — with every import reviewed and approved before it applies. Balances carry over as opening entries, so collections start from truth.' },
+  { q: 'What does StayLeased cost?', a: 'Early access is free, by invitation: the complete platform, with no quotation process and no implementation fees. Records remain the operator’s property, with full export at any time — including on the way out.' },
+  { q: 'Which parts are still rolling out?', a: 'Card and ACH processing, screening-bureau data, listing syndication, and outbound carrier delivery are in staged rollout. The product labels what is live and what is coming on its Connections page, and every claim on this page is a working screen in the live demo.' },
 ];
 
 function cube(n: number): string {
@@ -396,7 +409,7 @@ ${mkHeader()}
     </div>
     <div class="mk-form-card">
       ${thanks
-        ? html`<div class="mk-thanks"><b>Got it — thank you.</b><br/>We'll reach out shortly to set up your demo${signupOpen ? ' and invite code' : ''}.</div>`
+        ? html`<div class="mk-thanks"><b>Got it — thank you.</b><br/>We'll reach out within one business day to set up your demo${signupOpen ? ' and invite code' : ''}.</div>`
         : html`<form method="post" action="/company/walkthrough">
             <h3>Book a live demo</h3>
             <div class="mk-form-grid">
@@ -407,7 +420,19 @@ ${mkHeader()}
             </div>
             <label class="mk-form-full">Anything specific you want to see?<input name="note" placeholder="e.g. moving off AppFolio, ~120 units" /></label>
             <button class="mk-btn mk-btn-solid" type="submit">Request a demo</button>
+            <p class="mk-form-note">Demo requests are answered within one business day.</p>
           </form>`}
+    </div>
+  </div>
+</section>
+
+<section class="mk-band" id="faq">
+  <div class="mk-wrap">
+    <div class="mk-kicker">Common questions</div>
+    <h2 class="mk-h2">Direct answers.</h2>
+    <p class="mk-lead">Every answer below is checkable in the live demo — and the assistant on this page answers anything else from the product itself.</p>
+    <div class="mkp-faq" style="margin-top:26px">
+      ${HOME_FAQ.map((f, i) => html`<details ${i === 0 ? 'open' : ''}><summary>${f.q}</summary><div class="mkp-a">${f.a}</div></details>`)}
     </div>
   </div>
 </section>
@@ -601,18 +626,38 @@ ${mkFooter()}
 })();
 </script>`;
 
+  const TITLE = 'StayLeased — Autonomous Property Management';
+  const DESC = "Property management software that does the work: AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft under the operator's approval. Built for buildings of 10–100 units.";
+  const o = siteOrigin();
+  const appLd = ldJson({
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'StayLeased',
+    url: `${o}/`,
+    applicationCategory: 'BusinessApplication',
+    operatingSystem: 'Web',
+    description: DESC,
+    offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD', description: 'Early access — the complete platform, by invitation.' },
+    publisher: { '@id': `${o}/#org` },
+  });
+  const faqLd = ldJson({
+    '@context': 'https://schema.org', '@type': 'FAQPage',
+    mainEntity: HOME_FAQ.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+  });
   return htmlRes(`<!doctype html>${html`<html lang="en"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>StayLeased — Autonomous Property Management</title>
-<meta name="description" content="Property management software that does the work: AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft under the operator's approval. Built for buildings of 10–100 units." />
-<meta property="og:title" content="StayLeased — Autonomous Property Management" />
+<title>${TITLE}</title>
+<meta name="description" content="${DESC}" />
+<meta property="og:title" content="${TITLE}" />
 <meta property="og:description" content="AI agents staff the leasing desk, collections, maintenance intake, and the books — every draft queued for the operator's approval. Built for 10–100-unit buildings." />
 <meta property="og:type" content="website" /><meta property="og:site_name" content="StayLeased" />
+${mkSeoHead('/', TITLE, DESC)}
 <link rel="icon" href="/assets/favicon.svg" type="image/svg+xml" />
 ${raw(`<script>${THEME_BOOT_JS}</script>`)}
 <link rel="preload" href="/assets/fonts/inter-var.woff2" as="font" type="font/woff2" crossorigin />
 <link rel="preload" href="/assets/fonts/space-grotesk-var.woff2" as="font" type="font/woff2" crossorigin />
 <style>${raw(MARKETING_CSS)}</style>
+${orgLd()}${appLd}${faqLd}${gaSnippet()}
 </head><body class="mk">${body}${mkChromeScript()}</body></html>`.s}`);
 }
 

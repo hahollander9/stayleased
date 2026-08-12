@@ -521,6 +521,7 @@ html[data-theme="dark"] .mk-dark { background: #0D1A13; border-top: 1px solid rg
 .mk-form-full { margin-bottom: 14px; }
 .mk-thanks { font-size: 15.5px; color: var(--ink2); }
 .mk-thanks b { color: var(--ink); }
+.mk-form-note { margin-top: 12px; font-size: 13px; color: var(--mut); }
 
 /* footer — dark anchor band */
 .mk-foot { position: relative; background: #0A140E; color: #8CA396; padding: 60px 0 28px; }
@@ -656,6 +657,8 @@ body.mk-chat-open #mktop { opacity: 0; pointer-events: none; }
 .mkp-crumb { font-size: 12px; font-weight: 620; letter-spacing: .1em; text-transform: uppercase; color: var(--mut); margin-bottom: 18px; }
 .mkp-crumb a { color: var(--accent); }
 .mkp-crumb a:hover { text-decoration: underline; text-underline-offset: 3px; }
+.mkp-crumb .sep { margin: 0 7px; color: var(--mut); }
+.mkp-crumb [aria-current] { color: var(--ink2); }
 .mkp-hero h1 { font-size: clamp(34px, 4.2vw, 54px); line-height: 1.05; letter-spacing: -.018em; font-weight: 490; color: var(--ink); }
 .mkp-sub { font-size: 17.5px; color: var(--ink2); margin: 18px 0 24px; max-width: 36em; }
 .mkp-points { list-style: none; padding: 0; margin: 0 0 28px; display: grid; gap: 9px; }
@@ -768,9 +771,30 @@ html[data-theme="dark"] .mk-hero-clip::before { background: radial-gradient(46% 
 ::view-transition-old(root) { animation-duration: .16s; }
 ::view-transition-new(root) { animation-duration: .2s; }
 
+/* ---------- sticky mobile CTA (2026-08-12): small viewports only; slides in
+ * once past the hero (state-toggled, never scroll-scrubbed) and then holds.
+ * The bar lifts the chat launcher + back-to-top out of its way and yields
+ * entirely to the open mobile menu. ---------- */
+.mk-mcta { display: none; }
+@media (max-width: 720px) {
+  .mk-mcta { display: block; position: fixed; left: 0; right: 0; bottom: 0; z-index: 60;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--card); border-top: 1px solid var(--line);
+    box-shadow: 0 -12px 30px -18px rgba(20,18,14,.35);
+    transform: translateY(110%); transition: transform .3s var(--ease); }
+  .mk-mcta.show { transform: none; }
+  .mk-mcta .mk-btn { display: flex; width: 100%; justify-content: center; min-height: 44px; }
+  body.mk-mm-open .mk-mcta { display: none; }
+  body.mk-mcta-vis #mktop { bottom: 84px; }
+  body.mk-mcta-vis .mk-chat { bottom: 84px; }
+  /* the fixed bar must never sit on the footer's last line */
+  body.mk-mcta-vis .mk-foot { padding-bottom: 84px; }
+}
+
 @media (prefers-reduced-motion: reduce) {
   @view-transition { navigation: none; }
   body.mk { scroll-behavior: auto; }
+  .mk-mcta { transition: none !important; }
   /* absolutely everything visible and still — the motion system is opt-in
    * (classes come from JS, hero keyframes live behind no-preference), and
    * this block is the belt-and-braces guarantee on top */

@@ -1,6 +1,6 @@
 import { html, raw, when, type Raw } from '../../lib/html.ts';
 import { notFound, redirect, type Router, type Res } from '../../lib/http.ts';
-import { mkHeader, mkFooter, mkDoc, mkSignupOpen, MK_NAV } from './chrome.ts';
+import { mkHeader, mkFooter, mkDoc, mkSignupOpen, MK_NAV, ldJson, siteOrigin } from './chrome.ts';
 
 /** Dedicated marketing pages behind every nav-dropdown item — a real page
  * per product, curated to what StayLeased actually does and written for
@@ -1102,12 +1102,28 @@ function pageMock(p: MkPage): Raw {
 
 export function featurePage(p: MkPage): Res {
   const g = MK_GROUPS[p.group];
+  const o = siteOrigin();
+  const path = `${g.base}/${p.slug}`;
+  // BreadcrumbList mirrors the visible trail; FAQPage lifts the page's own
+  // Q&A — no content exists in schema that isn't rendered on the page.
+  const crumbLd = ldJson({
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${o}/` },
+      { '@type': 'ListItem', position: 2, name: g.name, item: `${o}${g.base}` },
+      { '@type': 'ListItem', position: 3, name: p.label, item: `${o}${path}` },
+    ],
+  });
+  const faqLd = ldJson({
+    '@context': 'https://schema.org', '@type': 'FAQPage',
+    mainEntity: p.faq.map((f) => ({ '@type': 'Question', name: f.q, acceptedAnswer: { '@type': 'Answer', text: f.a } })),
+  });
   const body = html`
 ${mkHeader()}
 <section class="mkp-hero">
   <div class="mk-wrap mkp-hero-in">
     <div>
-      <div class="mkp-crumb"><a href="${g.base}">${g.name}</a> · ${p.label}</div>
+      <nav class="mkp-crumb" aria-label="Breadcrumb"><a href="/">Home</a><span class="sep" aria-hidden="true">/</span><a href="${g.base}">${g.name}</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">${p.label}</span></nav>
       <h1>${p.title}</h1>
       <p class="mkp-sub">${p.sub}</p>
       ${when(p.chip, () => html`<div class="mkp-chip ${p.chip!.kind}">${p.chip!.text}</div>`)}
@@ -1159,17 +1175,27 @@ ${mkHeader()}
     ${ctaRow(true)}
   </div>
 </section>
-${mkFooter()}`;
-  return mkDoc(`${p.label} — StayLeased`, p.sub, body);
+${mkFooter()}
+${crumbLd}${faqLd}`;
+  return mkDoc(`${p.label} — StayLeased`, p.sub, body, path);
 }
 
 export function hubPage(group: MkPage['group']): Res {
   const g = MK_GROUPS[group];
   const pages = MK_PAGES.filter((p) => p.group === group);
+  const o = siteOrigin();
+  const crumbLd = ldJson({
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${o}/` },
+      { '@type': 'ListItem', position: 2, name: g.name, item: `${o}${g.base}` },
+    ],
+  });
   const body = html`
 ${mkHeader()}
 <section class="mk-band mkp-hub-lead" style="padding-bottom:56px">
   <div class="mk-wrap">
+    <nav class="mkp-crumb" aria-label="Breadcrumb"><a href="/">Home</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">${g.name}</span></nav>
     <div class="mk-kicker">${g.kicker}</div>
     <h1 class="mk-h2" style="font-size:clamp(30px,3.8vw,46px)">${g.name}</h1>
     <p class="mk-lead">${g.lead}</p>
@@ -1179,23 +1205,34 @@ ${mkHeader()}
     <div class="mk-inline-cta">${ctaRow()}</div>
   </div>
 </section>
-${mkFooter()}`;
-  return mkDoc(`${g.name} — StayLeased`, g.lead, body);
+${mkFooter()}
+${crumbLd}`;
+  return mkDoc(`${g.name} — StayLeased`, g.lead, body, g.base);
 }
 
 // ---------------------------------------------------------------------------
 // legal pages
 
-function legalDoc(title: string, updated: string, content: Raw): Res {
+function legalDoc(title: string, updated: string, content: Raw, path: string): Res {
+  const o = siteOrigin();
+  const crumbLd = ldJson({
+    '@context': 'https://schema.org', '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'Home', item: `${o}/` },
+      { '@type': 'ListItem', position: 2, name: title, item: `${o}${path}` },
+    ],
+  });
   const body = html`
 ${mkHeader()}
 <div class="mkp-prose">
+  <nav class="mkp-crumb" aria-label="Breadcrumb"><a href="/">Home</a><span class="sep" aria-hidden="true">/</span><span aria-current="page">${title}</span></nav>
   <h1>${title}</h1>
   <div class="mkp-date">Last updated ${updated}</div>
   ${content}
 </div>
-${mkFooter()}`;
-  return mkDoc(`${title} — StayLeased`, `StayLeased ${title.toLowerCase()}.`, body);
+${mkFooter()}
+${crumbLd}`;
+  return mkDoc(`${title} — StayLeased`, `StayLeased ${title.toLowerCase()}.`, body, path);
 }
 
 const PRIVACY = html`
@@ -1205,6 +1242,7 @@ const PRIVACY = html`
   <li><b>Account and contact information</b> — name, email, company, and portfolio details you provide when you request a demo, create a company, or sign in.</li>
   <li><b>Operating data</b> — the property, lease, resident, financial, and communications records your company creates in the product. This data belongs to your company; we process it to run the service.</li>
   <li><b>Usage and log data</b> — sign-ins, actions taken (kept in your company’s audit trail), and technical logs needed to operate and secure the service.</li>
+  <li><b>Marketing-site analytics</b> — our public marketing pages may use Google Analytics to count visits and understand which pages are useful. This runs only on the marketing site — never inside the product, the resident portal, or any property’s leasing site — with IP anonymization on and Google signals and ad-personalization off. No operating data, resident data, or account data is ever sent to it.</li>
 </ul>
 <h2>How we use it</h2>
 <ul>
@@ -1269,6 +1307,6 @@ export function featureRoutes(r: Router): void {
   // item. Old URLs land on the portal page.
   r.get('/resident', () => redirect('/platform/resident-portal'));
   r.get('/resident/:slug', () => redirect('/platform/resident-portal'));
-  r.get('/legal/privacy', () => legalDoc('Privacy Policy', 'July 28, 2026', PRIVACY));
-  r.get('/legal/terms', () => legalDoc('Terms of Service', 'July 28, 2026', TERMS));
+  r.get('/legal/privacy', () => legalDoc('Privacy Policy', 'August 12, 2026', PRIVACY, '/legal/privacy'));
+  r.get('/legal/terms', () => legalDoc('Terms of Service', 'July 28, 2026', TERMS, '/legal/terms'));
 }

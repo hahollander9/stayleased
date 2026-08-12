@@ -1,0 +1,63 @@
+<!doctype html>
+<!-- Source for /assets/mk/og-image.png (1200×630). Regenerate with:
+     npx playwright screenshot (or scripts/og-image.mjs) at 1200×630, then
+     commit the PNG to src/ui/mk-assets/og-image.png. Brand: EMERALD v9. -->
+<html lang="en"><head><meta charset="utf-8">
+<style>
+  @font-face { font-family: 'Space Grotesk'; src: url('../src/ui/fonts/space-grotesk-var.woff2') format('woff2'); font-weight: 300 700; }
+  @font-face { font-family: 'Inter'; src: url('../src/ui/fonts/inter-var.woff2') format('woff2'); font-weight: 100 900; }
+  * { margin: 0; box-sizing: border-box; }
+  html, body { width: 1200px; height: 630px; overflow: hidden; }
+  body {
+    font-family: 'Inter', system-ui, sans-serif;
+    background: #08120D;
+    color: #EAF2ED;
+    position: relative;
+  }
+  .glow-a, .glow-b { position: absolute; border-radius: 50%; filter: blur(2px); }
+  .glow-a { width: 1100px; height: 700px; left: -180px; top: -320px;
+    background: radial-gradient(closest-side, rgba(45,212,191,.16), transparent 70%); }
+  .glow-b { width: 900px; height: 620px; right: -260px; bottom: -300px;
+    background: radial-gradient(closest-side, rgba(5,150,105,.22), transparent 70%); }
+  .rule { position: absolute; left: 0; right: 0; bottom: 0; height: 7px;
+    background: linear-gradient(90deg, #2DD4BF, #059669 52%, #047857); }
+  .in { position: relative; height: 100%; padding: 64px 76px 0; display: flex; flex-direction: column; }
+  .brand { display: flex; align-items: center; gap: 15px; }
+  .brand svg { display: block; }
+  .wm { font-family: 'Space Grotesk'; font-size: 40px; font-weight: 600; letter-spacing: -0.5px; }
+  .wm b { color: #34D399; font-weight: 600; }
+  h1 {
+    font-family: 'Space Grotesk'; font-weight: 640; font-size: 84px; line-height: 1.04;
+    letter-spacing: -2.6px; margin-top: 66px; max-width: 980px;
+  }
+  h1 .dot { color: #34D399; }
+  .sub {
+    margin-top: 28px; font-size: 27.5px; line-height: 1.42; color: #A7B5AC;
+    letter-spacing: -0.2px; max-width: 1010px; font-weight: 450;
+  }
+  .sub b { color: #EAF2ED; font-weight: 560; }
+  .chips { position: absolute; left: 76px; bottom: 54px; display: flex; gap: 14px; }
+  .chip {
+    display: flex; align-items: center; gap: 10px; padding: 13px 22px; border-radius: 999px;
+    border: 1.5px solid rgba(52,211,153,.34); background: rgba(13,26,19,.85);
+    font-size: 22.5px; font-weight: 520; color: #CFE0D6; letter-spacing: -0.1px;
+  }
+  .chip i { width: 9px; height: 9px; border-radius: 50%; background: #34D399; }
+</style></head>
+<body>
+  <div class="glow-a"></div><div class="glow-b"></div>
+  <div class="in">
+    <div class="brand">
+      <svg width="46" height="46" viewBox="0 0 24 24" fill="none" stroke="#34D399" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 21V9.5a7 7 0 0 1 14 0V21"/><path d="M3.5 21h17"/><circle cx="12" cy="12" r="1.6"/><path d="M12 13.6V17"/></svg>
+      <div class="wm">Stay<b>Leased</b></div>
+    </div>
+    <h1>Autonomous property management<span class="dot">.</span></h1>
+    <div class="sub">AI agents staff the leasing desk, collections, maintenance intake, and the books — <b>every draft under the operator’s approval.</b></div>
+    <div class="chips">
+      <div class="chip"><i></i>Built for 10–100 units</div>
+      <div class="chip"><i></i>One system of record</div>
+      <div class="chip"><i></i>Live demo, open to anyone</div>
+    </div>
+  </div>
+  <div class="rule"></div>
+</body></html>

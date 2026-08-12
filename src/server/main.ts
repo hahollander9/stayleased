@@ -28,6 +28,7 @@ export function buildRouter(): Router {
     '/assets/fonts/space-grotesk-var.woff2': ['src/ui/fonts/space-grotesk-var.woff2', 'font/woff2'],
     '/assets/fonts/fraunces-var.woff2': ['src/ui/fonts/fraunces-var.woff2', 'font/woff2'],
     '/assets/fonts/fraunces-italic-var.woff2': ['src/ui/fonts/fraunces-italic-var.woff2', 'font/woff2'],
+    '/assets/mk/og-image.png': ['src/ui/mk-assets/og-image.png', 'image/png'],
     '/assets/mk/dashboard-light.png': ['src/ui/mk-assets/dashboard-light.png', 'image/png'],
     '/assets/mk/ai-queue-light.png': ['src/ui/mk-assets/ai-queue-light.png', 'image/png'],
     '/assets/mk/hero-dashboard.png': ['src/ui/mk-assets/hero-dashboard.png', 'image/png'],

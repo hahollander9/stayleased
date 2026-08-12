@@ -101,7 +101,14 @@ export function errorPage(status: number, msg: string, detail?: string): Res {
   const mark = `<svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V9.5a7 7 0 0 1 14 0V21"/><path d="M3.5 21h17"/><circle cx="12" cy="12" r="1.6"/><path d="M12 13.6V17"/></svg>`;
   const heads: Record<number, string> = { 400: 'Bad request', 403: 'Access denied', 404: 'Page not found', 500: 'Something went wrong' };
   const head = heads[status] || 'Error';
-  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${status} · StayLeased</title><link rel="stylesheet" href="/assets/theme.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"></head><body class="err-page"><div class="err-box"><a class="err-brand" href="/">${mark}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></a><div class="err-code">${status}</div><h1 class="err-head">${esc(head)}</h1><p>${esc(msg)}</p>${detail ? `<pre class="err-detail">${esc(detail)}</pre>` : ''}<div class="err-actions"><a class="btn" href="/" data-back>Go back</a> <a class="btn btn-ghost" href="/">Home</a></div></div><script>var b=document.querySelector('[data-back]');if(b)b.addEventListener('click',function(e){e.preventDefault();history.back();});</script></body></html>`;
+  const title = status === 404 ? 'Page not found · StayLeased' : `${status} · StayLeased`;
+  // A lost visitor gets destinations, not just a dead end (2026-08-12). The
+  // links are public routes that read correctly signed in or out; other
+  // statuses keep the terse two-button page.
+  const links = status === 404
+    ? `<nav class="err-links" aria-label="Popular pages"><a href="/platform">Platform</a><span aria-hidden="true">·</span><a href="/agents">AI agents</a><span aria-hidden="true">·</span><a href="/login">Live demo</a><span aria-hidden="true">·</span><a href="/#walkthrough">Book a demo</a></nav>`
+    : '';
+  const body = `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${title}</title><link rel="stylesheet" href="/assets/theme.css"><link rel="icon" href="/assets/favicon.svg" type="image/svg+xml"></head><body class="err-page"><div class="err-box"><a class="err-brand" href="/">${mark}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></a><div class="err-code">${status}</div><h1 class="err-head">${esc(head)}</h1><p>${esc(msg)}</p>${detail ? `<pre class="err-detail">${esc(detail)}</pre>` : ''}<div class="err-actions"><a class="btn" href="/" data-back>Go back</a> <a class="btn btn-ghost" href="/">Home</a></div>${links}</div><script>var b=document.querySelector('[data-back]');if(b)b.addEventListener('click',function(e){e.preventDefault();history.back();});</script></body></html>`;
   return { status, headers: { 'content-type': 'text/html; charset=utf-8' }, body };
 }
 
@@ -384,9 +391,16 @@ function send(res: ServerResponse, r: Rq | null, out: Res): void {
     // literal string search + function replacer: the nonce is inserted verbatim
     // and never interpreted as a $-replacement pattern (regex/injection-safe).
     body = body.replaceAll('<script', () => `<script nonce="${nonce}"`);
+    // Google Analytics (marketing pages, env-gated): the loader tag itself is
+    // covered by the nonce, but gtag.js fetches config and beacons from
+    // Google's hosts — those are allowed ONLY while STAYLEASED_GA_ID is set,
+    // so the CSP is byte-identical to the pre-GA policy until then.
+    const ga = env('GA_ID');
+    const gaScript = ga ? ' https://www.googletagmanager.com' : '';
+    const gaConnect = ga ? `; connect-src 'self' https://*.google-analytics.com https://*.analytics.google.com https://*.googletagmanager.com` : '';
     headers['content-security-policy'] =
-      `default-src 'self'; script-src 'self' 'nonce-${nonce}'; style-src 'self' 'unsafe-inline'; ` +
-      `img-src 'self' data: blob: https:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'`;
+      `default-src 'self'; script-src 'self' 'nonce-${nonce}'${gaScript}; style-src 'self' 'unsafe-inline'; ` +
+      `img-src 'self' data: blob: https:; font-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'${gaConnect}`;
   }
   res.writeHead(out.status, headers);
   res.end(body);
