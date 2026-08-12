@@ -13,10 +13,11 @@ import { SETTING_DEFAULTS } from '../../lib/settings.ts';
  * to what every resident is charged. Money is entered in dollars, days as
  * days, percentages as percentages, and nothing here accepts hand-written JSON.
  *
- * Adding a setting: add it to SETTING_DEFAULTS and add a spec here, with a
- * group drawn from GROUPS. `specCoverage()` is asserted by the unit suite, so
- * a key with no spec, a spec naming a key that no longer exists, or a group
- * the page does not render all fail the build rather than going unnoticed. */
+ * Adding a setting: add it to SETTING_DEFAULTS and add a spec here. The group
+ * must be a member of GROUPS — the Group type is derived from that array, so
+ * an unrenderable group is a type error. `specCoverage()` is asserted by the
+ * unit suite for the rest: a key with no spec, and a spec naming a key that no
+ * longer exists, both fail the build rather than going unnoticed. */
 
 export type Ctl =
   | { t: 'money' }
@@ -61,12 +62,7 @@ const SCORER: [string, string][] = [
   ['active', 'Active — let agents act on the score'],
 ];
 
-export type Group =
-  | 'Rent, fees and payments' | 'Deposits and move-out' | 'Leasing and screening'
-  | 'Renewals and pricing' | 'Communications' | 'Pets' | 'Insurance'
-  | 'AI and automation' | 'Approval thresholds' | 'Specialty housing';
-
-export const GROUPS: Group[] = [
+export const GROUPS = [
   'Rent, fees and payments',
   'Deposits and move-out',
   'Leasing and screening',
@@ -77,7 +73,13 @@ export const GROUPS: Group[] = [
   'AI and automation',
   'Approval thresholds',
   'Specialty housing',
-];
+] as const;
+
+/** The page renders group by group, so a spec's group must BE one of these —
+ * derived from the array rather than declared beside it, because a union and a
+ * list maintained separately drift, and a spec in a group the page never
+ * iterates renders nowhere while typechecking cleanly. */
+export type Group = (typeof GROUPS)[number];
 
 export const SPECS: SettingSpec[] = [
   // ---------- Rent, fees and payments ----------
@@ -390,7 +392,8 @@ function at(value: unknown, path: string): unknown {
 function control(name: string, ctl: Ctl, value: unknown): Raw {
   switch (ctl.t) {
     case 'money':
-      return moneyInput(name, typeof value === 'number' ? value : 0);
+      // null renders an empty box: an absent amount must not masquerade as $0.00
+      return moneyInput(name, typeof value === 'number' ? value : null);
     case 'int':
       return input(name, { type: 'number', value: String(value ?? ''), step: '1', min: ctl.min === undefined ? undefined : String(ctl.min), max: ctl.max === undefined ? undefined : String(ctl.max) });
     case 'pct':
@@ -444,7 +447,7 @@ export function renderSetting(spec: SettingSpec, value: unknown): Raw {
           </div>`)}
         <div class="matrix-row matrix-add">
           ${field(spec.matrix.addLabel, input('add.key', { placeholder: 'E-7' }))}
-          ${spec.matrix.cols.map((c) => field(c.label, control(`add.${c.path}`, c.ctl, 0)))}
+          ${spec.matrix.cols.map((c) => field(c.label, control(`add.${c.path}`, c.ctl, undefined)))}
         </div>
       </div>`;
   }

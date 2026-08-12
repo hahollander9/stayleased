@@ -1,6 +1,8 @@
 import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
-import { db, q1, insert } from '../src/lib/db.ts';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+import { db, q1, insert, ROOT } from '../src/lib/db.ts';
 import { id } from '../src/lib/ids.ts';
 import { nowIso } from '../src/lib/dates.ts';
 import { hashPassword, sysCtx } from '../src/lib/auth.ts';
@@ -47,9 +49,10 @@ before(() => {
 const val = <T>(key: string, property?: string): T => getSetting<T>(sysCtx(orgId), key, property);
 
 test('every setting is described exactly once — no key renders unhandled, no spec is dead', () => {
-  const { missing, extra } = specCoverage();
+  const { missing, extra, strayGroups } = specCoverage();
   assert.deepEqual(missing, [], 'settings with no typed control (add a spec in settings_spec.ts)');
   assert.deepEqual(extra, [], 'specs naming a setting that no longer exists');
+  assert.deepEqual(strayGroups, [], 'specs in a group the page never renders — they appear nowhere');
   assert.equal(SPECS.length, Object.keys(SETTING_DEFAULTS).length);
 });
 
@@ -392,12 +395,23 @@ test('every setting round-trips: submitting the form exactly as rendered saves i
       // different order than the default object lists them, and key order in
       // stored JSON means nothing to any consumer
       const before = structuredClone(val(key));
-      const res = await post(base, '/admin/settings', body, cookie);
-      assert.equal(res.status, 303, `${key}: submitting the rendered form should be accepted`);
-      const flash = await get(base, res.location!.replace(/^[^/]*/, ''), cookie);
-      assert.doesNotMatch(
-        flash.text, /class="flash err"/,
-        `${key}: submitting the form exactly as rendered was rejected — the form renders a value the parse will not take`,
+      // Read the outcome from the flash cookie the redirect sets. Both the
+      // accepted and the rejected path redirect to the SAME url, so the
+      // location cannot tell them apart — and re-fetching with the original
+      // cookie silently drops the one-shot flash, which makes a "no error"
+      // assertion pass vacuously. That false negative hid a real bug once.
+      const resp = await fetch(`${base}/admin/settings`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', origin: base, cookie },
+        body: new URLSearchParams(body).toString(),
+        redirect: 'manual',
+      });
+      assert.equal(resp.status, 303, `${key}: submitting the rendered form should be accepted`);
+      const flash = /sl_fl=([^;]*)/.exec(resp.headers.get('set-cookie') || '')?.[1] ?? '';
+      const [kind, ...rest] = decodeURIComponent(flash).split('|');
+      assert.notEqual(
+        kind, 'err',
+        `${key}: the form as rendered was REJECTED — "${rest.join('|')}". The page renders a value its own parser will not take.`,
       );
       assert.deepEqual(val(key), before, `${key}: a no-op save changed the stored value`);
     }
@@ -547,4 +561,32 @@ test('inputs that reach real engines are validated as those engines read them', 
   } finally {
     close();
   }
+});
+
+test('the "not enforced yet" badges match reality in both directions', () => {
+  // A badge is a promise about the product. Left alone it rots: wire a setting
+  // up and the badge keeps telling operators nothing acts on it; ship a new
+  // unconsumed one and it silently claims to work. Both directions fail here.
+  const root = join(ROOT, 'src');
+  const files: string[] = [];
+  const walk = (d: string): void => {
+    for (const name of readdirSync(d)) {
+      const full = join(d, name);
+      if (statSync(full).isDirectory()) walk(full);
+      else if (name.endsWith('.ts')) files.push(full);
+    }
+  };
+  walk(root);
+  // the spec and the settings library mention every key by definition
+  const sources = files
+    .filter((f) => !f.endsWith('settings_spec.ts') && !f.endsWith('lib/settings.ts'))
+    .map((f) => readFileSync(f, 'utf8'));
+
+  const wrong: string[] = [];
+  for (const spec of SPECS) {
+    const used = sources.some((src) => src.includes(`'${spec.key}'`) || src.includes(`"${spec.key}"`));
+    if (spec.pending && used) wrong.push(`${spec.key}: marked "not enforced yet" but something reads it now — drop the badge`);
+    if (!spec.pending && !used) wrong.push(`${spec.key}: nothing reads it, so the page promises behavior that does not exist — mark it pending`);
+  }
+  assert.deepEqual(wrong, []);
 });

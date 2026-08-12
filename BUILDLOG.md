@@ -744,3 +744,32 @@ and not to mix `Edit` with external rewrites of the same file inside one turn.
 **Verified:** tsc strict clean · unit suite · e2e incl. payments. `tests/settings_page.test.ts` is now
 15 tests: two new cover a property-scoped admin (read-only org defaults, 403 on save and on clear, 404
 on a foreign property, full control of their own) and the five consumer-shaped validation holes.
+
+## 2026-08-12 — The guard that was passing vacuously, and the BAH form nobody could save
+
+**The round-trip test was a false negative, and it was hiding a total failure.** It posted each
+rendered form, then re-fetched the redirect target with the ORIGINAL cookie — dropping the one-shot
+`sl_fl` flash, so "no error on the page" was true no matter what happened. Both the accepted and the
+rejected path redirect to the same URL, so nothing else distinguished them either. It now reads the
+flash straight off the POST's `Set-Cookie` and asserts the kind is not `err`.
+
+The moment it could see, it failed: **`bah_table` could not be saved at all through the browser.** The
+add row rendered its money boxes as `0.00`, and the "did you fill the add row?" check read that as
+user input — so every save hit "name the pay grade, or clear the amounts beside it". An absent amount
+now renders an empty box rather than a fake `$0.00`, which is both the fix and the more honest render.
+
+**Three more from the coverage agent:** `strayGroups` was computed and thrown away (the test only
+destructured `missing` and `extra`), so the group check caught nothing; the `Group` union and the
+`GROUPS` array were maintained separately and could drift in the direction that matters (adding to the
+union alone typechecks, and a spec on that group renders nowhere) — the union is now derived from the
+array with `as const`; and the doc comment was corrected again, to claim only what the code does.
+
+**The "not enforced yet" badges now have a rot-guard.** A badge is a promise about the product, and
+left alone it decays in both directions: wire a setting up and the badge keeps saying nothing reads
+it; ship a new unconsumed one and the page silently promises behavior that does not exist. A test
+walks `src/`, and fails if a pending setting has gained a consumer or a non-pending one has none. It
+passes today, which is the first empirical confirmation that the four marks are accurate.
+
+**Verified:** tsc strict clean · unit 336/336 · e2e 41/41 across smoke, hubs, clientready, goldenpath,
+setup, workingmodel, payments and comms (the last two because the late-fee and quiet-hours engines
+were touched). `tests/settings_page.test.ts` is 16 tests.
