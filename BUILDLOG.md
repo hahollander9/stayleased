@@ -850,3 +850,29 @@ pre-existing patterns at lines this diff does not touch).
 of codes but not their amounts, and extending the hard-won Yardi harvest to carry them was not worth
 the risk in this build — shipping a tested but unreachable function would have been worse. It is the
 obvious next source: what a portfolio actually bills is stronger evidence than what a lease permits.
+
+## 2026-08-12 — CI restored: the gates run by a machine instead of by whoever remembered
+
+**Built.** `.github/workflows/ci.yml` was lost to a web-UI upload months ago (dot-directories do not
+survive them) and CLAUDE.md has carried "restore on the next local push" ever since. Six pull requests
+merged today with zero automated checks — every gate was a human running suites by hand in a session
+that restarted mid-afternoon. This restores it, from a git push, so the dot-directory survives.
+
+Two jobs, matching the gates CLAUDE.md already requires: **typecheck + unit** (`tsc --noEmit`, which
+IS the lint gate here per #10, then `scripts/test.sh`) and **end-to-end** (Chromium only,
+`scripts/e2e.sh` against a freshly seeded database, artifacts uploaded on failure). Triggers on pull
+requests and pushes to main; a new push cancels the run it supersedes; both jobs time-boxed so a hung
+suite cannot burn an hour.
+
+**The judgment call is the flake.** The documented accounting date-ordering flake would have made CI
+red about a third of the time on day one, and a gate nobody trusts is worse than no gate. The unit
+step therefore re-runs once on failure — the same rule CLAUDE.md gives a human — and emits a GitHub
+warning annotation when it does, so a flake that turns constant is visible in the run history rather
+than absorbed. Two failures in a row still fails the job. (#50)
+
+**Verified against a real run, not asserted.** The full e2e suite (all 31 files, which
+`scripts/e2e.sh` runs and which no session today had run end to end) was executed locally exactly as
+the workflow will run it, before the workflow was pushed. Shipping CI that is born red would have
+taught everyone to ignore it in its first hour.
+
+**Decisions:** #50.
