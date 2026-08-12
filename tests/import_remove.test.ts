@@ -8,15 +8,18 @@ import { nowIso } from '../src/lib/dates.ts';
 import { hashPassword, sysCtx } from '../src/lib/auth.ts';
 import { putFile } from '../src/lib/files.ts';
 import { ensureCoa } from '../src/modules/m9_accounting/coa.ts';
+import { trialBalance } from '../src/modules/m9_accounting/service.ts';
 import { autoMap } from '../src/modules/setup/mapping.ts';
-import { applyRentRoll, type BatchRow } from '../src/modules/setup/import_apply.ts';
+import { applyRentRoll, applyResidents, type BatchRow } from '../src/modules/setup/import_apply.ts';
 import { startTestServer, loginAs, get, post } from './harness.ts';
 
-/** Removing an upload from the Migration Center: the batch row (which holds
- * the whole grid — every name, email and balance the file carried) and the
- * lease lane's stored PDFs go for good, while everything an applied upload
- * IMPORTED stays. Typed-name confirm on applied uploads, audit metadata
- * without contents, and org isolation on the route. */
+/** Removing an upload from the Migration Center. Three things go: everything
+ * the import wrote (found by the import_batch_id stamp, so exactly this
+ * upload's rows and no others), the batch row itself (which holds the whole
+ * grid — every name, email and balance the file carried), and the lease lane's
+ * stored PDFs. Covers the typed-name confirm on applied uploads, the
+ * payments rail that refuses rather than erase financial history, audit
+ * metadata without contents, and org isolation on the route. */
 
 const AS_OF = '2026-07-23';
 const RR_HEADERS = ['Unit', 'Tenant', 'Email', 'Rent', 'Deposit', 'Balance', 'Lease From', 'Lease To'];
@@ -101,39 +104,43 @@ test('a staged upload is removed outright — no typed confirm, row and grid gon
   }
 });
 
-test('an applied upload needs the typed file name — and removing it leaves everything it imported', async () => {
+test('an applied upload needs the typed file name — and removing it takes the whole import back', async () => {
   const batch = mkRentRoll({ filename: 'applied.xlsx', new_property_name: 'Removal Court' }, [
     ['201', 'Ada Applied', 'ada@imprm.test', '1600', '1600', '75.00', '2026-01-01', '2026-12-31'],
     ['202', 'Ben Booked', 'ben@imprm.test', '1550', '1550', '0', '2026-02-01', '2027-01-31'],
   ]);
+  // a second property, imported separately, must survive untouched
+  const keeper = mkRentRoll({ filename: 'keeper.xlsx', new_property_name: 'Keeper Court' }, [
+    ['K1', 'Kay Keeper', 'kay@imprm.test', '1300', '1300', '40.00', '2026-01-01', '2026-12-31'],
+  ]);
   applyRentRoll(sysCtx(orgId, AS_OF), batch);
+  applyRentRoll(sysCtx(orgId, AS_OF), keeper);
   const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Removal Court')!.id;
-  const before = {
-    units: val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', pid) || 0,
-    leases: val<number>('SELECT COUNT(*) FROM leases WHERE property_id=?', pid) || 0,
-    residents: val<number>('SELECT COUNT(*) FROM residents WHERE property_id=?', pid) || 0,
-    jes: val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, pid) || 0,
-  };
-  assert.equal(before.units, 2, 'the import really did build the property');
-  assert.ok(before.jes > 0, 'the import really did post books');
+  const keeperPid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Keeper Court')!.id;
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', pid), 2, 'the import really did build it');
+  assert.ok((val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, pid) || 0) > 0);
+  assert.equal(val<number>(`SELECT COUNT(*) FROM users u JOIN residents r ON r.user_id=u.id WHERE r.property_id=?`, pid), 2, 'portal logins provisioned');
 
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@imprm.test');
 
-    // the confirm screen promises the imported records stay, and asks for the name
+    // the confirm screen counts what will come back out
     const confirm = await get(base, `/setup/import/b/${batch.id}/remove`, cookie);
     assert.equal(confirm.status, 200);
-    assert.match(confirm.text, /What it imported stays/);
+    assert.match(confirm.text, /What it imported comes out with it/);
+    assert.match(confirm.text, /1 property/);
+    assert.match(confirm.text, /2 units/);
+    assert.match(confirm.text, /2 leases/);
     assert.match(confirm.text, /confirm_name/);
 
-    // wrong name → refused, upload survives
+    // wrong name → refused, nothing removed at all
     const bad = await post(base, `/setup/import/b/${batch.id}/remove`, { confirm_name: 'not-the-file.xlsx' }, cookie);
     assert.equal(bad.status, 303);
-    assert.equal(bad.location, `/setup/import/b/${batch.id}/remove`);
     assert.equal(exists(batch.id), true, 'a mismatch removes nothing');
+    assert.ok(q1('SELECT id FROM properties WHERE id=?', pid), 'and leaves the import in place');
 
-    // exact name → removed
+    // exact name → the upload and its import both go
     const ok = await post(base, `/setup/import/b/${batch.id}/remove`, { confirm_name: 'applied.xlsx' }, cookie);
     assert.equal(ok.status, 303);
     assert.equal(ok.location, '/setup/import');
@@ -142,12 +149,52 @@ test('an applied upload needs the typed file name — and removing it leaves eve
     close();
   }
 
-  // the portfolio the upload built is untouched — it is the portfolio now, not the file
-  assert.ok(q1('SELECT id FROM properties WHERE id=?', pid), 'property survives');
-  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', pid), before.units);
-  assert.equal(val<number>('SELECT COUNT(*) FROM leases WHERE property_id=?', pid), before.leases);
-  assert.equal(val<number>('SELECT COUNT(*) FROM residents WHERE property_id=?', pid), before.residents);
-  assert.equal(val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, pid), before.jes);
+  // everything the upload created is out of the system
+  assert.equal(q1('SELECT id FROM properties WHERE id=?', pid), undefined, 'property removed');
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', pid), 0);
+  assert.equal(val<number>('SELECT COUNT(*) FROM leases WHERE property_id=?', pid), 0);
+  assert.equal(val<number>('SELECT COUNT(*) FROM residents WHERE property_id=?', pid), 0);
+  assert.equal(val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, pid), 0, 'conversion entries reversed out');
+  assert.equal(
+    val<number>('SELECT COUNT(*) FROM users WHERE org_id=? AND import_batch_id=?', orgId, batch.id), 0,
+    'portal logins the import minted are gone too',
+  );
+
+  // …and the other upload's property is untouched, books included
+  assert.ok(q1('SELECT id FROM properties WHERE id=?', keeperPid), 'the keeper property survives');
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', keeperPid), 1);
+  assert.ok(
+    (val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, keeperPid) || 0) > 0,
+    "the keeper import's books are still posted",
+  );
+  assert.ok(trialBalance(sysCtx(orgId, AS_OF), { basis: 'accrual' }).length > 0, 'the org still has books');
+  assert.equal(removeAudit(batch.id)!.changes!.includes('1 property'), true, 'audit records what came back out');
+});
+
+test('a payment recorded against an imported lease blocks the removal', async () => {
+  const batch = mkRentRoll({ filename: 'paid.xlsx', new_property_name: 'Paid Court' }, [
+    ['301', 'Pat Payer', 'pat@imprm.test', '1500', '1500', '200.00', '2026-01-01', '2026-12-31'],
+  ]);
+  applyRentRoll(sysCtx(orgId, AS_OF), batch);
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Paid Court')!.id;
+  const lease = q1<{ id: string }>('SELECT id FROM leases WHERE property_id=?', pid)!;
+  insert('payments', {
+    id: id('pay'), org_id: orgId, property_id: pid, lease_id: lease.id, payer_resident_id: null,
+    method: 'ach', amount_cents: 20000, status: 'settled', received_date: AS_OF,
+    reference: 'test', memo: null, created_by: 'test', created_at: nowIso(),
+  });
+
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@imprm.test');
+    const blocked = await post(base, `/setup/import/b/${batch.id}/remove`, { confirm_name: 'paid.xlsx' }, cookie);
+    assert.equal(blocked.status, 303);
+    assert.match(blocked.location || '', /\/remove$/, 'sent back to the confirm screen with the reason');
+    assert.equal(exists(batch.id), true, 'the upload survives');
+    assert.ok(q1('SELECT id FROM properties WHERE id=?', pid), 'and so does everything it imported');
+  } finally {
+    close();
+  }
 });
 
 test('removing a lease-PDF upload deletes the stored PDFs — rows and bytes', async () => {
@@ -209,4 +256,83 @@ test('the hub lists a Remove action per upload, and another org cannot reach one
     close();
   }
   run('DELETE FROM import_batches WHERE id=?', theirs.id);
+});
+
+test('removing a directory upload un-merges the contact info it filled in — and only that', async () => {
+  // rent roll first: a primary with no email (the Yardi reality)
+  const rr = mkRentRoll({ filename: 'dir-rr.xlsx', new_property_name: 'Merge Court' }, [
+    ['701', 'Angel Beltran', '', '1500', '1500', '0', '2026-01-01', '2026-12-31'],
+  ]);
+  applyRentRoll(sysCtx(orgId, AS_OF), rr);
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Merge Court')!.id;
+
+  const dirHeaders = ['Unit', 'Name', 'Email', 'Phone', 'Role'];
+  const dir = mkBatch({
+    kind: 'residents', filename: 'directory.csv', property_id: pid,
+    headers: JSON.stringify(dirHeaders), mapping: JSON.stringify(autoMap(dirHeaders, 'residents')),
+    rows: JSON.stringify([
+      ['701', 'Beltran, Angel', 'angel@imprm.test', '(202) 555-0101', ''],
+      ['701', 'Riley Beltran', '', '', 'occupant'],
+    ]),
+  });
+  applyResidents(sysCtx(orgId, AS_OF), dir);
+
+  const angelId = q1<{ id: string }>('SELECT id FROM residents WHERE org_id=? AND first_name=?', orgId, 'Angel')!.id;
+  const merged = q1<{ email: string | null; phone: string | null; user_id: string | null }>('SELECT email, phone, user_id FROM residents WHERE id=?', angelId)!;
+  assert.equal(merged.email, 'angel@imprm.test', 'the directory filled the blank email');
+  assert.ok(merged.user_id, 'and provisioned a portal login off it');
+  assert.equal(val<number>('SELECT COUNT(*) FROM residents WHERE property_id=?', pid), 2, 'Angel merged, Riley added');
+
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@imprm.test');
+    const confirm = await get(base, `/setup/import/b/${dir.id}/remove`, cookie);
+    assert.match(confirm.text, /1 restored contact record/, 'the confirm screen counts the un-merge');
+    assert.match(confirm.text, /1 resident record/, 'and the person it added');
+    const ok = await post(base, `/setup/import/b/${dir.id}/remove`, { confirm_name: 'directory.csv' }, cookie);
+    assert.equal(ok.status, 303);
+  } finally {
+    close();
+  }
+
+  // the merged fields are back to blank, and the login it minted is gone
+  const after = q1<{ email: string | null; phone: string | null; user_id: string | null }>('SELECT email, phone, user_id FROM residents WHERE id=?', angelId)!;
+  assert.equal(after.email, null, 'the imported email is un-merged');
+  assert.equal(after.phone, null, 'and so is the phone');
+  assert.equal(after.user_id, null, 'the unused portal login it created is gone');
+  // but Angel herself — created by the RENT ROLL, not this upload — remains
+  assert.ok(q1('SELECT id FROM residents WHERE id=?', angelId), 'the person stays; only what this upload wrote is undone');
+  assert.equal(val<number>('SELECT COUNT(*) FROM residents WHERE property_id=?', pid), 1, 'the occupant this upload added is gone');
+  assert.ok(q1('SELECT id FROM properties WHERE id=?', pid), 'the rent roll’s property is untouched');
+});
+
+test('an edited contact value is left alone — un-merge only reverts what is still the import’s', async () => {
+  const rr = mkRentRoll({ filename: 'edit-rr.xlsx', new_property_name: 'Edited Court' }, [
+    ['801', 'Casey Edit', '', '1500', '1500', '0', '2026-01-01', '2026-12-31'],
+  ]);
+  applyRentRoll(sysCtx(orgId, AS_OF), rr);
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Edited Court')!.id;
+  const dirHeaders = ['Unit', 'Name', 'Email', 'Phone', 'Role'];
+  const dir = mkBatch({
+    kind: 'residents', filename: 'edited-dir.csv', property_id: pid,
+    headers: JSON.stringify(dirHeaders), mapping: JSON.stringify(autoMap(dirHeaders, 'residents')),
+    rows: JSON.stringify([['801', 'Edit, Casey', 'stale@imprm.test', '', '']]),
+  });
+  applyResidents(sysCtx(orgId, AS_OF), dir);
+  const caseyId = q1<{ id: string }>('SELECT id FROM residents WHERE org_id=? AND first_name=?', orgId, 'Casey')!.id;
+
+  // staff correct the address by hand after the import
+  run('UPDATE residents SET email=? WHERE id=?', 'casey.corrected@imprm.test', caseyId);
+
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@imprm.test');
+    await post(base, `/setup/import/b/${dir.id}/remove`, { confirm_name: 'edited-dir.csv' }, cookie);
+  } finally {
+    close();
+  }
+  assert.equal(
+    q1<{ email: string }>('SELECT email FROM residents WHERE id=?', caseyId)!.email, 'casey.corrected@imprm.test',
+    'the hand-corrected address is the operator’s now — removal leaves it alone',
+  );
 });

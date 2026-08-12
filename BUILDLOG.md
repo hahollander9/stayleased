@@ -351,3 +351,48 @@ portfolio survived it.
 
 **Next:** unchanged — live-org recovery (this is the tool for cleaning up the corrupted Station U&O
 uploads once the property is gone), then the Yardi root-cause replay when the files arrive.
+
+## 2026-08-12 — Removing an upload takes the import back out with it (supersedes the morning's split)
+
+**Built (Henry: "when a file is removed I think it should update the data live to remove it and not
+keep it in there, cuz there are already gates you have to jump through to delete it"):** the removal
+shipped earlier today deleted the document and deliberately left what it imported — two halves the
+operator had to delete separately. Henry overruled it, correctly: the typed-name confirm IS the gate.
+
+The blocker was that nothing recorded which rows came from which upload. So: **`import_batch_id` on
+properties, floorplans, units, leases, lease_charges, residents, household_members, charges,
+journal_entries, vendors and users** (additive migrations in `db.ts`), stamped at every insert across
+all five apply paths — rent roll, vendors, resident directory, opening balances, lease PDFs. Charges
+and their journal entries are stamped through `stampCharge` (createCharge posts with
+`sourceKind='charge'`); the deposit conversion entries already posted with `sourceId = batch.id`;
+portal logins go through a new `portalAccessFor` so only a login the import actually MINTED is
+stamped (a pre-existing account merely gets linked, and is never claimed).
+
+`import_reverse.ts` then takes an import back three ways, deliberately reusing what exists instead of
+duplicating it: **(1)** properties the import created are handed to `deleteProperty` — the ~80-table
+books-safe cascade with its own payments/manual-JE refusal; **(2)** rows added into properties that
+already existed are deleted by stamp in dependency order, narrow by design, with `foreign_keys=ON` as
+the backstop that turns "something downstream references this" into a refusal instead of an orphan;
+**(3)** contact merges have no row to delete — the directory lane fills BLANK fields on existing
+people — so the undo blanks them back, and only where the value is still the one the import wrote.
+A payment against an imported lease refuses the whole removal.
+
+The confirm screen now counts the footprint live ("1 property · 2 units · 2 leases · 1 restored
+contact record") and leads with the real consequence. An import applied before the stamp existed has
+no footprint, and the screen says exactly that rather than implying an undo it can't perform.
+
+**Decisions:** #36 (supersedes the corollary in #35 — read both).
+
+**Verified:** tsc strict clean · unit suite · e2e setup + clientready + workingmodel + goldenpath +
+smoke. 7 tests in `tests/import_remove.test.ts`, 4 of them new or rewritten this build: an applied
+rent roll comes back out whole (property, units, leases, residents, conversion JEs, minted portal
+logins) while a SECOND import's property and books sit untouched beside it · a recorded payment
+blocks the removal and leaves everything in place · a directory upload un-merges the email and phone
+it filled and drops the unused login it minted, while the person themselves — created by the rent
+roll, not that upload — stays · a hand-corrected email survives the un-merge. The clientready e2e
+gained walk 6, which had to move to the END of the file: it now removes the rent-roll upload and
+asserts the property, leases and books are gone, so it can no longer run before the walks that need
+that org standing. It also asserts the vendors upload is untouched — the stamp scopes correctly.
+
+**Next:** unchanged — live-org recovery (this now does it in one action: remove the corrupted Station
+U&O uploads and the property goes with them, no separate delete), then the Yardi root-cause replay.

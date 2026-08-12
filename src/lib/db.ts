@@ -54,6 +54,21 @@ export function db(): DatabaseSync {
     "ALTER TABLE properties ADD COLUMN lat REAL", // portfolio map location
     "ALTER TABLE properties ADD COLUMN lng REAL",
     "ALTER TABLE ai_actions ADD COLUMN rationale TEXT", // accountant/ops feedback: the why behind every AI decision, everywhere it appears
+    // Import provenance: which upload created this row. Removing an upload in
+    // the Migration Center takes back exactly the rows carrying its id, so an
+    // import is undoable without guessing. NULL = not created by an import
+    // (hand-entered, seeded, or imported before provenance was tracked).
+    "ALTER TABLE properties ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE floorplans ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE units ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE leases ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE lease_charges ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE residents ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE household_members ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE charges ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE journal_entries ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE vendors ADD COLUMN import_batch_id TEXT",
+    "ALTER TABLE users ADD COLUMN import_batch_id TEXT",
   ];
   for (const m of MIGRATIONS) {
     try {
