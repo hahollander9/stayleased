@@ -95,23 +95,6 @@ test('client walk 1: signup → rent-roll upload → applied with portal invites
   assert.match(record, /Applied/, 'read-only record renders for an applied batch');
   assert.match(record, /Cedar Yard|3 leases/, 'record shows what the import did');
   assert.doesNotMatch(record, /Apply \d+ rows?/, 'no apply button on an applied batch');
-
-  // …and the upload can be removed once it has served its purpose. An applied
-  // upload takes the typed-name confirm; what it imported stays, which walk 2
-  // then proves independently against the dashboard, books and delinquency.
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('a:has-text("Remove this upload")')]);
-  const confirm = await body(page);
-  assert.match(confirm, /What it imported stays/, 'confirm screen says the portfolio survives');
-  await page.fill('input[name=confirm_name]', 'wrong-name.xlsx');
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Remove this upload permanently")')]);
-  assert.match(await body(page), /does not match/, 'a mismatched name removes nothing');
-  await page.fill('input[name=confirm_name]', 'clientready-rentroll.xlsx');
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Remove this upload permanently")')]);
-  const hubAfter = await body(page);
-  assert.match(hubAfter, /Everything it imported stays in your portfolio/, 'the flash says what survived');
-  // it was the org's only upload, so the whole history section goes with it.
-  // (The flash names the file, so asserting on the filename would match itself.)
-  assert.doesNotMatch(hubAfter, /Import history/, 'the upload is gone from Import history');
   await page.close();
 });
 
@@ -214,5 +197,66 @@ test('client walk 5: every screen renders for a fresh live org (empty-state swee
     else if (/Something went wrong|Page not found|Access denied/.test(text)) failures.push(`${u} → error page`);
   }
   assert.deepEqual(failures, [], `screens failing for a fresh live org:\n${failures.join('\n')}`);
+  await page.close();
+});
+
+test('client walk 6: removing the rent-roll upload takes the whole import back out', async () => {
+  const page = await newPage(browser);
+  await login(page, base, ADMIN, PASS);
+
+  // the property and its leases exist right up until the upload is removed
+  await page.goto(`${base}/properties`, { waitUntil: 'networkidle' });
+  // NB: "Cedar Yard" is also the org name in the chrome on every page, so the
+  // list's own empty state is the only unambiguous signal here
+  assert.doesNotMatch(await body(page), /No properties yet/, 'imported property is there to begin with');
+
+  // scope to the rent-roll row: the vendors upload from walk 3 is newer and
+  // sits above it in the history, and must survive this untouched
+  const removeRentRoll = async (): Promise<void> => {
+    await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
+    const link = page.locator('tr', { hasText: 'clientready-rentroll.xlsx' }).locator('a[href$="/remove"]');
+    await Promise.all([page.waitForLoadState('networkidle'), link.click()]);
+  };
+  await removeRentRoll();
+  const confirm = await body(page);
+  assert.match(confirm, /What it imported comes out with it/, 'confirm screen leads with the real consequence');
+  assert.match(confirm, /1 property/, 'footprint counts the property the upload created');
+  assert.match(confirm, /3 leases/, 'footprint counts the leases');
+
+  // the typed-name confirm still guards it
+  await page.fill('input[name=confirm_name]', 'wrong-name.xlsx');
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Remove this upload permanently")')]);
+  assert.match(await body(page), /does not match/, 'a mismatched name removes nothing');
+  await page.goto(`${base}/properties`, { waitUntil: 'networkidle' });
+  assert.match(await body(page), /Cedar Yard/, 'and really nothing — the property is still there');
+
+  await removeRentRoll();
+  await page.fill('input[name=confirm_name]', 'clientready-rentroll.xlsx');
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Remove this upload permanently")')]);
+  const hubAfter = await body(page);
+  assert.match(hubAfter, /Also removed .*1 property/, 'the flash reports what came back out');
+  // row-scoped: the flash names the file it just removed, so a body-text check
+  // would match itself — and the vendors upload keeps the history section alive
+  assert.equal(
+    await page.locator('tr', { hasText: 'clientready-rentroll.xlsx' }).count(), 0,
+    'the upload is gone from the history',
+  );
+  assert.equal(
+    await page.locator('tr', { hasText: 'clientready-vendors.csv' }).count(), 1,
+    "the other upload's row is still listed",
+  );
+
+  // the import is genuinely out of the system, not just off the hub
+  await page.goto(`${base}/properties`, { waitUntil: 'networkidle' });
+  assert.match(await body(page), /No properties yet/, 'the imported property is gone');
+  await page.goto(`${base}/leases`, { waitUntil: 'networkidle' });
+  const leases = await body(page);
+  assert.doesNotMatch(leases, /Dana|Lee/, 'the imported leases are gone');
+  await page.goto(`${base}/statements`, { waitUntil: 'networkidle' });
+  assert.match(await body(page), /Balanced ✓/, 'and the books still balance with the conversion entries removed');
+
+  // a different upload's records are none of this removal's business
+  await page.goto(`${base}/vendors`, { waitUntil: 'networkidle' });
+  assert.match(await body(page), /Rooter Bros/, 'the vendors upload is untouched');
   await page.close();
 });

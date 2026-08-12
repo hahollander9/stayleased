@@ -349,6 +349,10 @@ export interface ApplySummary {
   portalInvites?: number;
   /** existing residents whose email/phone were filled in by a directory import */
   contactUpdates?: number;
+  /** exactly what each merge wrote onto an existing resident, so removing the
+   * upload can put those fields back — but only where the value is still the
+   * one the import wrote (anything edited since belongs to the operator now) */
+  merges?: { residentId: string; email?: string; phone?: string }[];
   skipped: number;
   /** what the applied file added up to (rent rolls) — kept on the record so
    * the batch page can show it without re-validating post-apply */
@@ -358,6 +362,24 @@ export interface ApplySummary {
 /** "Beltran, Angel" and "Angel Beltran" are the same person. */
 function nameKey(s: string): string {
   return splitName(String(s || '').trim()).display.toLowerCase().replace(/\s+/g, ' ');
+}
+
+/** Stamp a charge and the journal entry it posted with the upload that created
+ * them. createCharge posts its entry with sourceKind='charge' and the charge id,
+ * which is how the entry is found here. Removing the upload takes back both. */
+function stampCharge(batchId: string, chargeId: string): void {
+  run('UPDATE charges SET import_batch_id=? WHERE id=?', batchId, chargeId);
+  run(`UPDATE journal_entries SET import_batch_id=? WHERE source_kind='charge' AND source_id=?`, batchId, chargeId);
+}
+
+/** Provision portal access and, when a login was actually minted, stamp it with
+ * the upload — so removal can take back a login the import created (and only
+ * one the import created; a pre-existing account merely gets linked). */
+export function portalAccessFor(ctx: Ctx, batchId: string, residentId: string): boolean {
+  const access = ensurePortalAccess(ctx, residentId);
+  if (!access.invited) return false;
+  if (access.userId) run('UPDATE users SET import_batch_id=? WHERE id=?', batchId, access.userId);
+  return true;
 }
 
 export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
@@ -375,7 +397,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
     const mkProperty = (name: string): string => {
       const pid = id('prp');
       insert('properties', {
-        id: pid, org_id: ctx.orgId, name, slug: uniquePropertySlug(name), type: 'multifamily',
+        id: pid, org_id: ctx.orgId, name, slug: uniquePropertySlug(name), type: 'multifamily', import_batch_id: batch.id,
         address1: '(address pending)', city: '—', state: '--', zip: '00000', timezone: 'America/Denver',
         phone: null, email: null, year_built: null, fiscal_year_start_month: 1, created_at: nowIso(),
       });
@@ -405,7 +427,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
       if (!fid) {
         fid = id('fpl');
         insert('floorplans', {
-          id: fid, org_id: ctx.orgId, property_id: pid, name: plan.floorplanName,
+          id: fid, org_id: ctx.orgId, property_id: pid, name: plan.floorplanName, import_batch_id: batch.id,
           beds: plan.beds, baths: plan.baths, sqft: plan.sqft,
           market_rent_cents: plan.marketRentCents || plan.rentCents || 100000, created_at: nowIso(),
         });
@@ -426,7 +448,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
       if (!unitId) {
         unitId = id('unt');
         insert('units', {
-          id: unitId, org_id: ctx.orgId, property_id: pid, building_id: null, floorplan_id: fid,
+          id: unitId, org_id: ctx.orgId, property_id: pid, building_id: null, floorplan_id: fid, import_batch_id: batch.id,
           unit_number: plan.unit, floor: 1, sqft: plan.sqft, status: plan.occupied ? 'occupied' : plan.unitStatus,
           market_rent_cents: plan.marketRentCents || plan.rentCents || 100000, amenities: '[]', notes: null, created_at: nowIso(),
         });
@@ -438,7 +460,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
         const householdName = plan.tenants.map((t) => t.display).join(' & ');
         const leaseId = id('lse');
         insert('leases', {
-          id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unitId,
+          id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unitId, import_batch_id: batch.id,
           household_name: householdName, status: plan.mtm ? 'month_to_month' : plan.onNotice ? 'notice' : 'active',
           start_date: plan.leaseStart, end_date: plan.leaseEnd, move_in_date: plan.moveIn,
           move_out_date: plan.moveOut, notice_date: null, mtm_since: plan.mtm ? (plan.leaseEnd < asOf ? plan.leaseEnd : asOf) : null,
@@ -448,7 +470,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           billing_start_date: billingStart, created_at: nowIso(),
         });
         insert('lease_charges', {
-          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent',
+          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent', import_batch_id: batch.id,
           amount_cents: plan.rentCents, gl_account_code: null, rentable_item_id: null,
           start_date: billingStart, end_date: null, created_at: nowIso(),
         });
@@ -456,7 +478,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           // parking/pet/storage lines folded in from the source file — billed
           // monthly alongside rent as their own charge line, never merged into it
           insert('lease_charges', {
-            id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'other', label: 'Other recurring (imported)',
+            id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'other', label: 'Other recurring (imported)', import_batch_id: batch.id,
             amount_cents: plan.extraMonthlyCents, gl_account_code: null, rentable_item_id: null,
             start_date: billingStart, end_date: null, created_at: nowIso(),
           });
@@ -466,30 +488,30 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
         plan.tenants.forEach((t, ti) => {
           const rid = id('res');
           insert('residents', {
-            id: rid, org_id: ctx.orgId, property_id: pid, user_id: null,
+            id: rid, org_id: ctx.orgId, property_id: pid, user_id: null, import_batch_id: batch.id,
             first_name: t.first || t.display, last_name: t.last, email: ti === 0 ? plan.email : null,
             phone: ti === 0 ? plan.phone : null, kind: 'adult', employer: null,
             monthly_income_cents: null, ssn_last4: null, created_at: nowIso(),
           });
           insert('household_members', {
-            id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid,
+            id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid, import_batch_id: batch.id,
             role: ti === 0 ? 'primary' : 'co', created_at: nowIso(),
           });
           summary.residents++;
           // imported residents are residents: portal login + invite, day one
-          if (ti === 0 && plan.email && ensurePortalAccess(ctx, rid).invited) {
+          if (ti === 0 && plan.email && portalAccessFor(ctx, batch.id, rid)) {
             summary.portalInvites = (summary.portalInvites || 0) + 1;
           }
         });
         summary.leases++;
 
         if (plan.balanceCents !== 0) {
-          createCharge(ctx, {
+          stampCharge(batch.id, createCharge(ctx, {
             leaseId, kind: 'opening_balance',
             label: plan.balanceCents > 0 ? 'Opening balance (migrated)' : 'Opening credit (migrated)',
             amountCents: plan.balanceCents, date: asOf, dueDate: asOf, source: 'conversion',
             memo: `Balance carried in from prior system — ${householdName}`,
-          });
+          }));
           summary.balancesCents += plan.balanceCents;
         }
         if (plan.depositCents > 0) {
@@ -513,6 +535,8 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
 
     ensureBankAccounts(ctx.orgId); // every property gets an operating account row
 
+    // deposit conversion entries post with sourceId = this batch, on both bases
+    run(`UPDATE journal_entries SET import_batch_id=? WHERE org_id=? AND source_kind='conversion' AND source_id=?`, batch.id, ctx.orgId, batch.id);
     summary.propertyIds = [...new Set(propIds.values())];
     run('UPDATE import_batches SET status=?, applied_at=?, summary=? WHERE id=?', 'applied', nowIso(), js(summary), batch.id);
     audit(ctx, 'import_batch', batch.id, 'apply', null, summary as unknown as Record<string, unknown>);
@@ -657,11 +681,20 @@ export function applyResidents(ctx: Ctx, batch: BatchRow, opts: { confirmDuplica
       if (merge?.mergeResidentId) {
         const newEmail = (row.rec.email || '').trim();
         const newPhone = (row.rec.phone || '').trim();
-        if (newEmail) run(`UPDATE residents SET email=? WHERE id=? AND (email IS NULL OR email='')`, newEmail, merge.mergeResidentId);
-        if (newPhone) run(`UPDATE residents SET phone=? WHERE id=? AND (phone IS NULL OR phone='')`, newPhone, merge.mergeResidentId);
+        const wrote: { residentId: string; email?: string; phone?: string } = { residentId: merge.mergeResidentId };
+        if (newEmail) {
+          const { changes } = run(`UPDATE residents SET email=? WHERE id=? AND (email IS NULL OR email='')`, newEmail, merge.mergeResidentId);
+          if (changes) wrote.email = newEmail;
+        }
+        if (newPhone) {
+          const { changes } = run(`UPDATE residents SET phone=? WHERE id=? AND (phone IS NULL OR phone='')`, newPhone, merge.mergeResidentId);
+          if (changes) wrote.phone = newPhone;
+        }
+        // only fields this import actually filled are reversible later
+        if (wrote.email || wrote.phone) (summary.merges ||= []).push(wrote);
         summary.contactUpdates = (summary.contactUpdates || 0) + 1;
         audit(ctx, 'resident', merge.mergeResidentId, 'import_contact_merge', null, { batch: batch.id, email: !!newEmail, phone: !!newPhone });
-        if (merge.addsEmail && merge.memberRole !== 'occupant' && ensurePortalAccess(ctx, merge.mergeResidentId).invited) {
+        if (merge.addsEmail && merge.memberRole !== 'occupant' && portalAccessFor(ctx, batch.id, merge.mergeResidentId)) {
           summary.portalInvites = (summary.portalInvites || 0) + 1;
         }
         continue;
@@ -672,16 +705,16 @@ export function applyResidents(ctx: Ctx, batch: BatchRow, opts: { confirmDuplica
       const role = /guarantor/i.test(row.rec.role || '') ? 'guarantor' : /occupant|minor|child/i.test(row.rec.role || '') ? 'occupant' : 'co';
       const rid = id('res');
       insert('residents', {
-        id: rid, org_id: ctx.orgId, property_id: batch.property_id, user_id: null,
+        id: rid, org_id: ctx.orgId, property_id: batch.property_id, user_id: null, import_batch_id: batch.id,
         first_name: nm.first || nm.display, last_name: nm.last, email: row.rec.email || null, phone: row.rec.phone || null,
         kind: role === 'guarantor' ? 'guarantor' : role === 'occupant' ? 'occupant' : 'adult',
         employer: null, monthly_income_cents: null, ssn_last4: null, created_at: nowIso(),
       });
       insert('household_members', {
-        id: id('hm'), org_id: ctx.orgId, lease_id: lease.id, resident_id: rid, role, created_at: nowIso(),
+        id: id('hm'), org_id: ctx.orgId, lease_id: lease.id, resident_id: rid, role, import_batch_id: batch.id, created_at: nowIso(),
       });
       summary.residents++;
-      if (row.rec.email && role !== 'occupant' && ensurePortalAccess(ctx, rid).invited) {
+      if (row.rec.email && role !== 'occupant' && portalAccessFor(ctx, batch.id, rid)) {
         summary.portalInvites = (summary.portalInvites || 0) + 1;
       }
     }
@@ -742,12 +775,12 @@ export function applyBalances(ctx: Ctx, batch: BatchRow): ApplySummary {
       const unit = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', batch.property_id, row.rec.unit!.trim())!;
       const lease = q1<{ id: string; household_name: string }>(`SELECT id, household_name FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') ORDER BY created_at DESC LIMIT 1`, unit.id)!;
       const cents = moneyToCents(row.rec.balance)!;
-      createCharge(ctx, {
+      stampCharge(batch.id, createCharge(ctx, {
         leaseId: lease.id, kind: 'opening_balance',
         label: cents > 0 ? 'Opening balance (migrated)' : 'Opening credit (migrated)',
         amountCents: cents, date: asOf, dueDate: asOf, source: 'conversion',
         memo: `Balance carried in from prior system — ${lease.household_name}`,
-      });
+      }));
       summary.balancesCents += cents;
     }
     run('UPDATE import_batches SET status=?, applied_at=?, summary=? WHERE id=?', 'applied', nowIso(), js(summary), batch.id);

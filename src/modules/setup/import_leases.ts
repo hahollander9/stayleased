@@ -14,8 +14,8 @@ import { createCharge } from '../m8_receivables/service.ts';
 import { postBothBases } from '../m9_accounting/service.ts';
 import { shell, card, field, input, select, statusBadge } from '../../ui/ui.ts';
 import { moneyToCents, toIsoDate, splitName } from './mapping.ts';
-import { ensureOpeningEquityAccount, type BatchRow } from './import_apply.ts';
-import { ensurePortalAccess } from '../people/portal.ts';
+import { ensureOpeningEquityAccount, portalAccessFor, type BatchRow } from './import_apply.ts';
+
 
 /** Lease-PDF onboarding: drop in the signed leases; the system reads them.
  * Digital PDFs are text-extracted locally; with the live AI configured the
@@ -305,12 +305,12 @@ export function leasePdfRoutes(r: Router): void {
         if (!unit) {
           const fid = q1<{ id: string }>('SELECT id FROM floorplans WHERE property_id=? AND LOWER(name)=?', pid, 'imported')?.id || ((): string => {
             const nid = id('fpl');
-            insert('floorplans', { id: nid, org_id: ctx.orgId, property_id: pid, name: 'Imported', beds: 1, baths: 1, sqft: 750, market_rent_cents: rentCents || 100000, created_at: nowIso() });
+            insert('floorplans', { id: nid, org_id: ctx.orgId, property_id: pid, name: 'Imported', beds: 1, baths: 1, sqft: 750, market_rent_cents: rentCents || 100000, import_batch_id: batch.id, created_at: nowIso() });
             return nid;
           })();
           const uid = id('unt');
           insert('units', {
-            id: uid, org_id: ctx.orgId, property_id: pid, building_id: null, floorplan_id: fid,
+            id: uid, org_id: ctx.orgId, property_id: pid, building_id: null, floorplan_id: fid, import_batch_id: batch.id,
             unit_number: unitNo, floor: 1, sqft: 750, status: 'occupied',
             market_rent_cents: rentCents || 100000, amenities: '[]', notes: null, created_at: nowIso(),
           });
@@ -322,7 +322,7 @@ export function leasePdfRoutes(r: Router): void {
         const householdName = tenants.join(' & ');
         const leaseId = id('lse');
         insert('leases', {
-          id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unit.id,
+          id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unit.id, import_batch_id: batch.id,
           household_name: householdName, status: mtm ? 'month_to_month' : 'active',
           start_date: start, end_date: end, move_in_date: start, move_out_date: null, notice_date: null,
           mtm_since: mtm ? end : null, rent_cents: rentCents, deposit_cents: depositCents,
@@ -331,7 +331,7 @@ export function leasePdfRoutes(r: Router): void {
           billing_start_date: billingStart, created_at: nowIso(),
         });
         insert('lease_charges', {
-          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent',
+          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent', import_batch_id: batch.id,
           amount_cents: rentCents, gl_account_code: null, rentable_item_id: null,
           start_date: billingStart, end_date: null, created_at: nowIso(),
         });
@@ -340,16 +340,16 @@ export function leasePdfRoutes(r: Router): void {
           const nm = splitName(t);
           const rid = id('res');
           insert('residents', {
-            id: rid, org_id: ctx.orgId, property_id: pid, user_id: null,
+            id: rid, org_id: ctx.orgId, property_id: pid, user_id: null, import_batch_id: batch.id,
             first_name: nm.first || nm.display, last_name: nm.last,
             email: ti === 0 ? primaryEmail || null : null, phone: ti === 0 ? d.fields.phone || null : null,
             kind: 'adult', employer: null, monthly_income_cents: null, ssn_last4: null, created_at: nowIso(),
           });
-          insert('household_members', { id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid, role: ti === 0 ? 'primary' : 'co', created_at: nowIso() });
+          insert('household_members', { id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid, role: ti === 0 ? 'primary' : 'co', import_batch_id: batch.id, created_at: nowIso() });
           residents++;
           // primary tenant from the lease PDF gets portal access + invite —
           // but only for a validated email (never an injected/malformed address)
-          if (ti === 0 && primaryEmail && ensurePortalAccess(ctx, rid).invited) portalInvites++;
+          if (ti === 0 && primaryEmail && portalAccessFor(ctx, batch.id, rid)) portalInvites++;
         });
         if (depositCents > 0) depositTotal += depositCents;
         leases++;

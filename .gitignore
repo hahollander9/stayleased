@@ -8,3 +8,4 @@ data/test*
 tmp/
 *.zip
 shots/
+data/clientready-*

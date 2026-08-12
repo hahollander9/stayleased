@@ -3,6 +3,7 @@ import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/htt
 import { requirePerm, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { q, q1, insert, run, tx, j, js } from '../../lib/db.ts';
 import { deleteFiles } from '../../lib/files.ts';
+import { reverseImport, importFootprint, footprintBits, totalFootprint, type ReverseCounts } from './import_reverse.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate } from '../../lib/dates.ts';
 import { audit } from '../../lib/audit.ts';
@@ -48,28 +49,38 @@ function batchLabel(batch: BatchRow): string {
   return batch.filename || '(pasted)';
 }
 
-/** Remove an upload for good. Two things go: the batch row — which holds the
- * whole grid the file carried, every name, email, phone and balance in it —
- * and, on the lease-PDF lane, the stored PDFs themselves. Nothing the import
- * WROTE is touched: properties, units, leases and residents an applied batch
- * created stay exactly where they are, because they are the portfolio now, not
- * the file. The audit event keeps the metadata (never the contents), so "what
- * was that upload?" is still answerable after the record is gone. */
-function removeBatch(ctx: Ctx, batch: BatchRow): { files: number; rows: number } {
+/** Remove an upload for good — the document AND what it put in the system.
+ *
+ * Three things go: everything the import wrote (see `reverseImport`; rows are
+ * found by the `import_batch_id` stamp, so exactly what this upload created
+ * comes out and nothing else), the batch row — which holds the whole grid the
+ * file carried, every name, email, phone and balance in it — and, on the
+ * lease-PDF lane, the stored PDFs themselves. All in one transaction: the
+ * upload comes out whole or not at all.
+ *
+ * The audit event keeps the metadata and the counts, never the contents, so
+ * "what was that upload and what did taking it back remove?" is still
+ * answerable after the record is gone. */
+function removeBatch(ctx: Ctx, batch: BatchRow, opts?: { force?: boolean }): { files: number; rows: number; undone: ReverseCounts | null } {
   const rows = j<string[][]>(batch.rows, []).length;
   const fileIds = batch.kind === 'lease_pdf'
     ? j<{ fileId?: string | null }[]>(batch.staged, []).map((d) => d.fileId).filter((f): f is string => !!f)
     : [];
   let files = 0;
+  let undone: ReverseCounts | null = null;
   tx(() => {
+    // staged and discarded uploads never wrote anything — there is nothing to
+    // take back, only the document to remove
+    if (batch.status === 'applied') undone = reverseImport(ctx, batch, opts);
     if (fileIds.length) files = deleteFiles(fileIds);
     run('DELETE FROM import_batches WHERE id=? AND org_id=?', batch.id, ctx.orgId);
   });
   audit(ctx, 'import_batch', batch.id, 'remove', null, {
     kind: batch.kind, filename: batch.filename, status: batch.status, rows, files,
     uploaded: (batch as { created_at?: string }).created_at || null,
+    ...(undone ? { undone: footprintBits(undone).join(' · ') || 'nothing traceable' } : {}),
   });
-  return { files, rows };
+  return { files, rows, undone };
 }
 
 function validate(ctx: Ctx, batch: BatchRow): Validation {
@@ -382,10 +393,17 @@ export function routes(r: Router): void {
     if (batch.status === 'applied' && String(rq.body.confirm_name || '').trim() !== label) {
       return redirect(`/setup/import/b/${batch.id}/remove`, 'The file name you typed does not match this upload — nothing was removed.', 'err');
     }
-    const { files } = removeBatch(ctx, batch);
-    const alsoFiles = files ? ` and ${files} stored PDF${files === 1 ? '' : 's'}` : '';
-    const kept = batch.status === 'applied' ? ' Everything it imported stays in your portfolio.' : '';
-    return redirect('/setup/import', `Removed ${label}${alsoFiles} from the Migration Center.${kept}`);
+    let result;
+    try {
+      result = removeBatch(ctx, batch);
+    } catch (e) {
+      // the books-safe rails refuse rather than erase real history
+      return redirect(`/setup/import/b/${batch.id}/remove`, (e as Error).message, 'err');
+    }
+    const alsoFiles = result.files ? ` and ${result.files} stored PDF${result.files === 1 ? '' : 's'}` : '';
+    const bits = result.undone ? footprintBits(result.undone) : [];
+    const undone = bits.length ? ` Also removed ${bits.join(', ')}.` : '';
+    return redirect('/setup/import', `Removed ${label}${alsoFiles} from the Migration Center.${undone}`);
   });
 
   r.post('/setup/import/bank-balance', requirePerm('accounting:manage'), (rq) => {
@@ -609,9 +627,14 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
 
 // ---------- remove-upload confirm ----------
 
-function removePage(rq: Rq, batch: BatchRow & { created_at?: string }): ReturnType<typeof shell> {
+function removePage(rq: Rq, batch: BatchRow & { created_at?: string; summary?: string | null }): ReturnType<typeof shell> {
+  const ctx = rq.ctx as Ctx;
   const label = batchLabel(batch);
   const applied = batch.status === 'applied';
+  // what taking this import back would actually remove, counted live
+  const footprint = applied ? importFootprint(ctx, batch) : null;
+  const bits = footprint ? footprintBits(footprint) : [];
+  const traceable = !!footprint && totalFootprint(footprint) > 0;
   const isPdfLane = batch.kind === 'lease_pdf';
   const rows = j<string[][]>(batch.rows, []).length;
   const pdfs = isPdfLane ? j<{ fileId?: string | null }[]>(batch.staged, []).filter((d) => d.fileId).length : 0;
@@ -630,13 +653,21 @@ function removePage(rq: Rq, batch: BatchRow & { created_at?: string }): ReturnTy
         <p style="margin-top:0"><b>${label}</b> and everything the Migration Center is holding from it —
         ${held}${isPdfLane ? '' : ', the column mapping, and the reader’s notes'} — are deleted permanently.
         This cannot be undone.</p>
-        ${applied
-          ? html`<p style="margin:0"><b>What it imported stays.</b> The properties, units, leases and resident records
-            this upload created are your portfolio now, not part of the file — removing the upload leaves every one of
-            them in place. What you lose is the record of the upload itself: what was in the file, how its columns were
-            mapped, and what the apply produced.</p>`
-          : html`<p style="margin:0">Nothing was ever written from this upload, so removing it changes nothing else in
-            your portfolio.</p>`}
+        ${!applied
+          ? html`<p style="margin:0">Nothing was ever written from this upload, so removing it changes nothing else in
+            your portfolio.</p>`
+          : traceable
+          ? html`<p style="margin:0"><b>What it imported comes out with it.</b> Removing this upload also removes
+            ${hjoin(bits.map((x) => html`<b>${x}</b>`), ', ')} — everything this file put into your portfolio, and
+            nothing else. Records that came in from another upload, or that were added by hand afterwards, are
+            untouched.</p>
+            <p class="small muted" style="margin:8px 0 0">If payments have been recorded against leases from this
+            upload, or journal entries were posted to its properties by hand, the removal is declined to protect your
+            financial history — void or reverse those first.</p>`
+          : html`<p style="margin:0"><b>This upload's records cannot be traced.</b> It was applied before removals
+            could record which rows came from which file, so removing it now takes away the upload record only —
+            whatever it created stays in your portfolio. To clear those out, remove the property itself from
+            <a href="/properties">Properties</a>, or re-import and remove that upload instead.</p>`}
         <form method="post" action="/setup/import/b/${batch.id}/remove" style="margin-top:14px">
           ${when(applied, () => field(html`To confirm, type the file name exactly — <b>${label}</b>`, input('confirm_name', { required: true, placeholder: label })))}
           <div class="btn-row">
