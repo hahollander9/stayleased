@@ -311,3 +311,43 @@
 **Verified:** tsc strict clean · unit 279/279 full suite (2 first-run reds were the documented pre-existing accounting flake, green on re-run) · e2e 36/36 across smoke, crm, ai, clientready, goldenpath, workingmodel · 21 new lead-heat tests (50 total in tests/scoring.test.ts) including the fair-housing invariance test and active/shadow behavior splits.
 
 **Next:** deploy both scorers together (single combined package supersedes delinqscore) → shadow-watch chips → flip modes per org when chips read true. Scorer #3 per the spec: asset + vendor (maintenance). Deferred deliberately: cold-lead cadence pausing, waitlist job on unit-flip, hot-lead demand telemetry into the pricing queue — each recorded in the spec's consumer graph.
+
+## 2026-08-12 — Migration Center: remove an upload (the document goes, the import stays)
+
+**Built (Henry: "need a way in the migration center to remove the documents"):** the hub listed every
+batch forever with no way to delete one — and a batch row is not a pointer to a document, it *is* the
+document: `import_batches.rows` holds the entire grid the file carried (every resident name, email,
+phone, deposit and balance), and the lease-PDF lane additionally stores the real PDFs via `putFile`.
+Nothing in the app could remove either. Now: **Remove** on every Import-history row and on the
+read-only record → a confirm screen (`GET/POST /setup/import/b/:id/remove`) that states exactly what
+goes and what stays, in the house pattern for destructive acts — a server-rendered interstitial, no
+script dialogs. Ceremony scales with consequence: **staged/discarded** uploads wrote nothing, so the
+screen itself is the confirmation; an **applied** upload takes the typed file name, the same confirm
+the property danger zone uses, and the screen promises in as many words that the properties, units,
+leases and residents it created stay. `removeBatch` deletes the batch row and, on the PDF lane, every
+stored file — in one tx — and audits `import_batch/remove` with metadata only (kind, filename, status,
+row + file counts), never contents. New `deleteFiles(ids)` in `lib/files.ts` is the first path in the
+codebase that deletes a stored file: blob AND row together, because a row without bytes is a dead
+download link and bytes without a row are unreachable data that still holds resident PII. (`rmSync`
+with `force:true` — the repo hand-declares `node:fs` and has no `unlinkSync`.)
+
+**Decisions:** #35 (amends #29 — read the entry before touching applied-batch behavior).
+
+**Doclog hazard, recorded:** #35 was claimed against the CURRENT tail (#34) per the parallel-session
+rule. Note that the two builds shipped on 2026-08-12 (`7ed567c` SEO/UX pass, `ff0a7cb` import
+integrity + headline) landed their CODE via web upload but **not** their BUILDLOG/DECISIONS entries —
+the import-integrity plan expected to claim #38+, so ~#35–38 of judgment is unrecorded in this file
+and those numbers are now taken. When those entries are reconstructed they need fresh numbers, not
+their originals.
+
+**Verified:** tsc strict clean · unit 307/307 (4 new in `tests/import_remove.test.ts`: staged removal
+with no typed confirm + audit carries the file name and never the contents · applied removal refuses a
+mismatched name then succeeds on the exact one, with units/leases/residents/JE counts asserted
+unchanged afterwards · lease-PDF removal deletes both `files` rows and both `.bin` blobs · hub lists a
+Remove action and the route is org-scoped on GET and POST) · e2e setup + clientready + workingmodel +
+goldenpath + smoke. The clientready extension is deliberately arranged so walk 1 removes the applied
+rent-roll upload and walk 2 — dashboard, delinquency balance, balanced books, leases — then proves the
+portfolio survived it.
+
+**Next:** unchanged — live-org recovery (this is the tool for cleaning up the corrupted Station U&O
+uploads once the property is gone), then the Yardi root-cause replay when the files arrive.
