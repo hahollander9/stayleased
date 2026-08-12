@@ -34,20 +34,15 @@ jobs:
       - name: Typecheck
         run: npx tsc --noEmit
 
-      # tests/accounting.test.ts has a documented date-ordering flake that
-      # reddens roughly one full-suite run in three and passes on re-run
-      # (CLAUDE.md → Known flake). Retrying once is what a human is told to do
-      # before believing a red; a suite that cries wolf every third run gets
-      # ignored, which is worse than no CI. Two failures in a row is a real
-      # failure and fails the job. The retry is announced so a flake that
-      # becomes constant is visible rather than absorbed.
+      # No retry, deliberately. This step was first written to re-run once,
+      # because a documented "date-ordering flake" reddened about one run in
+      # three. CI's very first run failed it twice in a row, which is what
+      # showed it was not random at all: voidApPayment was matching the entries
+      # to reverse against a millisecond race, so a void could reverse nothing
+      # and reissue anyway. That is fixed (see CLAUDE.md), and a retry kept
+      # "just in case" is how a suite learns to hide the next one.
       - name: Unit suite
-        run: |
-          if sh scripts/test.sh; then
-            exit 0
-          fi
-          echo "::warning title=Unit suite retried::First run failed. Re-running once — see CLAUDE.md 'Known flake' (tests/accounting.test.ts date ordering). A second failure is real."
-          sh scripts/test.sh
+        run: sh scripts/test.sh
 
   e2e:
     name: end-to-end

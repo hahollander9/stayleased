@@ -269,3 +269,71 @@ test('statements: BS balances both bases; IS ties to T-12; cash flow ties to GL'
   // and the whole org's invariants stay green after everything this file did
   for (const inv of runInvariants(ctx)) assert.equal(inv.ok, true, inv.name + ': ' + inv.detail);
 });
+
+test('AP void reverses the payment even when the payment row timestamps after its own entries', () => {
+  // The regression this file spent months calling a "date-ordering flake".
+  // voidApPayment used to find the entries to reverse with
+  // `posted_at >= (SELECT created_at FROM ap_payments ...)`, comparing two
+  // nowIso() calls taken on either side of one insert. When the payment row's
+  // millisecond came out after its own journal entries', the query matched
+  // nothing: the void reversed NOTHING and the reissue still cut a new check,
+  // so the ledger showed the cash leaving twice. Here that losing race is
+  // forced rather than waited for.
+  const ctx = sysCtx(orgId);
+  const invId = createInvoice(ctx, {
+    vendorId, propertyId: propA, invoiceNumber: 'T-RACE-1', invoiceDate: '2026-07-07',
+    lines: [{ glAccount: '5030', description: 'grounds', amountCents: 50000 }],
+  });
+  approveInvoice(ctx, invId);
+  createPaymentRun(ctx, { runDate: '2026-07-11', method: 'check', invoiceIds: [invId] });
+  const pay = q1<any>('SELECT * FROM ap_payments WHERE invoice_id=?', invId);
+
+  // force the inversion: the payment row now claims to be newer than every
+  // journal entry it produced, which is exactly what the old query could not
+  // survive and what a fast machine produced at random
+  const latest = q1<any>(
+    `SELECT MAX(posted_at) AS t FROM journal_entries WHERE org_id=? AND source_kind='ap_payment' AND source_id=?`,
+    orgId, invId,
+  );
+  const after = new Date(Date.parse(latest.t) + 5).toISOString();
+  run('UPDATE ap_payments SET created_at=? WHERE id=?', after, pay.id);
+  assert.ok(after > latest.t, 'the payment row is now stamped after its own entries');
+
+  const cash0 = accountBalance(ctx, '1010', { propertyId: propA, basis: 'accrual' });
+  voidApPayment(ctx, pay.id, 'printer jammed', true);
+
+  assert.equal(
+    accountBalance(ctx, '1010', { propertyId: propA, basis: 'accrual' }), cash0,
+    'void + reissue is net zero to cash — the reversal must post regardless of timestamp ordering',
+  );
+  const voided = q1<any>('SELECT * FROM ap_payments WHERE id=?', pay.id);
+  assert.equal(voided.status, 'void');
+  assert.ok(voided.reissued_payment_id, 'and the replacement check still went out');
+});
+
+test('voiding a reissued payment reverses only the live generation of entries', () => {
+  // the case the timestamp comparison existed to handle: one invoice, several
+  // generations of payment entries, only the un-reversed one may be reversed
+  const ctx = sysCtx(orgId);
+  const invId = createInvoice(ctx, {
+    vendorId, propertyId: propA, invoiceNumber: 'T-RACE-2', invoiceDate: '2026-07-07',
+    lines: [{ glAccount: '5030', description: 'grounds', amountCents: 30000 }],
+  });
+  approveInvoice(ctx, invId);
+  createPaymentRun(ctx, { runDate: '2026-07-11', method: 'check', invoiceIds: [invId] });
+  const first = q1<any>('SELECT * FROM ap_payments WHERE invoice_id=?', invId);
+  const cash0 = accountBalance(ctx, '1010', { propertyId: propA, basis: 'accrual' });
+
+  voidApPayment(ctx, first.id, 'lost in the mail', true);
+  const second = q1<any>('SELECT reissued_payment_id FROM ap_payments WHERE id=?', first.id).reissued_payment_id;
+  assert.equal(accountBalance(ctx, '1010', { propertyId: propA, basis: 'accrual' }), cash0, 'first void nets to zero');
+
+  // void the replacement too: the first generation is already reversed and
+  // must not be reversed a second time, or cash would swing by the amount
+  voidApPayment(ctx, second, 'vendor closed the account', false);
+  assert.equal(
+    accountBalance(ctx, '1010', { propertyId: propA, basis: 'accrual' }), cash0 + 30000,
+    'the second void returns the cash exactly once',
+  );
+  assert.equal(q1<any>('SELECT status FROM vendor_invoices WHERE id=?', invId).status, 'approved', 'invoice is open again');
+});

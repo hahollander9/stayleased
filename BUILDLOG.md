@@ -876,3 +876,38 @@ the workflow will run it, before the workflow was pushed. Shipping CI that is bo
 taught everyone to ignore it in its first hour.
 
 **Decisions:** #50.
+
+## 2026-08-12 — CI's first run found the money bug that had been filed as a flake
+
+**What happened.** The CI restored an hour earlier ran for the first time and its unit job went red on
+exactly the two tests CLAUDE.md documented as a known date-ordering flake — and it failed them TWICE,
+because the step was written to re-run once before believing a red. Two consecutive failures on a
+machine that had never run this suite is what separated a real bug from randomness, so instead of
+widening the retry the failure got a root cause.
+
+**The bug.** `voidApPayment` picked the journal entries to reverse with
+`posted_at >= (SELECT created_at FROM ap_payments WHERE id=?)`. Payment entries carry the INVOICE as
+their source_id, so an invoice paid more than once has several generations of them and the timestamp
+was there to select the live one. But those are two `nowIso()` calls taken either side of a single
+insert: whether they land in the same millisecond is a race. Lose it and the query matches nothing —
+**the void reverses nothing, the reissue cuts a new check anyway, and the books show the cash leaving
+twice.** In the CI logs it read as a $500 cash discrepancy on the void test and the same $500 arriving
+as a surplus in the bank-feed test two tests later.
+
+**The fix** takes the clock out of the decision: the live generation is the one nothing has reversed
+yet. Exact, deterministic, and what the code always meant. (#51)
+
+**Verified by breaking it first.** Both regression tests — one forcing the inverted timestamp, one
+voiding a reissued payment to prove only the live generation is reversed — were run against the OLD
+query and confirmed red before being trusted. Today has produced enough tests that passed while
+proving nothing.
+
+**The retry is deleted, not kept.** The CI unit step shipped with a re-run-once whose entire
+justification was this flake. Keeping it now "just in case" is how a suite learns to hide the next
+real failure, so it is gone and CLAUDE.md's Known-flake section is replaced with a note saying a red
+suite is real.
+
+**Decisions:** #51.
+
+**Verified:** tsc strict clean · unit suite · full e2e (all 31 files) · the two new tests red against
+the old query, green against the new one.
