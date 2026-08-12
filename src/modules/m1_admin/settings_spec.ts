@@ -462,8 +462,18 @@ export function renderSetting(spec: SettingSpec, value: unknown): Raw {
   )}</div>`;
 }
 
+/** Control types the form always submits. Checkbox-backed types are excluded:
+ * an unchecked box sends nothing, so absence IS the value there. For every
+ * other type a missing field means a truncated or stale submission, and
+ * reading it as blank is how a text field gets cleared, or a follow-up cadence
+ * emptied, by a request that never mentioned it. */
+const ALWAYS_SUBMITTED = new Set<Ctl['t']>(['money', 'int', 'pct', 'num', 'select', 'time', 'date', 'text', 'ints']);
+
 function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: string): unknown {
   const raw = body[name];
+  if (raw === undefined && ALWAYS_SUBMITTED.has(ctl.t)) {
+    throw new Error(`${label}: the form did not include this field — reload the page and try again.`);
+  }
   const str = raw === undefined || raw === null ? '' : String(raw);
   switch (ctl.t) {
     case 'money': {
@@ -473,10 +483,15 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
       // every money setting here is a fee, a threshold or an allowance; a
       // negative one inverts the rule it configures rather than relaxing it
       if (cents < 0) throw new Error(`${label}: cannot be negative.`);
+      // a fee or threshold this large is a misplaced decimal, and it posts to
+      // the books as an integer-cents journal amount
+      if (cents > 100_000_000_00) throw new Error(`${label}: that is larger than any real amount — check the decimal point.`);
       return cents;
     }
     case 'int': {
-      const n = parseInt(str, 10);
+      // parseInt reads '0x10' as 0 and '12abc' as 12 — store only what was typed
+      if (!/^-?\d+$/.test(str.trim())) throw new Error(`${label}: enter a whole number.`);
+      const n = parseInt(str.trim(), 10);
       if (!Number.isInteger(n)) throw new Error(`${label}: enter a whole number.`);
       if (ctl.min !== undefined && n < ctl.min) throw new Error(`${label}: cannot be below ${ctl.min}.`);
       if (ctl.max !== undefined && n > ctl.max) throw new Error(`${label}: cannot be above ${ctl.max}.`);
@@ -493,6 +508,7 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
       if (!str.trim()) throw new Error(`${label}: enter a number.`);
       const n = Number(str);
       if (!Number.isFinite(n) || n < 0) throw new Error(`${label}: enter a positive number.`);
+      if (n > 1000) throw new Error(`${label}: that is far outside a sensible range.`);
       return n;
     }
     case 'bool':
@@ -500,12 +516,19 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
     case 'select':
       if (!ctl.options.some(([v]) => v === str)) throw new Error(`${label}: choose one of the listed options.`);
       return str;
-    case 'time':
-      if (!/^\d{2}:\d{2}$/.test(str)) throw new Error(`${label}: enter a time like 09:00.`);
+    case 'time': {
+      // m15's inQuietHours does parseInt(start.slice(0,2)) — '99:99' would make
+      // the quiet window never open rather than failing here
+      const t = /^(\d{2}):(\d{2})$/.exec(str);
+      if (!t || Number(t[1]) > 23 || Number(t[2]) > 59) throw new Error(`${label}: enter a time like 09:00.`);
       return str;
-    case 'date':
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(str)) throw new Error(`${label}: enter a date.`);
+    }
+    case 'date': {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(str) || Number.isNaN(Date.parse(`${str}T00:00:00Z`))) {
+        throw new Error(`${label}: enter a date.`);
+      }
       return str;
+    }
     case 'text':
       return str;
     case 'weekdays': {
@@ -515,9 +538,10 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
     }
     case 'ints': {
       const parts = str.split(',').map((p) => p.trim()).filter(Boolean);
-      const out = parts.map((p) => parseInt(p, 10));
-      if (out.some((n) => !Number.isInteger(n) || n < 0)) throw new Error(`${label}: enter whole numbers separated by commas.`);
-      return out;
+      // an empty cadence switches lead follow-up off without saying so
+      if (!parts.length) throw new Error(`${label}: enter at least one number — an empty list switches this off silently.`);
+      if (parts.some((p) => !/^\d+$/.test(p))) throw new Error(`${label}: enter whole numbers separated by commas.`);
+      return parts.map((p) => parseInt(p, 10));
     }
     case 'rank': {
       const seen = ctl.options.map(([v, l]) => ({ v, l, pos: parseInt(String(body[`${name}.${v}`] || ''), 10) }));

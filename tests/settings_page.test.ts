@@ -456,3 +456,95 @@ test('a deleted pay grade stays deleted — the render must not merge a default 
     close();
   }
 });
+
+test('a property-scoped admin can set their own property but never an organization default', async () => {
+  // The first scope fix guarded the property parameter and left the level that
+  // matters most wide open: an organization default reaches EVERY property,
+  // including ones outside the grant, so property='' is the real hole.
+  const otherProp = id('prp');
+  insert('properties', {
+    id: otherProp, org_id: orgId, name: 'Not Yours Court', slug: 'not-yours-court', type: 'multifamily',
+    address1: '2 Main', city: 'Denver', state: 'CO', zip: '80202', timezone: 'America/Denver',
+    phone: null, email: null, year_built: null, fiscal_year_start_month: 1, created_at: nowIso(),
+  });
+  const uid = id('usr');
+  insert('users', {
+    id: uid, org_id: orgId, email: 'scoped@setpage.test', name: 'Scoped Admin',
+    kind: 'staff', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+  });
+  insert('role_assignments', {
+    id: id('ra'), org_id: orgId, user_id: uid, role: 'ORG_ADMIN',
+    scope_type: 'property', property_ids: JSON.stringify([propId]), created_at: nowIso(),
+  });
+
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'scoped@setpage.test');
+    const orgBefore = val<number>('nsf_fee_cents');
+
+    // the org-defaults level is readable but not editable
+    const page = await get(base, '/admin/settings', cookie);
+    assert.equal(page.status, 200);
+    assert.match(page.text, /shown for reference/, 'the page says why it is read-only');
+    assert.doesNotMatch(page.text, /Not Yours Court/, 'the picker only offers properties in the grant');
+
+    const orgWrite = await post(base, '/admin/settings', { key: 'nsf_fee_cents', property: '', f: '99.00' }, cookie);
+    assert.equal(orgWrite.status, 403, 'an organization default reaches properties outside the grant');
+    assert.equal(val<number>('nsf_fee_cents'), orgBefore, 'unchanged');
+
+    const orgClear = await post(base, '/admin/settings/clear', { key: 'nsf_fee_cents', property: '' }, cookie);
+    assert.equal(orgClear.status, 403, 'clearing an org default is the same act');
+
+    // …and a property they do not hold is out of reach entirely
+    const foreign = await post(base, '/admin/settings', { key: 'nsf_fee_cents', property: otherProp, f: '99.00' }, cookie);
+    assert.equal(foreign.status, 404);
+
+    // …while their own property is fully theirs
+    const mine = await post(base, '/admin/settings', { key: 'nsf_fee_cents', property: propId, f: '77.00' }, cookie);
+    assert.equal(mine.status, 303);
+    assert.equal(val<number>('nsf_fee_cents', propId), 7700);
+  } finally {
+    close();
+  }
+});
+
+test('inputs that reach real engines are validated as those engines read them', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+
+    // inQuietHours parses the hour with parseInt, so '99:99' would make the
+    // quiet window never open rather than failing loudly
+    const quiet = val<Record<string, string>>('quiet_hours');
+    await post(base, '/admin/settings', { key: 'quiet_hours', property: '', 'f.start': '99:99', 'f.end': '08:00' }, cookie);
+    assert.deepEqual(val('quiet_hours'), quiet, 'an impossible clock time is refused');
+
+    // an empty cadence switches lead follow-up off without saying so
+    const cadence = val<number[]>('followup_cadence_days');
+    await post(base, '/admin/settings', { key: 'followup_cadence_days', property: '', f: '' }, cookie);
+    assert.deepEqual(val('followup_cadence_days'), cadence, 'an empty list is refused');
+
+    // parseInt would have read this as 0
+    const grace = val<Record<string, number>>('late_fee_policy').graceDays;
+    await post(base, '/admin/settings', {
+      key: 'late_fee_policy', property: '',
+      'f.graceDays': '0x10', 'f.type': 'flat', 'f.flatCents': '10.00', 'f.percent': '5',
+      'f.dailyCents': '0', 'f.dailyCapCents': '0', 'f.minBalanceCents': '0',
+    }, cookie);
+    assert.equal(val<Record<string, number>>('late_fee_policy').graceDays, grace, 'a non-numeric int is refused');
+
+    // a fee this size is a misplaced decimal, and it posts to the books
+    const je = val<number>('je_approval_threshold_cents');
+    await post(base, '/admin/settings', { key: 'je_approval_threshold_cents', property: '', f: '999999999999' }, cookie);
+    assert.equal(val<number>('je_approval_threshold_cents'), je, 'an absurd amount is refused');
+
+    // a submission that simply omits a field must not be read as blank
+    const pets = val<Record<string, unknown>>('pet_policy');
+    await post(base, '/admin/settings', {
+      key: 'pet_policy', property: '', 'f.maxPets': '2', 'f.petRentCents': '35.00', 'f.depositCents': '250.00',
+    }, cookie);
+    assert.deepEqual(val('pet_policy'), pets, 'a truncated post is refused, not applied with holes');
+  } finally {
+    close();
+  }
+});

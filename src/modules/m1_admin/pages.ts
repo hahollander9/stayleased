@@ -235,7 +235,13 @@ export function routes(r: Router): void {
           ${field(html`To confirm, type the organization name exactly — <b>${orgName}</b>`, input('confirm_name', { required: true, placeholder: orgName }))}
           <div class="btn-row"><button class="btn btn-danger">Clear all portfolio data</button></div>
         </form>`);
-    const propName = props.find((p: any) => p.id === propId)?.name || '';
+    const propName = props.find((p: any) => p.id === propId)?.name
+      || q1<{ name: string }>('SELECT name FROM properties WHERE id=? AND org_id=?', propId, ctx.orgId)?.name
+      || '';
+    // Organization defaults apply to every property, including ones outside a
+    // property-scoped admin's grant — so that level is read-only for them.
+    // Their own properties' overrides stay fully editable.
+    const orgLevelReadOnly = !propId && !ctx.allProperties;
     // Two queries for the whole page, and — unlike getSetting, which replaces a
     // stored object wholesale — levels are MERGED. A property that overrides
     // only ai_autonomy.leasing must not render the other three dials as their
@@ -264,7 +270,9 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Settings',
       active: '/admin/settings',
-      subtitle: propId
+      subtitle: orgLevelReadOnly
+        ? 'Organization defaults, shown for reference. They apply to every property, so changing them needs access to the whole organization — pick one of your properties above to set an override there.'
+        : propId
         ? `What applies at ${propName}. Saving a setting here records it for this property; clearing it hands that setting back to the organization.`
         : 'How this organization runs — what residents are charged, when, and how much the AI decides on its own. Every setting can be overridden per property.',
       content: html`
@@ -284,10 +292,10 @@ export function routes(r: Router): void {
                 <input type="hidden" name="key" value="${sp.key}" />
                 <input type="hidden" name="property" value="${propId}" />
                 ${renderSetting(sp, effective)}
-                <div class="btn-row">
+                ${orgLevelReadOnly ? raw('') : html`<div class="btn-row">
                   <button class="btn btn-sm">Save</button>
                   ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
-                </div>
+                </div>`}
               </form>
             </div>`;
           })}`);
@@ -303,6 +311,8 @@ export function routes(r: Router): void {
     if (!spec || !(key in SETTING_DEFAULTS)) return badRequest('Unknown setting');
     const propId = String(rq.body.property || '');
     if (propId && !canAccessProperty(ctx, propId)) return notFound('Property not found');
+    // an org default reaches every property, including ones outside the grant
+    if (!propId && !ctx.allProperties) return forbidden('Changing an organization default requires access to the whole organization.');
     const back = `/admin/settings?property=${propId}`;
     let value: unknown;
     try {
@@ -324,6 +334,7 @@ export function routes(r: Router): void {
     const key = String(rq.body.key || '');
     const clearProp = String(rq.body.property || '');
     if (clearProp && !canAccessProperty(ctx, clearProp)) return notFound('Property not found');
+    if (!clearProp && !ctx.allProperties) return forbidden('Changing an organization default requires access to the whole organization.');
     run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, clearProp, key);
     const label = SPECS.find((sp) => sp.key === key)?.label || key;
     return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${label} follows the organization default again.`);

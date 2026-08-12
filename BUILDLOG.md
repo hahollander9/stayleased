@@ -714,3 +714,33 @@ consumer rather than the control. The fixes' own tests all passed, both before a
 **Verified:** tsc strict clean · unit suite · e2e incl. payments (the late-fee engine was touched by
 the `??` fix). `tests/org_clear.test.ts` gains a fifth test: a signed lease attached to a property has
 both its row and its BYTES gone after an ordinary `deleteProperty`.
+
+## 2026-08-12 — Refutation pass, second half: the org-defaults hole and validating for the consumer
+
+**The scope agent found the fix I shipped was the wrong half.** Guarding the `property` parameter left
+`property=''` — the organization defaults — writable by any `admin:settings` holder. That is the level
+that reaches every property, so a property-scoped admin could not touch another building's override
+but could rewrite the default it inherits. Org defaults are now read-only for a scoped admin (the page
+says why, the server enforces it on both save and clear), and their own properties stay fully
+editable. Recorded, not fixed: `admin:settings` travels with `admin:staff` in the role model, so a
+determined scoped admin can still widen their own grant — a role-model change, not a settings patch.
+(#44)
+
+**The validation agent found five holes, each one a control validated as its input TYPE rather than as
+its CONSUMER reads it** (#45): `99:99` passed a `\d{2}:\d{2}` regex and reaches m15's `inQuietHours`,
+which `parseInt`s the hour — the quiet window would simply never open · `parseInt` accepted `0x10` as
+0 for any min-0 integer · a blank comma list stored `[]`, silently switching lead follow-up off ·
+a MISSING field (as opposed to a blank one) let a truncated post clear a text field it never mentioned
+· money had no ceiling, so a misplaced decimal could post a $1e12 approval threshold into the books.
+All six control paths now parse strictly, refuse absence where the form always submits (checkbox-backed
+types excepted — absence IS the value there), and carry ceilings where the number reaches money.
+
+**Process note worth more than the fixes.** Two edit passes silently no-opped: python string
+replacements written against text that an earlier pass had already changed, and then an `Edit` call
+that wrote from a stale snapshot and clobbered a python pass entirely. Both printed success. The
+lesson is to verify a change landed by grepping the file for it, not by trusting the tool's exit —
+and not to mix `Edit` with external rewrites of the same file inside one turn.
+
+**Verified:** tsc strict clean · unit suite · e2e incl. payments. `tests/settings_page.test.ts` is now
+15 tests: two new cover a property-scoped admin (read-only org defaults, 403 on save and on clear, 404
+on a foreign property, full control of their own) and the five consumer-shaped validation holes.
