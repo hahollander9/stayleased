@@ -48,17 +48,40 @@ function countStamped(orgId: string, table: string, batchId: string): number {
   return val<number>(`SELECT COUNT(*) FROM ${table} WHERE org_id=? AND import_batch_id=?`, orgId, batchId) || 0;
 }
 
+/** A footprint plus the property names on either side of the line, so the
+ * confirm screen can say which building disappears and which one merely loses
+ * the rows this upload added to it. */
+export interface ImportFootprint extends ReverseCounts {
+  /** properties this upload CREATED — these are removed entirely */
+  propertyNames: string[];
+  /** properties it only added rows to — these survive the removal */
+  keptPropertyNames: string[];
+}
+
 /** What removing this upload would take back, for the confirm screen. Counts
  * only — nothing is written. A footprint of all zeros means the upload created
  * nothing traceable: either it wrote nothing, or it was applied before
  * provenance was tracked, and the screen says so rather than implying an undo
  * it cannot perform. */
-export function importFootprint(ctx: Ctx, batch: BatchRow & { summary?: string | null }): ReverseCounts {
+export function importFootprint(ctx: Ctx, batch: BatchRow & { summary?: string | null }): ImportFootprint {
   const o = ctx.orgId;
   const b = batch.id;
   const summary = batch.summary ? j<Partial<ApplySummary>>(batch.summary, {}) : {};
   const merges = summary.merges || [];
+  // properties the upload created (removed) vs merely added to (kept)
+  const created = q<{ name: string }>('SELECT name FROM properties WHERE org_id=? AND import_batch_id=? ORDER BY name', o, b);
+  const kept = q<{ name: string }>(
+    `SELECT DISTINCT p.name FROM properties p
+       WHERE p.org_id=? AND (p.import_batch_id IS NULL OR p.import_batch_id!=?)
+         AND (p.id IN (SELECT property_id FROM units WHERE org_id=? AND import_batch_id=?)
+           OR p.id IN (SELECT property_id FROM leases WHERE org_id=? AND import_batch_id=?)
+           OR p.id IN (SELECT property_id FROM residents WHERE org_id=? AND import_batch_id=?))
+       ORDER BY p.name`,
+    o, b, o, b, o, b, o, b,
+  );
   return {
+    propertyNames: created.map((r) => r.name),
+    keptPropertyNames: kept.map((r) => r.name),
     properties: countStamped(o, 'properties', b),
     units: countStamped(o, 'units', b),
     floorplans: countStamped(o, 'floorplans', b),

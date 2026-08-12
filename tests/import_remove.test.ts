@@ -336,3 +336,90 @@ test('an edited contact value is left alone — un-merge only reverts what is st
     'the hand-corrected address is the operator’s now — removal leaves it alone',
   );
 });
+
+test('a lease-PDF upload reverses too — leases, units and the deposit entries it posted', async () => {
+  // the PDF lane always imports INTO a property that already exists, so the
+  // property must survive while everything the upload added comes out
+  const rr = mkRentRoll({ filename: 'pdf-host.xlsx', new_property_name: 'PDF Host Court' }, [
+    ['901', 'Hazel Host', 'hazel@imprm.test', '1500', '1500', '0', '2026-01-01', '2026-12-31'],
+  ]);
+  applyRentRoll(sysCtx(orgId, AS_OF), rr);
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'PDF Host Court')!.id;
+  const jesBefore = val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, pid) || 0;
+
+  const pdf = Buffer.from('%PDF-1.4\nlease\n%%EOF\n');
+  const f = putFile(sysCtx(orgId, AS_OF), pdf, { name: 'unit-902.pdf', mime: 'application/pdf', entity: 'import', visibility: 'staff' });
+  const batch = mkBatch({
+    kind: 'lease_pdf', filename: 'unit-902.pdf', property_id: pid,
+    staged: JSON.stringify([{
+      filename: 'unit-902.pdf', fileId: f.id, include: true, source: 'text', confidence: {}, notes: [],
+      fields: { unit: '902', tenants: 'Pat Pdf', email: 'pat@imprm.test', phone: '', rent: '1450', deposit: '1450', start: '2026-02-01', end: '2027-01-31' },
+    }]),
+  });
+
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@imprm.test');
+    // apply it through the real route so the lane's own apply path runs
+    const applied = await post(base, `/setup/import/leases/${batch.id}/apply`, {
+      inc_0: 'on', f_0_unit: '902', f_0_tenants: 'Pat Pdf', f_0_email: 'pat@imprm.test', f_0_phone: '',
+      f_0_rent: '1450', f_0_deposit: '1450', f_0_start: '2026-02-01', f_0_end: '2027-01-31',
+    }, cookie);
+    assert.equal(applied.status, 303, 'lease PDF applied');
+    assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=? AND unit_number=?', pid, '902'), 1, 'unit created');
+    const jesAfter = val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, pid) || 0;
+    assert.ok(jesAfter > jesBefore, 'the deposit posted conversion entries on both bases');
+
+    const confirm = await get(base, `/setup/import/b/${batch.id}/remove`, cookie);
+    assert.match(confirm.text, /PDF Host Court/, 'the confirm screen names the property');
+    assert.match(confirm.text, /stays/, 'and says it survives — the upload did not create it');
+    assert.doesNotMatch(confirm.text, /created by this upload/, 'no property is being removed here');
+
+    const ok = await post(base, `/setup/import/b/${batch.id}/remove`, { confirm_name: 'unit-902.pdf' }, cookie);
+    assert.equal(ok.status, 303);
+  } finally {
+    close();
+  }
+
+  // what the PDF added is gone — including its deposit entries (the bug this
+  // test was written for: the PDF lane never stamped them)
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=? AND unit_number=?', pid, '902'), 0, 'unit removed');
+  assert.equal(val<number>(`SELECT COUNT(*) FROM leases WHERE property_id=? AND household_name LIKE '%Pdf%'`, pid), 0, 'lease removed');
+  assert.equal(
+    val<number>('SELECT COUNT(*) FROM journal_entries WHERE org_id=? AND property_id=?', orgId, pid), jesBefore,
+    'the deposit entries it posted came off the books — no deposits held for a lease that no longer exists',
+  );
+  assert.equal(q1('SELECT id FROM files WHERE id=?', f.id), undefined, 'the stored PDF is gone');
+  // …and the property the rent roll built is untouched
+  assert.ok(q1('SELECT id FROM properties WHERE id=?', pid), 'the property stays');
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=? AND unit_number=?', pid, '901'), 1, "the rent roll's unit stays");
+});
+
+test('a rent roll imported INTO an existing property removes its rows, not the building', async () => {
+  const first = mkRentRoll({ filename: 'first.xlsx', new_property_name: 'Shared Court' }, [
+    ['A1', 'Ann First', 'ann@imprm.test', '1200', '1200', '0', '2026-01-01', '2026-12-31'],
+  ]);
+  applyRentRoll(sysCtx(orgId, AS_OF), first);
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Shared Court')!.id;
+
+  // a second rent roll adding more units to the SAME property
+  const second = mkRentRoll({ filename: 'second.xlsx', property_id: pid }, [
+    ['B1', 'Bob Second', 'bob@imprm.test', '1300', '1300', '0', '2026-01-01', '2026-12-31'],
+  ]);
+  applyRentRoll(sysCtx(orgId, AS_OF), second);
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', pid), 2);
+
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@imprm.test');
+    const confirm = await get(base, `/setup/import/b/${second.id}/remove`, cookie);
+    assert.match(confirm.text, /Shared Court/);
+    assert.match(confirm.text, /stays/, 'the building it was imported into survives');
+    await post(base, `/setup/import/b/${second.id}/remove`, { confirm_name: 'second.xlsx' }, cookie);
+  } finally {
+    close();
+  }
+  assert.ok(q1('SELECT id FROM properties WHERE id=?', pid), 'the property stays');
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', pid), 1, 'only the second upload’s unit went');
+  assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=? AND unit_number=?', pid, 'A1'), 1, "the first upload's unit stays");
+});
