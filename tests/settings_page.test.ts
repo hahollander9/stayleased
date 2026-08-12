@@ -67,13 +67,20 @@ test('the page renders grouped, labelled controls — and no raw JSON', async ()
     const page = await get(base, '/admin/settings', cookie);
     assert.equal(page.status, 200);
 
-    // groups and plain-language labels, not key names
-    assert.match(page.text, /Rent, fees and payments/);
-    assert.match(page.text, /Deposits and move-out/);
+    // the page splits on where the answer comes from, not on domain
+    assert.match(page.text, /Read from your documents/, 'what your leases already say');
+    assert.match(page.text, /Set by where you operate/, 'what your state says');
+    assert.match(page.text, /Rent, fees and payments/, 'and the groups of what is actually your call');
     assert.match(page.text, /Approval thresholds/);
-    assert.match(page.text, /Late fee policy/);
+    // a group whose settings all moved to another bucket stops rendering: the
+    // deposit deadlines are statutory, so "Deposits and move-out" is now empty
+    assert.doesNotMatch(page.text, /<h2>Deposits and move-out<\/h2>/);
+    assert.match(page.text, /Late fee policy/, 'still on the page, in the documents section');
     assert.match(page.text, /Returned payment fee/);
     assert.match(page.text, /Grace period/, 'object settings expose their parts');
+    // the jurisdiction section names the state and asserts no statute
+    assert.match(page.text, /Confirm each against/);
+    assert.doesNotMatch(page.text, /requires deposits returned/i, 'the product never states the law itself');
 
     // money is shown in dollars, not cents
     assert.match(page.text, /value="50\.00"/, 'the $50 flat late fee renders as 50.00');
@@ -583,7 +590,12 @@ test('the "not enforced yet" badges match reality in both directions', () => {
   walk(root);
   // the spec and the settings library mention every key by definition
   const sources = files
-    .filter((f) => !f.endsWith('settings_spec.ts') && !f.endsWith('lib/settings.ts'))
+    // the spec and the settings library name every key by definition; the
+    // policy reader and its proposal store name the keys they PROPOSE, which
+    // is not the same as acting on the setting — a proposed value still does
+    // nothing until something enforces it
+    .filter((f) => !f.endsWith('settings_spec.ts') && !f.endsWith('lib/settings.ts')
+      && !f.endsWith('policy_reader.ts') && !f.endsWith('policy_proposals.ts'))
     .map((f) => readFileSync(f, 'utf8'));
 
   const wrong: string[] = [];

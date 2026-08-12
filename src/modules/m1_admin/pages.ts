@@ -1,4 +1,4 @@
-import { html, raw, when, join } from '../../lib/html.ts';
+import { html, raw, when, join, type Raw } from '../../lib/html.ts';
 import {
   redirect, notFound, forbidden, fileRes, type Router, type Rq, badRequest,
 } from '../../lib/http.ts';
@@ -8,15 +8,17 @@ import {
 } from '../../lib/auth.ts';
 import { q, q1, run, insert, j, js, val, update } from '../../lib/db.ts';
 import { id, token } from '../../lib/ids.ts';
+import { usd } from '../../lib/money.ts';
 import { nowIso, fmtDate, fmtTs, addDays } from '../../lib/dates.ts';
 import { audit } from '../../lib/audit.ts';
-import { getSetting, getSettingMerged, layerSetting, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged, layerSetting, narrowOverride, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
 import { receiveInbound } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
-import { SPECS, GROUPS, renderSetting, parseSetting } from './settings_spec.ts';
+import { SPECS, GROUPS, renderSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
+import { pendingProposals, proposalDelta, acceptProposal, dismissProposal } from '../setup/policy_proposals.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, pager, checkbox,
@@ -44,22 +46,30 @@ registerSearch((ctx, query) => {
   ).map((u) => ({ kind: 'staff', label: u.name, sub: u.email, href: `/admin/staff/${u.id}` }));
 });
 
-/** What a property override should actually store: only the fields that differ
- * from what the organization already gives it. Keeping a full copy would turn
- * "I changed one dial here" into "this property no longer follows the
- * organization for any of these fields" — the operator edits one autonomy dial
- * and the other three quietly stop tracking org-wide changes. Returns
- * undefined when nothing differs, meaning the override row should not exist. */
-function narrowOverride(orgValue: unknown, next: unknown): unknown {
-  const plain = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 'object' && !Array.isArray(v);
-  if (!plain(orgValue) || !plain(next)) {
-    return JSON.stringify(orgValue) === JSON.stringify(next) ? undefined : next;
+/** A section the page keeps folded: real settings, still editable, but not
+ * decisions the operator has to make today. Collapsing them is the point —
+ * the complaint that started this was forty questions with equal weight. */
+function foldedSection(title: string, note: string, specs: SettingSpec[], body?: (sp: SettingSpec) => Raw): Raw {
+  if (!specs.length) return raw('');
+  return card(html`${title} <span class="muted small">${String(specs.length)}</span>`, html`
+    <details>
+      <summary class="small">Show these ${String(specs.length)} settings</summary>
+      <p class="muted small" style="max-width:68ch">${note}</p>
+      ${specs.map((sp) => body ? body(sp) : raw(''))}
+    </details>`);
+}
+
+/** A setting value in the operator's own units, for proposal copy. */
+function fmtSettingValue(key: string, path: string | null, v: unknown): string {
+  if (v === undefined || v === null) return 'not set';
+  const name = path || key;
+  if (typeof v === 'number') {
+    if (/cents/i.test(name)) return usd(v);
+    if (/pct|percent/i.test(name)) return `${v}%`;
+    if (/days/i.test(name)) return `${v} day${v === 1 ? '' : 's'}`;
+    return String(v);
   }
-  const diff: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(next)) {
-    if (JSON.stringify(orgValue[k]) !== JSON.stringify(v)) diff[k] = v;
-  }
-  return Object.keys(diff).length ? diff : undefined;
+  return typeof v === 'string' ? v : JSON.stringify(v);
 }
 
 export function routes(r: Router): void {
@@ -260,6 +270,35 @@ export function routes(r: Router): void {
     // property-scoped admin's grant — so that level is read-only for them.
     // Their own properties' overrides stay fully editable.
     const orgLevelReadOnly = !propId && !ctx.allProperties;
+    const proposals = orgLevelReadOnly ? [] : pendingProposals(ctx);
+    // Name the states rather than assert their statutes: telling an operator
+    // "Colorado requires 30 days" is a legal claim this product would then own
+    // and have to keep current. Saying WHICH settings are law, and where to
+    // check, is the honest half and the useful half.
+    const states = [...new Set(q<{ state: string }>(
+      `SELECT DISTINCT state FROM properties WHERE org_id=?${pf.sql} ORDER BY state`, ctx.orgId, ...pf.params,
+    ).map((r) => r.state).filter(Boolean))];
+    /** one editable setting, identical wherever it appears on the page */
+    const settingRow = (sp: SettingSpec): Raw => {
+      const effective = effectiveFor(sp.key);
+      const overridden = overriddenKeys.has(sp.key);
+      return html`<div class="set-row">
+        <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}${sp.pending ? html` <span class="badge">not enforced yet</span>` : ''}</h3>
+        <p class="muted small set-help">${sp.help}${sp.pending ? html` <b>This one is recorded but nothing acts on it yet.</b>` : ''}</p>
+        <form method="post" action="/admin/settings">
+          <input type="hidden" name="key" value="${sp.key}" />
+          <input type="hidden" name="property" value="${propId}" />
+          ${renderSetting(sp, effective)}
+          ${orgLevelReadOnly ? raw('') : html`<div class="btn-row">
+            <button class="btn btn-sm">Save</button>
+            ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
+          </div>`}
+        </form>
+      </div>`;
+    };
+    const jurisdictionNote = states.length
+      ? `Set by law where your properties are — ${states.join(', ')}. Confirm each against the statute; the product does not assert a number it would have to keep current for you.`
+      : 'Set by law where you operate, not by preference. Confirm each against your state statute.';
     // Two queries for the whole page, and — unlike getSetting, which replaces a
     // stored object wholesale — levels are MERGED. A property that overrides
     // only ai_autonomy.leasing must not render the other three dials as their
@@ -297,27 +336,50 @@ export function routes(r: Router): void {
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Level', select('property', [['', 'Organization defaults'], ...props.map((p): [string, string] => [p.id, `Override: ${p.name}`])], propId))}
         </form>
-        ${GROUPS.map((group) => {
-          const inGroup = SPECS.filter((sp) => sp.group === group);
-          if (!inGroup.length) return raw('');
-          return card(group, html`${inGroup.map((sp) => {
-            const effective = effectiveFor(sp.key);
-            const overridden = overriddenKeys.has(sp.key);
+        ${when(!orgLevelReadOnly && !!proposals.length, () => card(
+          html`Read from your documents <span class="badge accent">${String(proposals.length)} to review</span>`,
+          html`<p class="muted small" style="margin-top:0;max-width:68ch">Your leases state most of these already. Each one shows the
+            sentence it was read from — confirm it against the document, or dismiss it and your own value stands. Nothing
+            here changes a setting until you say so.</p>
+          ${proposals.map((pr) => {
+            const spec = SPECS.find((sp) => sp.key === pr.key);
+            const d = proposalDelta(ctx, pr);
+            const label = spec ? spec.label : pr.key;
+            const sub = pr.path ? spec?.subs?.find((x) => x.path === pr.path)?.label || pr.path : '';
             return html`<div class="set-row">
-              <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}${sp.pending ? html` <span class="badge">not enforced yet</span>` : ''}</h3>
-              <p class="muted small set-help">${sp.help}${sp.pending ? html` <b>This one is recorded but nothing acts on it yet.</b>` : ''}</p>
-              <form method="post" action="/admin/settings">
-                <input type="hidden" name="key" value="${sp.key}" />
-                <input type="hidden" name="property" value="${propId}" />
-                ${renderSetting(sp, effective)}
-                ${orgLevelReadOnly ? raw('') : html`<div class="btn-row">
-                  <button class="btn btn-sm">Save</button>
-                  ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
-                </div>`}
+              <h3>${label}${sub ? html` · ${sub}` : raw('')}
+                ${pr.confidence === 'low' ? html` <span class="badge">documents disagree</span>` : raw('')}
+                ${d.conflicts && d.current !== undefined ? html` <span class="badge warn">differs from your setting</span>` : raw('')}
+              </h3>
+              <p class="small" style="margin:6px 0 2px">
+                <b>${fmtSettingValue(pr.key, pr.path, d.proposed)}</b>
+                ${d.current !== undefined && d.conflicts
+                  ? html` <span class="muted">— you currently have ${fmtSettingValue(pr.key, pr.path, d.current)}</span>`
+                  : raw('')}
+              </p>
+              <blockquote class="quote">${pr.quote || '(no sentence captured)'}</blockquote>
+              <p class="muted small" style="margin:4px 0 10px">${pr.source_label || 'uploaded document'}${pr.agreement ? ` · ${pr.agreement}` : ''}</p>
+              <form method="post" action="/admin/settings/proposal" class="btn-row">
+                <input type="hidden" name="id" value="${pr.id}" />
+                <button class="btn btn-sm" name="decision" value="accept">Use this</button>
+                <button class="btn btn-sm btn-ghost" name="decision" value="dismiss">Keep mine</button>
               </form>
             </div>`;
-          })}`);
+          })}`,
+        ))}
+        ${GROUPS.map((group) => {
+          const inGroup = SPECS.filter((sp) => sp.group === group && !sp.source && !sp.advanced);
+          return inGroup.length ? card(group, html`${inGroup.map(settingRow)}`) : raw('');
         })}
+        ${foldedSection('Read from your documents',
+          `Your leases state these. ${proposals.length ? 'Confirm the proposals above, or edit a value directly.' : 'Nothing is waiting for review — upload signed leases and the system reads them.'}`,
+          SPECS.filter((sp) => sp.source === 'documents'), settingRow)}
+        ${foldedSection('Set by where you operate',
+          jurisdictionNote,
+          SPECS.filter((sp) => sp.source === 'jurisdiction'), settingRow)}
+        ${foldedSection('Specialty housing',
+          'Only relevant if you run student or military housing.',
+          SPECS.filter((sp) => sp.advanced), settingRow)}
         ${dangerZone}`,
     });
   });
@@ -371,6 +433,23 @@ export function routes(r: Router): void {
     run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, clearProp, key);
     const label = SPECS.find((sp) => sp.key === key)?.label || key;
     return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${label} follows the organization default again.`);
+  });
+
+  // Confirm or dismiss what the documents said. Accepting is the ONLY path in
+  // the feature that writes a setting; dismissing records that the operator's
+  // own value stands and stops the question being asked again.
+  r.post('/admin/settings/proposal', requirePerm('admin:settings'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    if (!ctx.allProperties) return forbidden('Confirming a policy read from documents requires access to the whole organization.');
+    const pid = String(rq.body.id || '');
+    if (String(rq.body.decision || '') === 'dismiss') {
+      const p = dismissProposal(ctx, pid);
+      return redirect('/admin/settings', p ? 'Kept your value — that one will not be proposed again.' : 'That proposal is no longer pending.', p ? 'ok' : 'err');
+    }
+    const done = acceptProposal(ctx, pid);
+    if (!done) return redirect('/admin/settings', 'That proposal is no longer pending.', 'err');
+    const spec = SPECS.find((sp) => sp.key === done.key);
+    return redirect('/admin/settings', `${spec?.label || done.key} updated from your documents${done.scope === 'property' ? ' for that property' : ''}.`);
   });
 
   // Org-level reset for the onboarding loop. The typed organization name is

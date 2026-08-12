@@ -9,6 +9,8 @@ import { audit } from '../../lib/audit.ts';
 import { emit } from '../../lib/events.ts';
 import { putFile } from '../../lib/files.ts';
 import { pdfExtractText } from '../../lib/pdftext.ts';
+import { readPolicyFromLease, type PolicyFinding } from './policy_reader.ts';
+import { recordProposals, type SourcedFinding } from './policy_proposals.ts';
 import { llmGenerate, llmExtractPdf, llmStatus } from '../../lib/sim/llm.ts';
 import { createCharge } from '../m8_receivables/service.ts';
 import { postBothBases } from '../m9_accounting/service.ts';
@@ -26,6 +28,9 @@ export interface LeaseDraft {
   filename: string;
   fileId: string | null;
   include: boolean;
+  /** policy values this lease states — proposed to the settings page on apply,
+   * never written from here */
+  policy?: PolicyFinding[];
   fields: {
     unit: string;
     tenants: string; // "First Last & First Last"
@@ -123,6 +128,8 @@ function flagSuspiciousFields(fields: LeaseDraft['fields'], confidence: Record<s
 
 async function extractDraft(orgId: string, filename: string, pdf: Buffer): Promise<Omit<LeaseDraft, 'fileId' | 'include'>> {
   const text = pdfExtractText(pdf);
+  // the same text carries the policy the settings page keeps asking for
+  const policy = text ? readPolicyFromLease(text) : [];
   const notes: string[] = [];
   const live = llmStatus().live;
 
@@ -157,7 +164,7 @@ async function extractDraft(orgId: string, filename: string, pdf: Buffer): Promi
       for (const k of Object.keys(fields)) if (conf[k] === 'low') confidence[k] = 'low';
       if (!text) notes.push('Scanned document — read by AI.');
       flagSuspiciousFields(fields, confidence, notes);
-      return { filename, fields, confidence, notes, source: 'ai' };
+      return { filename, policy, fields, confidence, notes, source: 'ai' };
     }
     notes.push('AI extraction unavailable for this file — used local text reading.');
   }
@@ -165,14 +172,14 @@ async function extractDraft(orgId: string, filename: string, pdf: Buffer): Promi
   if (local) {
     if (!live) notes.push('Read locally from the PDF text. Connect the live AI for scanned documents.');
     flagSuspiciousFields(local.fields, local.confidence, notes);
-    return { filename, fields: local.fields, confidence: local.confidence, notes, source: 'text' };
+    return { filename, policy, fields: local.fields, confidence: local.confidence, notes, source: 'text' };
   }
   notes.push('No text found in this PDF (likely a scan). Enter the fields manually or enable live AI.');
   return {
     filename,
     fields: { unit: '', tenants: '', email: '', phone: '', rent: '', deposit: '', start: '', end: '' },
     confidence: { unit: 'low', tenants: 'low', email: 'low', phone: 'low', rent: 'low', deposit: 'low', start: 'low', end: 'low' },
-    notes, source: 'none',
+    notes, policy, source: 'none',
   };
 }
 
@@ -367,6 +374,18 @@ export function leasePdfRoutes(r: Router): void {
           ],
         });
       }
+      // What the leases SAY becomes a proposal against this property — the
+      // settings page asks the operator to confirm it against the quoted
+      // sentence. Reading is not writing: no setting changes here.
+      const policyFindings: SourcedFinding[] = [];
+      drafts.forEach((d) => {
+        if (!d.include) return;
+        for (const f of d.policy || []) {
+          policyFindings.push({ ...f, sourceLabel: d.filename, sourceFileId: d.fileId });
+        }
+      });
+      if (policyFindings.length) recordProposals(ctx, { propertyId: pid, batchId: batch.id }, policyFindings);
+
       // the deposit conversion entries post with sourceId = this batch, on both
       // bases — stamp them so removing the upload takes them off the books too
       run(`UPDATE journal_entries SET import_batch_id=? WHERE org_id=? AND source_kind='conversion' AND source_id=?`, batch.id, ctx.orgId, batch.id);

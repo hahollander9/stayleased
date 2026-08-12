@@ -545,6 +545,15 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
 .set-row .set-help { margin: 5px 0 12px; max-width: 68ch; }
 .set-row .btn-row { margin-top: 4px; }
 .check-row { display: flex; flex-wrap: wrap; gap: 4px 14px; }
+/* the sentence a proposed setting was read from — quoted, so it reads as the
+   document's words rather than the product's claim */
+.quote {
+  margin: 6px 0; padding: 8px 0 8px 14px; border-left: 1px solid var(--line);
+  color: var(--ink-2); font-size: 12.5px; line-height: 1.55; max-width: 74ch;
+}
+.badge.warn { background: rgba(251, 191, 36, .14); color: #b45309; }
+:root:not([data-theme="light"]) .badge.warn { color: #fcd34d; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .badge.warn { color: #fcd34d; } }
 .check-row .check { margin: 4px 0; }
 .rank-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 6px 16px; }
 .rank-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
