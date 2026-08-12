@@ -504,3 +504,43 @@ prints `graph current` · `touch src/lib/db.ts` triggers the rebuild as intended
 
 **Note for whoever restores CI:** this hook is the honest description of what a fresh container needs
 to run the gates — `npm install` first, everything else after.
+
+## 2026-08-12 — Clear all portfolio data: the onboarding loop's reset
+
+**Built (Henry: "i just want it cleared so that there is no property or data in the account so i can
+test other rent rolls and uploading documents"):** the Station U&O uploads predate the provenance
+stamp, so removing them could not take their data back, and clearing an org by hand meant a property
+delete per property plus the leftovers. `clearOrgData` in `m2_portfolio/service.ts` does it in one
+action: every property through `deleteProperty` (once per property — the tested ~80-table cascade
+stays the only code that knows that map) plus the org-level residue a property delete leaves standing
+by design — vendors, vendor price agreements, and the Migration Center's uploads with their stored
+files. Keeps the org, staff accounts and roles, the chart of accounts, settings, and the audit trail.
+
+Surfaced as a **Danger zone on Admin → Settings**, matching the property danger zone's vocabulary
+exactly (typed-name confirm, `btn-danger`, no script dialog) — Operate mode pays for consistency, not
+invention. Typed confirm is the ORGANIZATION name. Demo orgs are refused outright and told why: the
+seeded world runs the public demo, and no typed confirm should be able to take it down. Success lands
+on the Migration Center, since the only reason to clear is to import again.
+
+Unlike the per-property delete this passes `force` — see #38 for why that rail exists for one building
+and not for the whole portfolio.
+
+**Decisions:** #40.
+
+**Verified:** tsc strict clean · unit suite (2 new in `tests/org_clear.test.ts`: two imported
+properties + a vendor + a recorded payment all cleared, with the org, its staff, their roles, the
+chart of accounts and an audit row surviving and the trial balance empty rather than unbalanced · the
+route refuses a mismatched org name, lands on /setup/import on success, and refuses the demo org even
+with its name typed correctly) · e2e setup + clientready + workingmodel + goldenpath + smoke ·
+impeccable detector clean on the changed file.
+
+**Test-writing note worth keeping:** an assertion on rendered copy must not span a line break in the
+template — `/disabled on the demo organization/` failed against real output where the source wrapped
+between "demo" and "organization". Match a phrase that cannot straddle the wrap. (Two sibling traps
+from today: the removal flash names the file it removed, so a body-text check for the filename matches
+itself; and the org "Cedar Yard Management" contains the property name "Cedar Yard", so matching a
+property name hits the nav chrome on every page.)
+
+**Next:** the org settings page itself — Henry flagged it as unpolished and full of raw JSON. Scope
+question open with him: typed controls for the settings an operator actually sets, everything
+structural behind an Advanced disclosure.

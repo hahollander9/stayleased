@@ -14,6 +14,7 @@ import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/j
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
 import { receiveInbound } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
+import { clearOrgData } from '../m2_portfolio/service.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, pager, checkbox,
@@ -210,6 +211,26 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const propId = rq.query.get('property') || '';
     const props = q<any>('SELECT id, name FROM properties WHERE org_id=? ORDER BY name', ctx.orgId);
+    const org = q1<{ name: string; kind: string }>('SELECT name, kind FROM orgs WHERE id=?', ctx.orgId);
+    const orgName = org?.name || 'this organization';
+    // Onboarding takes several tries; clearing up after a bad import one
+    // property at a time is the chore that makes people live with bad data.
+    const dangerZone = ctx.orgKind === 'demo'
+      ? card('Danger zone', html`<p class="muted" style="margin:0">Clearing the portfolio is disabled on the demo
+          organization — its seeded world is what the public demo runs on.</p>`)
+      : card('Danger zone', html`
+        <p style="margin-top:0"><b>Clear all portfolio data.</b> This permanently deletes every property in
+        ${orgName} and everything recorded under it — units, leases, resident records and their portal access,
+        vendors, uploads in the Migration Center, and every journal entry on both the accrual and cash books.
+        It is meant for starting an onboarding over: import, check the result, clear, import again.</p>
+        <p class="small muted" style="margin-top:0">Your organization, staff accounts and roles, chart of accounts,
+        settings and audit trail all stay. Unlike removing a single property, this clears recorded payments and
+        manually posted entries too — there is nothing left to protect once the portfolio goes. This cannot be
+        undone.</p>
+        <form method="post" action="/admin/settings/clear-data">
+          ${field(html`To confirm, type the organization name exactly — <b>${orgName}</b>`, input('confirm_name', { required: true, placeholder: orgName }))}
+          <div class="btn-row"><button class="btn btn-danger">Clear all portfolio data</button></div>
+        </form>`);
     const keys = Object.keys(SETTING_DEFAULTS);
     const rows = keys.map((k) => {
       const orgVal = getSetting(sysCtx(ctx.orgId), k);
@@ -240,7 +261,8 @@ export function routes(r: Router): void {
               </form>`,
             ],
           })),
-        ), { flush: true })}`,
+        ), { flush: true })}
+        ${dangerZone}`,
     });
   });
 
@@ -262,6 +284,36 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, String(rq.body.property || ''), String(rq.body.key || ''));
     return redirect(`/admin/settings?property=${rq.body.property || ''}`, 'Override cleared.');
+  });
+
+  // Org-level reset for the onboarding loop. The typed organization name is
+  // the confirmation (the server re-checks it); demo orgs are refused outright
+  // because the seeded world is what the public demo runs on.
+  r.post('/admin/settings/clear-data', requirePerm('admin:settings'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const org = q1<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId);
+    if (!org) return notFound();
+    if (ctx.orgKind === 'demo') {
+      return redirect('/admin/settings', 'The demo organization cannot be cleared — its seeded world runs the public demo.', 'err');
+    }
+    if (String(rq.body.confirm_name || '').trim() !== org.name) {
+      return redirect('/admin/settings', 'The name you typed does not match this organization — nothing was cleared.', 'err');
+    }
+    const { counts } = clearOrgData(ctx);
+    const n = (k: string): number => counts[k] || 0;
+    const bits: string[] = [];
+    const add = (v: number, one: string, many = one + 's'): void => { if (v) bits.push(`${v} ${v === 1 ? one : many}`); };
+    add(n('properties'), 'property', 'properties');
+    add(n('units'), 'unit');
+    add(n('leases'), 'lease');
+    add(n('residents'), 'resident record');
+    add(n('vendors'), 'vendor');
+    add(n('import_batches'), 'upload');
+    add(n('journal_entries'), 'journal entry', 'journal entries');
+    // land where the next attempt starts
+    return redirect('/setup/import', bits.length
+      ? `${org.name} cleared — ${bits.join(', ')} removed. Import when you're ready.`
+      : `${org.name} had no portfolio data to clear.`);
   });
 
   // ---------- audit log ----------

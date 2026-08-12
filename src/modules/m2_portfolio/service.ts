@@ -1,6 +1,7 @@
 import { q, q1, run, tx, val, j } from '../../lib/db.ts';
 import { propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
+import { deleteFiles } from '../../lib/files.ts';
 import { emit } from '../../lib/events.ts';
 
 /** M2 services: portfolio/unit math used by dashboards, quotes, pricing and
@@ -354,6 +355,48 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
     audit(ctx, 'property', p, 'delete', { name: prop.name, slug: prop.slug }, { counts });
   });
   emit(ctx, 'property.deleted', 'property', p, { name: prop.name, counts });
+  return { counts };
+}
+
+/** Empty the org's portfolio back to a fresh start — every property and
+ * everything under it, plus the org-level things an onboarding leaves behind:
+ * vendors and their price agreements, and the Migration Center's uploads with
+ * their stored files.
+ *
+ * This exists for the onboarding loop. Getting a real portfolio in takes
+ * several tries — a mis-mapped rent roll, a directory in the wrong format —
+ * and clearing up after a bad attempt one property at a time is the kind of
+ * chore that makes people stop testing and start living with bad data.
+ *
+ * What it keeps: the organization itself, staff accounts and their roles, the
+ * chart of accounts, settings, and the audit trail — the trail is the record
+ * that this happened and must outlive the data it describes.
+ *
+ * Deliberately `force`: this is the "I am starting over" button, so it clears
+ * recorded payments and hand-posted entries too, which the per-property delete
+ * refuses to touch. The typed org-name confirm on the route is the gate, and
+ * demo orgs are refused outright — the seeded world is the public demo. */
+export function clearOrgData(ctx: Ctx): { counts: Record<string, number> } {
+  const counts: Record<string, number> = {};
+  const bump = (k: string, n: number): void => { if (n) counts[k] = (counts[k] || 0) + n; };
+
+  tx(() => {
+    for (const p of q<{ id: string }>('SELECT id FROM properties WHERE org_id=?', ctx.orgId)) {
+      const { counts: c } = deleteProperty(ctx, p.id, { force: true });
+      for (const [k, v] of Object.entries(c)) bump(k, v);
+    }
+    // org-level rows a property delete leaves standing, by design
+    bump('vendor_price_agreements', run('DELETE FROM vendor_price_agreements WHERE org_id=?', ctx.orgId).changes);
+    bump('vendors', run('DELETE FROM vendors WHERE org_id=?', ctx.orgId).changes);
+    // uploads: the stored lease PDFs first, while the batches still name them
+    const fileIds = q<{ id: string }>(
+      `SELECT id FROM files WHERE org_id=? AND entity='import'`, ctx.orgId,
+    ).map((f) => f.id);
+    bump('files', deleteFiles(fileIds));
+    bump('import_batches', run('DELETE FROM import_batches WHERE org_id=?', ctx.orgId).changes);
+    audit(ctx, 'org', ctx.orgId, 'clear_portfolio_data', null, counts);
+  });
+  emit(ctx, 'org.data_cleared', 'org', ctx.orgId, { counts });
   return { counts };
 }
 
