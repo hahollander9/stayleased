@@ -804,3 +804,49 @@ followed — then sets it back to the org value and asserts the override row is 
 **On the method:** nine of the defects across today's two review rounds were introduced by the fix for
 an earlier defect. Every one was found by an agent told to refute a specific claim and to read the
 consumer rather than the control. The tests shipped alongside each fix passed throughout.
+
+## 2026-08-12 — Settings organized by where the answer comes from; the leases answer most of them
+
+**Built (Henry: "is there a better way to organize the settings? cuz right now there are too many and
+way too complicated, but what I want is for the AI to know what settings there are based off the
+documents uploaded"):** the second half of that sentence is the better idea, and it reframes the
+first. Ten domain groups told an operator a setting was about Deposits but not whose decision it was,
+so all forty read as homework. The page now splits on the axis that actually reduces the work:
+
+- **Read from your documents** — a review queue at the top of the page. Each proposal shows the value,
+  the file, and the SENTENCE it was read from, plus "differs from your setting" when it conflicts.
+  Confirm or keep yours. Seven settings: late fee (amount, percentage, grace period), returned-payment
+  fee, pet rent/deposit/limit, admin and application fees, month-to-month premium, insurance minimum.
+- **Set by where you operate** — folded; names the states and asks the operator to confirm against the
+  statute, asserting no numbers (#49).
+- **Your call** — the discretionary settings, still domain-grouped, and now the page's main body.
+- **Specialty housing** — folded; academic calendar and BAH only matter to student/military operators.
+
+**`policy_reader.ts`** is deterministic regex over sentences, matching the scorers' rule that a value
+deciding what a resident is charged must be reproducible. Two details that took the most care: the
+grace period is read ONLY from the late-fee sentence (a lease is full of "within five (5) days" in
+cure, entry and repair clauses — reading it from any of those would set the grace period from an
+unrelated paragraph), and a sentence carving out assistance animals can never set a pet limit, which
+would be exactly backwards. Silence produces no finding: an unstated fee must not become $0.
+
+**`policy_proposals.ts`** reconciles across documents. Unanimous is confident; disagreement proposes
+the modal value at low confidence and names what the others said. Accepting is the only path that
+writes a setting, it writes only the accepted field, and a single-property org takes the value as its
+ORG default so a later property inherits the policy that was read. Dismissing records that the
+operator's value stands and stops the field being proposed again — re-importing must not re-ask an
+answered question.
+
+**Decisions:** #48, #49.
+
+**Verified:** tsc strict clean · unit suite (15 new across `tests/policy_reader.test.ts` and
+`tests/policy_proposals.test.ts`: every value a sample lease states, quotes travelling with findings,
+silence staying silent, percentage vs dollar late fees, the decoy clauses, the assistance-animal
+carve-out, agreement vs disagreement, reading writing nothing, conflict detection, accept/dismiss and
+the no-re-ask rule, org-level landing for a single-property org, screening never proposed, and org
+isolation on the decide route) · e2e · detector clean on the new files (theme.css findings are all
+pre-existing patterns at lines this diff does not touch).
+
+**Not built, deliberately:** the rent-roll charge-code reader. `harvestSubRowCharges` returns the set
+of codes but not their amounts, and extending the hard-won Yardi harvest to carry them was not worth
+the risk in this build — shipping a tested but unreachable function would have been worse. It is the
+obvious next source: what a portfolio actually bills is stronger evidence than what a lease permits.

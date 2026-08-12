@@ -1977,6 +1977,32 @@ CREATE TABLE IF NOT EXISTS import_batches (
 );
 CREATE INDEX IF NOT EXISTS idx_imp_org ON import_batches(org_id, status, created_at);
 
+-- ---------- settings read out of uploaded documents (proposals, never writes) ----------
+
+-- A lease states most of what the settings page asks for. Reading it and
+-- PROPOSING beats asking an operator to transcribe their own contract — but a
+-- value that decides what a resident is charged is confirmed by a human, with
+-- the sentence it came from in view. Nothing here is a setting until accepted.
+CREATE TABLE IF NOT EXISTS setting_proposals (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  property_id TEXT, -- the building whose documents said this; NULL = whole org
+  key TEXT NOT NULL, -- SETTING_DEFAULTS key
+  path TEXT, -- sub-field for an object setting; NULL = the whole value
+  value TEXT NOT NULL, -- JSON
+  quote TEXT, -- the sentence read, shown verbatim for the operator to check
+  source_label TEXT, -- 'unit-902.pdf', 'rent roll'
+  source_file_id TEXT,
+  import_batch_id TEXT,
+  agreement TEXT, -- 'unanimous' | '3 of 5 leases' — how consistent the documents were
+  confidence TEXT NOT NULL DEFAULT 'high', -- high|low
+  status TEXT NOT NULL DEFAULT 'pending', -- pending|accepted|dismissed
+  created_at TEXT NOT NULL,
+  decided_at TEXT,
+  decided_by TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_setprop_org ON setting_proposals(org_id, status, key);
+
 -- ---------- platform marketing: walkthrough requests from the homepage ----------
 
 CREATE TABLE IF NOT EXISTS platform_leads (

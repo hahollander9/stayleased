@@ -37,6 +37,14 @@ export interface Sub { path: string; label: string; ctl: Ctl; hint?: string }
 
 export interface SettingSpec {
   key: string;
+  /** Where the answer to this setting comes from — the axis that decides how
+   * the page treats it. `documents`: your leases already state it, so the AI
+   * proposes and you confirm. `jurisdiction`: your state sets it, so the page
+   * flags it rather than pretending it is a preference. Absent: genuinely your
+   * decision, which is the only bucket that should look like a settings form. */
+  source?: 'documents' | 'jurisdiction';
+  /** relevant only to a specific housing vertical — folded away by default */
+  advanced?: boolean;
   /** stored and readable, but no code acts on it yet — say so rather than let
    * a label promise behavior the product does not have */
   pending?: boolean;
@@ -84,7 +92,7 @@ export type Group = (typeof GROUPS)[number];
 export const SPECS: SettingSpec[] = [
   // ---------- Rent, fees and payments ----------
   {
-    key: 'late_fee_policy', group: 'Rent, fees and payments', label: 'Late fee policy',
+    key: 'late_fee_policy', source: 'documents', group: 'Rent, fees and payments', label: 'Late fee policy',
     help: 'When rent is late and what it costs. The grace period runs from the day rent is due; the daily charge stops once it reaches the cap.',
     subs: [
       { path: 'graceDays', label: 'Grace period', ctl: { t: 'int', unit: 'days', min: 0, max: 31 }, hint: 'No late fee before this many days past due.' },
@@ -99,7 +107,7 @@ export const SPECS: SettingSpec[] = [
     ],
   },
   {
-    key: 'nsf_fee_cents', group: 'Rent, fees and payments', label: 'Returned payment fee',
+    key: 'nsf_fee_cents', source: 'documents', group: 'Rent, fees and payments', label: 'Returned payment fee',
     help: 'Charged to the resident when a payment is returned unpaid by their bank.',
     ctl: { t: 'money' },
   },
@@ -146,29 +154,29 @@ export const SPECS: SettingSpec[] = [
 
   // ---------- Deposits and move-out ----------
   {
-    key: 'deposit_interest_pct', group: 'Deposits and move-out', label: 'Deposit interest',
+    key: 'deposit_interest_pct', source: 'jurisdiction', group: 'Deposits and move-out', label: 'Deposit interest',
     help: 'Annual interest credited on held deposits. Required in some states; leave at zero where it is not.',
     ctl: { t: 'pct' },
   },
   {
-    key: 'deposit_disposition_days', group: 'Deposits and move-out', label: 'Deposit return deadline',
+    key: 'deposit_disposition_days', source: 'jurisdiction', group: 'Deposits and move-out', label: 'Deposit return deadline',
     help: 'Days after move-out to send the itemized statement and refund. This is set by state law — match your statute.',
     ctl: { t: 'int', unit: 'days after move-out', min: 1, max: 120 },
   },
   {
-    key: 'notice_period_days', group: 'Deposits and move-out', label: 'Notice period',
+    key: 'notice_period_days', source: 'jurisdiction', group: 'Deposits and move-out', label: 'Notice period',
     help: 'How much notice a resident must give before moving out. Also drives renewal timing and move-out checklists.',
     ctl: { t: 'int', unit: 'days', min: 0, max: 180 },
   },
 
   // ---------- Leasing and screening ----------
   {
-    key: 'application_fee_cents', group: 'Leasing and screening', label: 'Application fee',
+    key: 'application_fee_cents', source: 'documents', group: 'Leasing and screening', label: 'Application fee',
     help: 'Charged per applicant when they apply. Several states cap this.',
     ctl: { t: 'money' },
   },
   {
-    key: 'admin_fee_cents', pending: true, group: 'Leasing and screening', label: 'Administrative fee',
+    key: 'admin_fee_cents', source: 'documents', pending: true, group: 'Leasing and screening', label: 'Administrative fee',
     help: 'One-time fee charged at lease signing.',
     ctl: { t: 'money' },
   },
@@ -208,7 +216,7 @@ export const SPECS: SettingSpec[] = [
 
   // ---------- Renewals and pricing ----------
   {
-    key: 'mtm_premium_pct', group: 'Renewals and pricing', label: 'Month-to-month premium',
+    key: 'mtm_premium_pct', source: 'documents', group: 'Renewals and pricing', label: 'Month-to-month premium',
     help: 'Rent increase applied when a lease rolls to month-to-month instead of renewing.',
     ctl: { t: 'pct' },
   },
@@ -244,7 +252,7 @@ export const SPECS: SettingSpec[] = [
 
   // ---------- Pets ----------
   {
-    key: 'pet_policy', group: 'Pets', label: 'Pet policy',
+    key: 'pet_policy', source: 'documents', group: 'Pets', label: 'Pet policy',
     help: 'Applies to pets only. Assistance animals are never pets: no limit, no rent, no deposit.',
     subs: [
       { path: 'maxPets', label: 'Pets per home', ctl: { t: 'int', unit: 'maximum', min: 0, max: 10 } },
@@ -261,7 +269,7 @@ export const SPECS: SettingSpec[] = [
     ctl: { t: 'money' },
   },
   {
-    key: 'required_liability_cents', group: 'Insurance', label: 'Required liability coverage',
+    key: 'required_liability_cents', source: 'documents', group: 'Insurance', label: 'Required liability coverage',
     help: 'Minimum liability a resident’s own renters policy must carry.',
     ctl: { t: 'money' },
   },
@@ -348,7 +356,7 @@ export const SPECS: SettingSpec[] = [
 
   // ---------- Specialty housing ----------
   {
-    key: 'academic_calendar', group: 'Specialty housing', label: 'Academic calendar',
+    key: 'academic_calendar', advanced: true, group: 'Specialty housing', label: 'Academic calendar',
     help: 'Student housing: the lease year by-the-bed terms are written against.',
     subs: [
       { path: 'fallStart', label: 'Term starts', ctl: { t: 'date' } },
@@ -356,7 +364,7 @@ export const SPECS: SettingSpec[] = [
     ],
   },
   {
-    key: 'bah_table', group: 'Specialty housing', label: 'BAH rates by pay grade',
+    key: 'bah_table', advanced: true, group: 'Specialty housing', label: 'BAH rates by pay grade',
     help: 'Military housing: the Basic Allowance for Housing used to size affordability by rank. Update these when the annual rates publish.',
     matrix: {
       addLabel: 'Add a pay grade',
