@@ -692,3 +692,25 @@ companion test asserts every sub-field a spec declares exists in that setting's 
 
 **Method note:** every defect in this entry came from an agent instructed to REFUTE a fix, reading the
 consumer rather than the control. The fixes' own tests all passed, both before and after.
+
+## 2026-08-12 — Blob deletion moves after the commit, and the leak is closed at its source
+
+**Two more from the refutation pass, both about the file store.**
+
+1. **Deleting bytes inside a transaction is not crash-safe, and it fails into the state the codebase
+   forbids.** `clearOrgData`, `removeBatch` and the new sweep all unlinked blobs inside `tx()`.
+   Unlinking cannot be rolled back, so any abort after it — a failing commit, a disk-full audit
+   insert, any throw — restores every `files` row over bytes that are permanently gone: a portfolio of
+   dead download links. The safe order is rows in the transaction, commit, then unlink; a crash in
+   that gap leaves unreachable bytes instead, which `sweepOrphanBlobs` collects and no user can see.
+   `lib/files.ts` now exposes `deleteFileRows` (tx-safe) and `unlinkBlobs` (never in a tx) with the
+   reason written where a future caller will read it; `deleteFiles` keeps both in the safe order for
+   callers outside a transaction.
+2. **The leak was only closed for the org reset, not at its source.** `deleteProperty` deletes `files`
+   rows by raw SQL, so the ordinary property danger zone — the path Henry is about to use on Station
+   U&O — still left every signed lease and ID scan on disk as unreachable bytes. It now collects those
+   ids inside the transaction and unlinks after it commits, reporting the count as `file_blobs`.
+
+**Verified:** tsc strict clean · unit suite · e2e incl. payments (the late-fee engine was touched by
+the `??` fix). `tests/org_clear.test.ts` gains a fifth test: a signed lease attached to a property has
+both its row and its BYTES gone after an ordinary `deleteProperty`.

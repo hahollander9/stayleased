@@ -2,7 +2,7 @@ import { html, raw, when, join as hjoin, type Raw, type Child } from '../../lib/
 import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { q, q1, insert, run, tx, j, js } from '../../lib/db.ts';
-import { deleteFiles } from '../../lib/files.ts';
+import { deleteFileRows, unlinkBlobs } from '../../lib/files.ts';
 import { reverseImport, importFootprint, footprintBits, totalFootprint, type ReverseCounts } from './import_reverse.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate } from '../../lib/dates.ts';
@@ -72,9 +72,12 @@ function removeBatch(ctx: Ctx, batch: BatchRow, opts?: { force?: boolean }): { f
     // staged and discarded uploads never wrote anything — there is nothing to
     // take back, only the document to remove
     if (batch.status === 'applied') undone = reverseImport(ctx, batch, opts);
-    if (fileIds.length) files = deleteFiles(fileIds);
+    if (fileIds.length) files = deleteFileRows(fileIds);
     run('DELETE FROM import_batches WHERE id=? AND org_id=?', batch.id, ctx.orgId);
   });
+  // only once the removal is durable: unlinking cannot be rolled back, so
+  // doing it inside the tx would leave rows pointing at missing bytes
+  if (fileIds.length) unlinkBlobs(fileIds);
   audit(ctx, 'import_batch', batch.id, 'remove', null, {
     kind: batch.kind, filename: batch.filename, status: batch.status, rows, files,
     uploaded: (batch as { created_at?: string }).created_at || null,

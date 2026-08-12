@@ -8,7 +8,7 @@ import { ensureCoa } from '../src/modules/m9_accounting/coa.ts';
 import { trialBalance } from '../src/modules/m9_accounting/service.ts';
 import { autoMap } from '../src/modules/setup/mapping.ts';
 import { applyRentRoll, type BatchRow } from '../src/modules/setup/import_apply.ts';
-import { clearOrgData } from '../src/modules/m2_portfolio/service.ts';
+import { clearOrgData, deleteProperty } from '../src/modules/m2_portfolio/service.ts';
 import { putFile } from '../src/lib/files.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -179,4 +179,23 @@ test('a property-scoped admin cannot clear the whole organization', async () => 
   } finally {
     close();
   }
+});
+
+test('deleting a single property takes its stored bytes with it', () => {
+  // deleteProperty removes files ROWS by raw SQL and cannot reach the store, so
+  // before this every signed lease and ID scan under a deleted property was
+  // left on disk as unreachable data — #35's forbidden state, reached by the
+  // ordinary property danger zone rather than by the org reset.
+  const pid = importProperty('Byte Court', [['D1', 'Dee Byte', 'dee@orgclear.test', '1500', '1500', '0', '2026-01-01', '2026-12-31']]);
+  const ctx = sysCtx(orgId, AS_OF);
+  const lease = q1<{ id: string }>('SELECT id FROM leases WHERE property_id=?', pid)!;
+  const f = putFile(ctx, Buffer.from('%PDF-1.4 lease'), { name: 'lease.pdf', mime: 'application/pdf', entity: 'lease', entityId: lease.id });
+  const blob = join(ROOT, 'data', 'files', f.id + '.bin');
+  assert.ok(existsSync(blob));
+
+  const { counts } = deleteProperty(ctx, pid);
+
+  assert.equal(q1('SELECT id FROM files WHERE id=?', f.id), undefined, 'the row goes');
+  assert.equal(existsSync(blob), false, 'and so do the bytes');
+  assert.ok((counts.file_blobs || 0) >= 1, 'the count reports what was unlinked');
 });

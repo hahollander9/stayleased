@@ -1,7 +1,7 @@
 import { q, q1, run, tx, val, j } from '../../lib/db.ts';
 import { propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
-import { deleteFiles, sweepOrphanBlobs } from '../../lib/files.ts';
+import { unlinkBlobs, sweepOrphanBlobs } from '../../lib/files.ts';
 import { emit } from '../../lib/events.ts';
 
 /** M2 services: portfolio/unit math used by dashboards, quotes, pricing and
@@ -157,6 +157,9 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
     const { changes } = run(`DELETE FROM ${table} WHERE ${where}`, ...params);
     if (changes) counts[table] = (counts[table] || 0) + changes;
   };
+  // file rows are deleted below by raw SQL, which cannot reach the file store —
+  // collect their ids first and unlink the bytes only once the tx has committed
+  const doomedBlobs: string[] = [];
   const o = ctx.orgId;
   const p = propertyId;
   // reusable org-scoped subqueries — each use appends (o, p) to the params
@@ -206,7 +209,7 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
     const inDeadUsers = deadUsers.length ? `(${deadUsers.map(() => '?').join(',')})` : `('')`;
 
     // ---- files first, while the owning rows still exist to resolve ----
-    del('files', `org_id=? AND (
+    const fileWhere = `org_id=? AND (
         (entity='property' AND entity_id=?)
         OR entity_id IN (${U}) OR entity_id IN (${L})
         OR entity_id IN (SELECT id FROM work_orders WHERE org_id=? AND property_id=?)
@@ -214,8 +217,10 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
         OR entity_id IN (SELECT id FROM inspections WHERE org_id=? AND property_id=?)
         OR entity_id IN (SELECT id FROM signature_requests WHERE org_id=? AND lease_id IN (${L}))
         OR (entity='resident' AND entity_id IN ${inDead})
-      )`,
-      o, p, o, p, o, p, o, p, o, p, o, p, o, o, p, ...deadResidents);
+      )`;
+    const fileParams = [o, p, o, p, o, p, o, p, o, p, o, p, o, o, p, ...deadResidents];
+    for (const f of q<{ id: string }>(`SELECT id FROM files WHERE ${fileWhere}`, ...fileParams)) doomedBlobs.push(f.id);
+    del('files', fileWhere, ...fileParams);
 
     // ---- money: resident subledger + settlements ----
     del('payment_applications',
@@ -354,6 +359,9 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
 
     audit(ctx, 'property', p, 'delete', { name: prop.name, slug: prop.slug }, { counts });
   });
+  // committed: the rows are gone for good, so the bytes can go too. Doing this
+  // inside the tx would leave rows pointing at nothing if it rolled back.
+  if (doomedBlobs.length) counts.file_blobs = unlinkBlobs(doomedBlobs);
   emit(ctx, 'property.deleted', 'property', p, { name: prop.name, counts });
   return { counts };
 }
@@ -379,6 +387,7 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
 export function clearOrgData(ctx: Ctx): { counts: Record<string, number> } {
   const counts: Record<string, number> = {};
   const bump = (k: string, n: number): void => { if (n) counts[k] = (counts[k] || 0) + n; };
+  const orgBlobs: string[] = [];
 
   tx(() => {
     for (const p of q<{ id: string }>('SELECT id FROM properties WHERE org_id=?', ctx.orgId)) {
@@ -393,12 +402,15 @@ export function clearOrgData(ctx: Ctx): { counts: Record<string, number> } {
     // orphaned signed leases, ID scans and unit photos on disk. Sweep by
     // sha-less id: whatever row survives here is deleted with its bytes, and
     // any blob whose row the cascade already dropped is collected too.
-    const fileIds = q<{ id: string }>('SELECT id FROM files WHERE org_id=?', ctx.orgId).map((f) => f.id);
-    bump('files', deleteFiles(fileIds));
-    bump('orphaned_blobs', sweepOrphanBlobs());
+    orgBlobs.push(...q<{ id: string }>('SELECT id FROM files WHERE org_id=?', ctx.orgId).map((f) => f.id));
+    bump('files', run('DELETE FROM files WHERE org_id=?', ctx.orgId).changes);
     bump('import_batches', run('DELETE FROM import_batches WHERE org_id=?', ctx.orgId).changes);
     audit(ctx, 'org', ctx.orgId, 'clear_portfolio_data', null, counts);
   });
+  // after the commit: this org's remaining bytes, then anything the property
+  // cascade orphaned along the way
+  bump('file_blobs', unlinkBlobs(orgBlobs));
+  bump('orphaned_blobs', sweepOrphanBlobs());
   emit(ctx, 'org.data_cleared', 'org', ctx.orgId, { counts });
   return { counts };
 }

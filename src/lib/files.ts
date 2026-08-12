@@ -150,17 +150,40 @@ export function getFile(fileId: string): { row: FileRow; data: Buffer } | null {
   return { row, data: readFileSync(p) };
 }
 
-/** Delete stored files for good — the bytes on disk AND the row, together.
- * Only deliberate, audited paths call this (removing an upload from the
- * Migration Center): a row without its blob is a dead download link, and a
- * blob without its row is unreachable bytes that still hold resident data.
- * A missing blob is not an error — the row still goes. Returns rows deleted. */
-export function deleteFiles(fileIds: string[]): number {
+/** Delete `files` ROWS only. Safe inside a transaction, because a rollback
+ * puts the rows back. Pair it with unlinkBlobs AFTER the commit. */
+export function deleteFileRows(fileIds: string[]): number {
+  let removed = 0;
+  for (const fid of fileIds) removed += run('DELETE FROM files WHERE id=?', fid).changes;
+  return removed;
+}
+
+/** Delete stored BYTES only.
+ *
+ * Never call this inside a transaction. Unlinking cannot be rolled back, so a
+ * transaction that deletes rows and bytes together and then aborts — a failing
+ * commit, a disk-full audit insert, any throw after the unlink — restores every
+ * row over bytes that are permanently gone, leaving a portfolio of dead
+ * download links. The safe order is: delete rows in the transaction, commit,
+ * then unlink. A crash in the gap leaves unreachable bytes instead, which
+ * sweepOrphanBlobs collects and which no user can see. */
+export function unlinkBlobs(fileIds: string[]): number {
   let removed = 0;
   for (const fid of fileIds) {
-    rmSync(join(dir(), fid + '.bin'), { force: true }); // force: a missing blob is not an error
-    removed += run('DELETE FROM files WHERE id=?', fid).changes;
+    const p = join(dir(), fid + '.bin');
+    if (!existsSync(p)) continue;
+    rmSync(p, { force: true });
+    removed++;
   }
+  return removed;
+}
+
+/** Rows and bytes together, in the safe order. For callers that are NOT inside
+ * a transaction: a row without its blob is a dead download link, and a blob
+ * without its row is unreachable data that still holds resident information. */
+export function deleteFiles(fileIds: string[]): number {
+  const removed = deleteFileRows(fileIds);
+  unlinkBlobs(fileIds);
   return removed;
 }
 
