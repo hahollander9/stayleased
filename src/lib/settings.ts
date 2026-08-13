@@ -144,6 +144,30 @@ export function narrowOverride(orgValue: unknown, next: unknown): unknown {
   return Object.keys(diff).length ? diff : undefined;
 }
 
+/** Is this setting explicitly recorded — at the property, or failing that at
+ * the organization — rather than merely arriving as the code default? Callers
+ * that blend a setting with a non-settings source of truth (deposit law reads
+ * the state statute unless the operator has actually chosen a number) need to
+ * tell "the operator set this" from "nobody has touched it", and comparing the
+ * value against the code default cannot: a property that deliberately picks
+ * the same number as the default reads as untouched. */
+export function settingIsExplicit(ctx: Ctx, key: string, propertyId?: string | null): boolean {
+  const row = (pid: string): boolean =>
+    !!q1<{ id: string }>('SELECT id FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, pid, key);
+  return (!!propertyId && row(propertyId)) || row('');
+}
+
+/** A scorer's rollout mode is an ORGANIZATION decision — M19 doctrine is
+ * shadow-first, opt-in per org — while the thresholds beside it in the same
+ * settings key are per-property. Reading the mode through a named function
+ * rather than an omitted argument makes that deliberate: queues like the aging
+ * list and the Leasing Center span properties and have no single property to
+ * resolve against, so a per-property mode would make ordering depend on which
+ * building you happened to be looking at. */
+export function scorerMode(ctx: Ctx, key: 'delinquency_scoring' | 'lead_scoring'): string {
+  return getSetting<{ mode?: string }>(ctx, key)?.mode || 'shadow';
+}
+
 export function setSetting(ctx: Ctx, key: string, value: any, propertyId?: string | null): void {
   const pid = propertyId || '';
   const before = q1<{ id: string; value: string }>(

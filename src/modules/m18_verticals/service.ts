@@ -3,7 +3,7 @@ import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, addMonths, monthKey, fmtDate, diffDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { assertPerm, type Ctx , tempPassword } from '../../lib/auth.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { audit } from '../../lib/audit.ts';
 import { emit } from '../../lib/events.ts';
 import { registerJob } from '../../lib/jobs.ts';
@@ -20,8 +20,13 @@ import { sendEmail } from '../../lib/sim/messaging.ts';
 
 export const BED_LABELS = ['A', 'B', 'C', 'D', 'E', 'F'];
 
-export function academicCalendar(ctx: Ctx): { fallStart: string; fallEnd: string } {
-  return getSetting(ctx, 'academic_calendar');
+/** Two student properties can sit next to two different universities, so the
+ * term dates are the property's. Merged, because an override that moved only
+ * the end date must keep the organization's start date — every bed-roster
+ * comparison is against `fallStart`, and `>= undefined` is false, which would
+ * empty the fall board rather than fail loudly. */
+export function academicCalendar(ctx: Ctx, propertyId?: string | null): { fallStart: string; fallEnd: string } {
+  return getSettingMerged(ctx, 'academic_calendar', propertyId);
 }
 
 export interface BedSlot {
@@ -39,7 +44,7 @@ export interface UnitRoster {
 
 /** the by-the-bed roster: current occupancy + fall assignments per bed */
 export function bedRoster(ctx: Ctx, propertyId: string): UnitRoster[] {
-  const cal = academicCalendar(ctx);
+  const cal = academicCalendar(ctx, propertyId);
   const units = q<any>(
     `SELECT u.*, f.beds AS fp_beds, f.name AS fp FROM units u LEFT JOIN floorplans f ON f.id=u.floorplan_id
      WHERE u.property_id=? ORDER BY u.unit_number`,
@@ -84,7 +89,7 @@ export function assignBed(
   const prop = q1<any>('SELECT * FROM properties WHERE id=?', unit.property_id);
   if (prop.type !== 'student') throw new Error('by-the-bed leasing is a student-property mode');
   if (!BED_LABELS.slice(0, unit.fp_beds || 1).includes(opts.bedLabel)) throw new Error('no such bed in this unit');
-  const cal = academicCalendar(ctx);
+  const cal = academicCalendar(ctx, unit.property_id);
   const start = opts.startDate || cal.fallStart;
   const clash = q1<any>(
     `SELECT id FROM leases WHERE unit_id=? AND bed_label=? AND status NOT IN ('canceled','ended','renewed')
@@ -158,7 +163,7 @@ export function preLeasePacing(ctx: Ctx, propertyId: string): {
   targetPct: number;
   curve: PacingPoint[];
 } {
-  const cal = academicCalendar(ctx);
+  const cal = academicCalendar(ctx, propertyId);
   const totalBeds = val<number>(
     `SELECT COALESCE(SUM(f.beds),0) FROM units u JOIN floorplans f ON f.id=u.floorplan_id WHERE u.property_id=?`,
     propertyId,

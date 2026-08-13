@@ -1,6 +1,6 @@
-import { html, type Raw, type Child } from '../../lib/html.ts';
+import { html, when, type Raw, type Child } from '../../lib/html.ts';
 import { field, input, select, checkbox, moneyInput } from '../../ui/ui.ts';
-import { parseUsd } from '../../lib/money.ts';
+import { parseUsd, usd } from '../../lib/money.ts';
 import { SETTING_DEFAULTS } from '../../lib/settings.ts';
 
 /** The typed face of org settings.
@@ -33,7 +33,11 @@ export type Ctl =
   | { t: 'ints'; unit?: string }
   | { t: 'rank'; options: [string, string][] };
 
-export interface Sub { path: string; label: string; ctl: Ctl; hint?: string }
+/** One field inside a settings object. `orgOnly` marks a field the product
+ * reads organization-wide even though its siblings resolve per property — the
+ * property level shows it, disabled, with the organization's value, instead of
+ * accepting an edit that would never take effect. */
+export interface Sub { path: string; label: string; ctl: Ctl; hint?: string; orgOnly?: true; orgOnlyWhy?: string }
 
 export interface SettingSpec {
   key: string;
@@ -48,6 +52,15 @@ export interface SettingSpec {
   /** stored and readable, but no code acts on it yet — say so rather than let
    * a label promise behavior the product does not have */
   pending?: boolean;
+  /** the product reads this once, organization-wide: a property override could
+   * be saved but would never take effect. The page refuses it and says why,
+   * rather than offering a control that quietly does nothing.
+   * `tests/settings_scope.test.ts` holds this to the code both ways — an
+   * orgOnly setting may not be read with a property id, and one that is not
+   * orgOnly may not be read without one. */
+  orgOnly?: true;
+  /** why it is organization-wide, in the operator's terms */
+  orgOnlyWhy?: string;
   group: Group;
   label: string;
   /** what changes in the product when this changes — in the operator's terms */
@@ -284,6 +297,8 @@ export const SPECS: SettingSpec[] = [
     key: 'ai_enabled', group: 'AI and automation', label: 'AI agents',
     help: 'The org-wide switch. Off pauses every agent immediately — nothing is drafted, nothing is queued, nothing is sent.',
     ctl: { t: 'bool', on: 'Agents running' },
+    orgOnly: true,
+    orgOnlyWhy: 'A kill switch that stopped only some buildings would not be a kill switch. To pause one property, set its autonomy levels to draft-only instead.',
   },
   {
     key: 'ai_first_touch', group: 'AI and automation', label: 'First touch on new leads',
@@ -317,7 +332,10 @@ export const SPECS: SettingSpec[] = [
     key: 'delinquency_scoring', group: 'AI and automation', label: 'Delinquency scoring',
     help: 'Scores every open balance daily into clear, watch, engage or escalate. Shadow shows the score and changes nothing — watch the chips for a few weeks before switching to active.',
     subs: [
-      { path: 'mode', label: 'Mode', ctl: { t: 'select', options: SCORER } },
+      {
+        path: 'mode', label: 'Mode', ctl: { t: 'select', options: SCORER }, orgOnly: true,
+        orgOnlyWhy: 'The delinquency queue spans every property, so what the scores are allowed to do is decided once for the organization. The threshold below is per property.',
+      },
       { path: 'noticeThresholdDays', label: 'Escalation threshold', ctl: { t: 'int', unit: 'days past due', min: 15, max: 120 }, hint: 'Past this, the agent stops writing to the resident and assembles a staff packet instead.' },
     ],
   },
@@ -325,6 +343,8 @@ export const SPECS: SettingSpec[] = [
     key: 'lead_scoring', group: 'AI and automation', label: 'Lead heat scoring',
     help: 'Scores open leads hot, warm or cold from behavior and availability. Shadow shows the chips; active also orders the Leasing Center hot-first and queues a call for a silent hot lead.',
     subs: [{ path: 'mode', label: 'Mode', ctl: { t: 'select', options: SCORER } }],
+    orgOnly: true,
+    orgOnlyWhy: 'The Leasing Center lists leads across the whole portfolio, and ordering is behavior — one building acting on heat while the shared queue does not would change what staff see next for every property.',
   },
 
   // ---------- Approval thresholds ----------
@@ -366,6 +386,8 @@ export const SPECS: SettingSpec[] = [
   {
     key: 'bah_table', advanced: true, group: 'Specialty housing', label: 'BAH rates by pay grade',
     help: 'Military housing: the Basic Allowance for Housing used to size affordability by rank. Update these when the annual rates publish.',
+    orgOnly: true,
+    orgOnlyWhy: 'The rate card is read once for the portfolio on Vertical modes, which has no single property in view. Per-property (per-locality) rates would need that page to ask which property first.',
     matrix: {
       addLabel: 'Add a pay grade',
       cols: [
@@ -440,9 +462,30 @@ function unitOf(ctl: Ctl): string {
   return '';
 }
 
+/** A field the product reads organization-wide, shown at the property level as
+ * what it is: the organization's value, stated plainly, with the reason it does
+ * not move here. A disabled control would still read as "editable, later". */
+function orgWideRow(label: Child, shown: Child, why?: string): Raw {
+  return html`<div class="set-orgwide">
+    <div class="set-orgwide-head"><b>${label}</b><span class="badge">organization-wide</span></div>
+    <div class="set-orgwide-val">${shown}</div>
+    ${when(!!why, () => html`<p class="small muted" style="margin:6px 0 0">${why}</p>`)}
+  </div>`;
+}
+
+function shownValue(ctl: Ctl, value: unknown): string {
+  if (ctl.t === 'select') return ctl.options.find(([v]) => v === String(value ?? ''))?.[1] as string || String(value ?? '—');
+  if (ctl.t === 'bool') return value === true ? ctl.on : 'Off';
+  if (ctl.t === 'money') return typeof value === 'number' ? usd(value) : '—';
+  return `${String(value ?? '—')}${unitOf(ctl) ? ' ' + unitOf(ctl) : ''}`;
+}
+
 /** The editable form body for one setting. Field names are `f.<path>`, or
- * plain `f` for a scalar, which is what parseSetting reads back. */
-export function renderSetting(spec: SettingSpec, value: unknown): Raw {
+ * plain `f` for a scalar, which is what parseSetting reads back. At the
+ * property level, fields the product reads organization-wide render as facts
+ * rather than inputs — and parseSetting carries them through untouched, so a
+ * property save cannot record an override that would never take effect. */
+export function renderSetting(spec: SettingSpec, value: unknown, atProperty = false): Raw {
   if (spec.matrix) {
     const rows = Object.keys((value as Record<string, unknown>) || {}).sort();
     return html`
@@ -460,17 +503,35 @@ export function renderSetting(spec: SettingSpec, value: unknown): Raw {
       </div>`;
   }
   if (spec.subs) {
-    return html`<div class="form-grid">${spec.subs.map((s) => field(
-      unitOf(s.ctl) ? html`${s.label} <span class="muted">${unitOf(s.ctl)}</span>` : s.label,
-      control(`f.${s.path}`, s.ctl, at(value, s.path)),
-      s.hint,
-    ))}</div>`;
+    return html`<div class="form-grid">${spec.subs.map((s) => (atProperty && s.orgOnly
+      ? orgWideRow(s.label, shownValue(s.ctl, at(value, s.path)), s.orgOnlyWhy)
+      : field(
+        unitOf(s.ctl) ? html`${s.label} <span class="muted">${unitOf(s.ctl)}</span>` : s.label,
+        control(`f.${s.path}`, s.ctl, at(value, s.path)),
+        s.hint,
+      )))}</div>`;
   }
   const ctl = spec.ctl!;
   return html`<div class="form-grid">${field(
     unitOf(ctl) ? html`Value <span class="muted">${unitOf(ctl)}</span>` : 'Value',
     control('f', ctl, value),
   )}</div>`;
+}
+
+/** The same setting as a statement rather than a form: what it currently is,
+ * with no control to touch. Used at the property level for settings the product
+ * reads once organization-wide — an input the operator can move, submit, and
+ * see stored while nothing changes is worse than no input at all. */
+export function describeSetting(spec: SettingSpec, value: unknown): Raw {
+  if (spec.matrix) {
+    const rows = Object.keys((value as Record<string, unknown>) || {});
+    return html`<div class="set-static">${rows.length ? `${rows.length} ${rows.length === 1 ? 'row' : 'rows'}: ${rows.sort().join(', ')}` : 'nothing listed'}</div>`;
+  }
+  if (spec.subs) {
+    return html`<dl class="set-static-dl">${spec.subs.map((sub) => html`
+      <dt>${sub.label}</dt><dd>${shownValue(sub.ctl, at(value, sub.path))}</dd>`)}</dl>`;
+  }
+  return html`<div class="set-static">${shownValue(spec.ctl!, value)}</div>`;
 }
 
 /** Control types the form always submits. Checkbox-backed types are excluded:
@@ -567,7 +628,7 @@ function readOne(ctl: Ctl, name: string, body: Record<string, unknown>, label: s
 /** Rebuild a setting's value from a submitted form. Throws with a message
  * written for the person who typed it — the old page accepted any JSON and
  * silently changed how money worked. */
-export function parseSetting(spec: SettingSpec, body: Record<string, unknown>, current: unknown): unknown {
+export function parseSetting(spec: SettingSpec, body: Record<string, unknown>, current: unknown, atProperty = false): unknown {
   if (spec.matrix) {
     // null-prototype: a row keyed "__proto__" must become data, not a silent
     // no-op against Object.prototype's setter
@@ -610,7 +671,12 @@ export function parseSetting(spec: SettingSpec, body: Record<string, unknown>, c
       const kept = at(current, p);
       if (kept !== undefined) out[p] = kept;
     }
-    for (const s of spec.subs) out[s.path] = readOne(s.ctl, `f.${s.path}`, body, s.label);
+    for (const s of spec.subs) {
+      // an organization-wide field is not on the property form at all; keep the
+      // value it already resolves to so the save cannot silently clear it
+      if (atProperty && s.orgOnly) { out[s.path] = at(current, s.path); continue; }
+      out[s.path] = readOne(s.ctl, `f.${s.path}`, body, s.label);
+    }
     return out;
   }
   return readOne(spec.ctl!, 'f', body, spec.label);

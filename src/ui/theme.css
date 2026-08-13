@@ -57,6 +57,11 @@
   --chart-grid: rgba(154, 170, 196, .10);
   --chart-axis: #71809a;
   --chart-ink: #e9eef8;
+  /* height of the sticky top chrome — brandbar alone until the module bar
+     appears at 981px (see the responsive block). Anything that sticks BELOW the
+     chrome offsets by this; changing either bar's height means changing it here
+     and nowhere else. */
+  --chrome-h: 54px;
   --radius: 14px;
   --radius-sm: 9px;
   --shadow: 0 1px 2px rgba(0, 0, 0, .3);
@@ -539,6 +544,61 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
 
 /* org settings: one editable block per setting, hairline-separated inside a
    group card (a card per setting would nest cards and lose the grouping) */
+/* ---- settings scope switcher ----
+   Which level you are editing has to be unmistakable while you scroll: an org
+   default reaches every building, a property override reaches one. The bar
+   stays under the top chrome, the rail colour differs by level, and every Save
+   button below names the level it saves to, so the affordance carries the
+   scope rather than a control you passed on the way in. */
+.scope {
+  position: sticky; top: var(--chrome-h); z-index: 4; margin: 0 0 18px;
+  border: 1px solid var(--line); border-radius: var(--radius);
+  background: var(--surface); box-shadow: var(--shadow); overflow: hidden;
+}
+.scope::before { content: ''; position: absolute; inset: 0 auto 0 0; width: 3px; background: var(--violet); }
+.scope[data-level="property"]::before { background: var(--accent); }
+.scope-in { display: flex; flex-wrap: wrap; gap: 10px 20px; align-items: flex-start; padding: 13px 16px 11px 19px; }
+.scope-who { flex: 1 1 300px; min-width: 0; }
+.scope-eyebrow { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.scope-name { margin: 1px 0 0; font-size: 17px; font-weight: 640; letter-spacing: -.015em; font-family: var(--display); }
+.scope-note { margin: 5px 0 0; max-width: 78ch; color: var(--ink-2); }
+.scope-act { display: flex; gap: 8px; align-items: flex-end; flex-wrap: wrap; }
+.scope-act .field { margin: 0; }
+.scope-levels { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 16px 12px 19px; }
+.scope-filter { display: flex; padding: 0 16px 12px 19px; border-top: 1px solid var(--line-2); padding-top: 11px; }
+.lvl {
+  display: inline-flex; align-items: center; gap: 7px; text-decoration: none;
+  border: 1px solid var(--line); background: rgba(255, 255, 255, .035); border-radius: 999px;
+  padding: 5px 12px; font-size: 12.5px; color: var(--ink-2);
+  transition: border-color .15s ease, color .15s ease, background-color .15s ease;
+}
+.lvl:hover { border-color: var(--accent); color: var(--accent-ink); }
+.lvl .n { font-size: 11px; font-variant-numeric: tabular-nums; color: var(--muted); background: rgba(154, 170, 196, .16); border-radius: 999px; padding: 0 6px; }
+.lvl[aria-current="true"] { background: var(--accent-soft); border-color: rgba(52, 211, 153, .45); color: var(--accent-ink); font-weight: 600; }
+.lvl[aria-current="true"] .n { color: var(--accent-ink); background: rgba(52, 211, 153, .22); }
+.lvl-org[aria-current="true"] { background: var(--violet-soft); border-color: rgba(167, 139, 250, .45); color: #d8ccfe; }
+.lvl-org[aria-current="true"] .n { color: #d8ccfe; background: rgba(167, 139, 250, .22); }
+.lvl-off { color: var(--muted); }
+/* a field the product reads once org-wide: stated, not offered */
+.set-orgwide { border: 1px dashed var(--line); border-radius: var(--radius-sm); padding: 11px 13px; background: rgba(154, 170, 196, .04); }
+.set-orgwide-head { display: flex; align-items: center; gap: 8px; }
+.set-orgwide-val { color: var(--ink); font-size: 13.5px; }
+.set-orgwide-val .form-grid { margin: 0; }
+.set-static { font-weight: 600; }
+.set-static-dl { display: grid; grid-template-columns: auto 1fr; gap: 3px 14px; margin: 0; }
+.set-static-dl dt { color: var(--muted); font-size: 12.5px; }
+.set-static-dl dd { margin: 0; font-weight: 600; }
+[data-theme="light"] .lvl { background: rgba(13, 25, 48, .035); }
+[data-theme="light"] .lvl-org[aria-current="true"] { color: #6d28d9; }
+[data-theme="light"] .set-orgwide { background: rgba(13, 25, 48, .025); }
+@media (max-width: 980px) { .scope-act { width: 100%; } }
+/* on a phone a sticky bar costs more screen than it earns — relative, not
+   static, or the level rail (an absolutely positioned ::before) escapes the
+   card and paints down the whole page. `top` must be cleared with it: on a
+   RELATIVE box the sticky offset becomes a 54px downward shift that leaves a
+   gap above and covers the first card's heading below. */
+@media (max-width: 720px) { .scope { position: relative; top: auto; } }
+@media (prefers-reduced-motion: reduce) { .lvl { transition: none; } }
 .set-row { padding: 20px 0 18px; border-top: 1px solid var(--line-2); }
 .set-row:first-child { padding-top: 4px; border-top: 0; }
 .set-row h3 { margin: 0; font-size: 14px; font-weight: 620; letter-spacing: -.01em; }
@@ -1133,6 +1193,7 @@ svg.chart path.ct { transform-box: fill-box; transform-origin: 50% 50%; animatio
 
 /* ---------- responsive ---------- */
 .menu-btn { display: none; background: none; border: 0; cursor: pointer; padding: 4px; color: var(--ink-2); }
+@media (min-width: 981px) { :root { --chrome-h: 96px; } }  /* brandbar 54 + module bar 42 */
 @media (max-width: 980px) {
   .menu-btn { display: inline-flex; }
   .modulebar { display: none; }

@@ -4,7 +4,7 @@ import { nowIso, addDays, monthKey, fmtDate, addMonths } from '../../lib/dates.t
 import { usd } from '../../lib/money.ts';
 import { sysCtx, type Ctx } from '../../lib/auth.ts';
 import { on, emit } from '../../lib/events.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged, scorerMode } from '../../lib/settings.ts';
 import { getDials } from '../../lib/sim/dials.ts';
 import { llm } from '../../lib/sim/llm.ts';
 import { screenFairHousing } from '../../lib/fairhousing.ts';
@@ -36,8 +36,10 @@ export function setAiHooksLive(v: boolean): void {
 import { detectLeadIntent, type LeadIntent } from '../../lib/lead_intent.ts';
 export { detectLeadIntent, type LeadIntent };
 
-function afterHours(ctx: Ctx): boolean {
-  const hours = getSetting<{ start: string; end: string }>(ctx, 'business_hours');
+/** Office hours belong to the building, not the company — a portfolio can hold
+ * one property staffed until 6 and another until 8. */
+function afterHours(ctx: Ctx, propertyId?: string | null): boolean {
+  const hours = getSettingMerged<{ start: string; end: string }>(ctx, 'business_hours', propertyId);
   const hour = getDials(ctx.orgId).clockHour;
   return hour < Number(hours.start.slice(0, 2)) || hour >= Number(hours.end.slice(0, 2));
 }
@@ -64,7 +66,10 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
     facts.pricing = `On a 12-month lease those run ${units.map((u) => `${usd(quotedRent(ctx, u, 12))}/mo (${u.unit_number})`).join(', ')} — live pricing, no games.`;
   }
   if (intent.asksPets) {
-    const pol = getSetting<{ maxPets: number; petRentCents: number; depositCents: number; restricted: string }>(ctx, 'pet_policy');
+    // the property's own policy: pet rent, deposit and the restricted-breed
+    // list vary by building and by municipal ordinance, and this sentence is
+    // sent to a prospect about ONE building
+    const pol = getSettingMerged<{ maxPets: number; petRentCents: number; depositCents: number; restricted: string }>(ctx, 'pet_policy', lead.property_id);
     facts.petPolicy = `Pets are family here: up to ${pol.maxPets} per home, ${usd(pol.petRentCents)}/mo pet rent and a ${usd(pol.depositCents)} deposit each. (Restricted breeds: ${pol.restricted}.)`;
   }
   // tour proposal: tomorrow's first open slots
@@ -84,7 +89,7 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
   const fh = screenFairHousing(rawDraft);
   const draft = fh.ok ? rawDraft : fh.safe;
   const confidence = intent.wantsHuman ? 0.4 : 0.92;
-  const oh = afterHours(ctx);
+  const oh = afterHours(ctx, lead.property_id);
   const notes = [
     intent.wantsHuman ? 'low confidence: prospect asked for a person — held for staff even on autonomous' : null,
     fh.ok ? null : `fair-housing guardrail rewrote ${fh.flags.length} phrase(s): ${[...new Set(fh.flags.map((f) => f.category))].join(', ')}`,
@@ -231,7 +236,7 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
   // leaves everything below exactly as it always was. A stale 'clear' row
   // with money newly owed falls back to legacy — the assessment is an
   // authority on severity, never a reason to ignore a real balance.
-  const scoringMode = getSetting<{ mode: string }>(ctx, 'delinquency_scoring')?.mode;
+  const scoringMode = scorerMode(ctx, 'delinquency_scoring');
   const assessRow = scoringMode === 'active' ? latestAssessment(ctx, leaseId) : null;
   const assess = assessRow && assessRow.bucket !== 'clear' ? assessRow : null;
 
@@ -263,7 +268,7 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
     `SELECT r.* FROM household_members hm JOIN residents r ON r.id=hm.resident_id WHERE hm.lease_id=? AND hm.role='primary'`,
     leaseId,
   );
-  const bounds = getSetting<{ maxInstallments: number; minInstallmentCents: number }>(ctx, 'ai_plan_bounds');
+  const bounds = getSettingMerged<{ maxInstallments: number; minInstallmentCents: number }>(ctx, 'ai_plan_bounds', lease.property_id);
   const planEligible =
     bal >= bounds.minInstallmentCents * 2 &&
     !q1<any>(`SELECT id FROM payment_plans WHERE lease_id=? AND status='active'`, leaseId) &&
@@ -371,7 +376,7 @@ export function draftRenewalOutreach(ctx: Ctx, leaseId: string): { id: string; s
   // M19 cross-guard (active mode): never draft renewal warmth at a household
   // whose delinquency is escalated — the collections side is already holding
   // it for a human.
-  if (getSetting<{ mode: string }>(ctx, 'delinquency_scoring')?.mode === 'active' && latestAssessment(ctx, leaseId)?.bucket === 'escalate') {
+  if (scorerMode(ctx, 'delinquency_scoring') === 'active' && latestAssessment(ctx, leaseId)?.bucket === 'escalate') {
     return null;
   }
   const contact = q1<any>(

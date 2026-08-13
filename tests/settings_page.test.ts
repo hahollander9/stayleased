@@ -510,7 +510,8 @@ test('a property-scoped admin can set their own property but never an organizati
     // the org-defaults level is readable but not editable
     const page = await get(base, '/admin/settings', cookie);
     assert.equal(page.status, 200);
-    assert.match(page.text, /shown for reference/, 'the page says why it is read-only');
+    // copy pin (2026-08-13): the scope bar states the reason, not just the fact
+    assert.match(page.text, /read-only for you/, 'the page says why it is read-only');
     assert.doesNotMatch(page.text, /Not Yours Court/, 'the picker only offers properties in the grant');
 
     const orgWrite = await post(base, '/admin/settings', { key: 'nsf_fee_cents', property: '', f: '99.00' }, cookie);
@@ -652,4 +653,90 @@ test('a property override records only what differs, so the rest keeps following
       close();
     }
   })();
+});
+
+// ---------------------------------------------------------------------------
+// The level being edited (2026-08-13). A setting the product reads once for the
+// whole organization used to render at the property level as an ordinary
+// control: the save succeeded, the row was stored, and nothing changed. That is
+// worse than not offering it, because the operator now believes it is set.
+// ---------------------------------------------------------------------------
+
+test('an organization-wide setting is stated at the property level, not offered', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    const page = await get(base, `/admin/settings?property=${propId}`, cookie);
+    assert.equal(page.status, 200);
+    assert.match(page.text, /organization-wide/, 'the property level says which settings do not move here');
+    // the kill switch has no property form to submit
+    const forms = formsOn(page.text).filter((f) => f.key === 'ai_enabled');
+    assert.equal(forms.length, 0, 'no editable form for an org-wide setting at a property');
+
+    // and the endpoint refuses it even when the form is forged
+    const before = q1<{ id: string }>('SELECT id FROM settings WHERE org_id=? AND property_id=? AND key=?', orgId, propId, 'ai_enabled');
+    const res = await post(base, '/admin/settings', { key: 'ai_enabled', property: propId, f: '1' }, cookie);
+    assert.equal(res.status, 303);
+    assert.match(String(res.location), /property=/);
+    const after = q1<{ id: string }>('SELECT id FROM settings WHERE org_id=? AND property_id=? AND key=?', orgId, propId, 'ai_enabled');
+    assert.equal(!!after, !!before, 'no property row was written');
+  } finally {
+    close();
+  }
+});
+
+test('a setting with one org-wide field still takes a property override on the rest', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    await post(base, '/admin/settings', { key: 'delinquency_scoring', property: '', 'f.mode': 'active', 'f.noticeThresholdDays': '45' }, cookie);
+    // the property form carries the threshold only — the mode is not on it
+    const page = await get(base, `/admin/settings?property=${propId}`, cookie);
+    const form = formsOn(page.text).find((f) => f.key === 'delinquency_scoring');
+    assert.ok(form, 'the threshold is still editable at the property');
+    assert.equal(form!.body['f.mode'], undefined, 'the org-wide mode is not a property field');
+
+    await post(base, '/admin/settings', { key: 'delinquency_scoring', property: propId, 'f.noticeThresholdDays': '30' }, cookie);
+    const stored = JSON.parse(q1<{ value: string }>(
+      'SELECT value FROM settings WHERE org_id=? AND property_id=? AND key=?', orgId, propId, 'delinquency_scoring',
+    )!.value);
+    assert.deepEqual(Object.keys(stored), ['noticeThresholdDays'], 'the override records only what differs, and never the mode');
+    assert.equal(merged<{ mode: string; noticeThresholdDays: number }>('delinquency_scoring', propId).mode, 'active', 'the mode still comes from the organization');
+    assert.equal(merged<{ mode: string; noticeThresholdDays: number }>('delinquency_scoring', propId).noticeThresholdDays, 30);
+  } finally {
+    close();
+  }
+});
+
+test('the level switcher names the level, counts what is set there, and every Save says where it lands', async () => {
+  const { base, close } = await startTestServer();
+  try {
+    const cookie = await loginAs(base, 'admin@setpage.test');
+    const org = await get(base, '/admin/settings', cookie);
+    assert.match(org.text, /Editing the organization/);
+    assert.match(org.text, /Settings Test Co/, 'the organization is named, not implied');
+    assert.match(org.text, /Save for Settings Test Co/, 'the button carries the scope to the bottom of a long page');
+    assert.match(org.text, /apply to <b>every property<\/b>/, 'the reach of an org default is stated');
+
+    await post(base, '/admin/settings', { key: 'nsf_fee_cents', property: propId, f: '61.00' }, cookie);
+    const prop = await get(base, `/admin/settings?property=${propId}`, cookie);
+    assert.match(prop.text, /Editing one property/);
+    assert.match(prop.text, /Save for Override Court/);
+    assert.match(prop.text, /Back to organization defaults/, 'one click out of the property level');
+    assert.match(prop.text, /Show only what is set here/, 'the overrides can be isolated');
+    assert.match(prop.text, /data-level="property"/, 'the level is on the bar for styling, not just in prose');
+    // the tagged template escapes what it interpolates: a quoted attribute built
+    // as a plain string lands as aria-current=&quot;true&quot; and the current
+    // level stops looking current while every test still passes
+    assert.match(prop.text, /aria-current="true"/, 'the level in force is marked, for assistive tech and for the eye');
+    assert.doesNotMatch(prop.text, /aria-current=&quot;/, 'the attribute reached the page unescaped');
+    assert.doesNotMatch(prop.text, /Co\.\./, 'no doubled period where an organization name ends in one');
+
+    // the filter really filters
+    const only = await get(base, `/admin/settings?property=${propId}&only=set`, cookie);
+    assert.match(only.text, /Returned payment fee/, 'the overridden setting is shown');
+    assert.doesNotMatch(only.text, /Proration method/, 'an inherited setting is not');
+  } finally {
+    close();
+  }
 });

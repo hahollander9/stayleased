@@ -4,7 +4,7 @@ import { nowIso, addDays, monthKey, diffDays, fmtDate, firstOfMonth, fmtMonth } 
 import { usd, splitCents } from '../../lib/money.ts';
 import { assertPerm, type Ctx } from '../../lib/auth.ts';
 import { emit, on } from '../../lib/events.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { registerJob, orgKind } from '../../lib/jobs.ts';
 import { notify } from '../../lib/templates.ts';
 import { audit } from '../../lib/audit.ts';
@@ -120,7 +120,10 @@ export function recordPayment(ctx: Ctx, input: PaymentInput): string {
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new PaymentRejected('invalid amount');
 
   // policy: partial payments
-  const policy = getSetting<{ allow: boolean; blockWhenEvictionFiled: boolean }>(ctx, 'partial_payments', lease.property_id);
+  // merged, not replaced: a property override stores only what DIFFERS, so
+  // `getSetting` here would leave `allow` undefined at any property that edited
+  // the other field — and every underpayment would be refused.
+  const policy = getSettingMerged<{ allow: boolean; blockWhenEvictionFiled: boolean }>(ctx, 'partial_payments', lease.property_id);
   const balance = leaseBalance(ctx, input.leaseId);
   if (!policy.allow && input.amountCents < balance) {
     throw new PaymentRejected('partial payments are not accepted at this property');
@@ -148,7 +151,7 @@ export function recordPayment(ctx: Ctx, input: PaymentInput): string {
   }
 
   // convenience fee (card only, grossed up so the property nets the full amount)
-  const feeCfg = getSetting<{ achCents: number; cardPct: number }>(ctx, 'convenience_fee', lease.property_id);
+  const feeCfg = getSettingMerged<{ achCents: number; cardPct: number }>(ctx, 'convenience_fee', lease.property_id);
   const fee = input.method === 'card' ? Math.round((input.amountCents * feeCfg.cardPct) / 100) : input.method === 'ach' ? feeCfg.achCents : 0;
 
   const isCredit = input.method === 'credit';
@@ -391,7 +394,10 @@ export function lateFeeCandidates(ctx: Ctx, date: string, propertyId?: string | 
   for (const l of leases) {
     let policy = policyCache.get(l.property_id);
     if (!policy) {
-      policy = getSetting<any>(ctx, 'late_fee_policy', l.property_id);
+      // merged: a property that overrides only the flat amount must still get
+      // the organization's grace days — `addDays(due, undefined)` is a RangeError
+      // that takes the whole nightly late-fee run down with it, not just this lease
+      policy = getSettingMerged<any>(ctx, 'late_fee_policy', l.property_id);
       policyCache.set(l.property_id, policy);
     }
     // each rent charge is late once ITS OWN due date + grace has passed (mid-month
@@ -852,14 +858,20 @@ registerJob({
 // ---------- bad debt write-off (M8 → feeds the §10 Bad Debt report) ----------
 
 /** Write the lease's open balance off to 5610 Bad Debt Expense (negative AR
- * charge, kind `writeoff`). Above the org threshold it needs a controller
- * (gl:post) on top of collections:manage. Closes any open collections case. */
+ * charge, kind `writeoff`). Above the threshold in force at the lease's property
+ * it needs a controller (gl:post) on top of collections:manage. Closes any open
+ * collections case. */
 export function writeOffBalance(ctx: Ctx, leaseId: string, reason: string): number {
   assertPerm(ctx, 'collections:manage');
   if (!reason.trim()) throw new Error('a write-off needs a written reason');
+  const lease = q1<{ property_id: string }>('SELECT property_id FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  if (!lease) throw new Error('lease not found');
   const bal = leaseBalance(ctx, leaseId);
   if (bal <= 0) throw new Error('nothing to write off — the balance is not positive');
-  const threshold = getSetting<number>(ctx, 'writeoff_approval_threshold_cents');
+  // property-scoped like every other approval threshold (JE, invoice, PO): a
+  // building that lowered its ceiling must not have write-offs waved through
+  // at the organization's number
+  const threshold = getSetting<number>(ctx, 'writeoff_approval_threshold_cents', lease.property_id);
   if (bal > threshold) assertPerm(ctx, 'gl:post');
   createCharge(ctx, {
     leaseId, kind: 'writeoff', label: `Bad debt write-off — ${reason}`,
