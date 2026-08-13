@@ -36,7 +36,9 @@ registerDashboardExtras((ctx, propertyId) => {
   return {
     kpis: [
       { label: 'Delinquent', value: usd(total), sub: `${aging.length} households`, tone: total > 0 ? 'bad' : 'ok', href: '/delinquency' },
-      { label: 'Collection rate', value: `${stats.collectionRate}%`, sub: fmtMonth(monthKey(ctx.businessDate)), tone: stats.collectionRate >= 95 ? 'ok' : 'warn', href: '/receivables' },
+      stats.billingStartsOn
+        ? { label: 'Collection rate', value: '—', sub: `billing starts ${fmtDate(stats.billingStartsOn)}`, href: '/receivables' }
+        : { label: 'Collection rate', value: `${stats.collectionRate}%`, sub: fmtMonth(monthKey(ctx.businessDate)), tone: stats.collectionRate >= 95 ? 'ok' : 'warn', href: '/receivables' },
       { label: 'Autopay', value: `${stats.autopayAdoption}%`, sub: 'of active leases', href: '/receivables' },
     ],
     panels: null,
@@ -70,7 +72,9 @@ export function routes(r: Router): void {
         ${kpis([
           { label: 'Billed', value: usd(stats.billed), sub: fmtMonth(mk) },
           { label: 'Collected', value: usd(stats.collected), tone: 'ok' },
-          { label: 'Collection rate', value: `${stats.collectionRate}%`, tone: stats.collectionRate >= 95 ? 'ok' : 'warn' },
+          stats.billingStartsOn
+            ? { label: 'Collection rate', value: '—', sub: `nothing billed yet — billing starts ${fmtDate(stats.billingStartsOn)}` }
+            : { label: 'Collection rate', value: `${stats.collectionRate}%`, tone: stats.collectionRate >= 95 ? 'ok' : 'warn' },
           { label: 'On-time rent', value: `${stats.onTimePct}%` },
           { label: 'NSF rate', value: `${stats.nsfRate}%`, sub: `${stats.nsfCount} returned`, tone: stats.nsfRate > 4 ? 'bad' : undefined },
           { label: 'Autopay adoption', value: `${stats.autopayAdoption}%` },

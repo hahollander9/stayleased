@@ -228,6 +228,8 @@ interface RRPlan {
   subsidyCents: number;
   /** read off the unit number when the source has no floor column */
   floor: number;
+  /** false when the file stated neither beds/baths nor a layout-bearing plan */
+  bedsKnown: boolean;
   /** the source lists them as current but their move-out already passed */
   alreadyMovedOut: boolean;
   /** the source system's resident id, kept so rows can be tied back */
@@ -412,7 +414,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
       leaseStart: leaseStart || asOf, leaseEnd: leaseEnd || addMonths(asOf, 12), moveIn: moveIn || leaseStart || null,
       moveOut, extraMonthlyCents: extraMonthlyCents > 0 ? extraMonthlyCents : 0,
       subsidyCents: subsidyCents > 0 ? subsidyCents : 0,
-      floor, alreadyMovedOut, sourceRef: rec.source_ref || null,
+      floor, bedsKnown, alreadyMovedOut, sourceRef: rec.source_ref || null,
       mtm, onNotice: st === 'notice' || (!!moveOut && occupied),
     };
     if (tenantName && plan.occupied) {
@@ -613,6 +615,12 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
         insert('floorplans', {
           id: fid, org_id: ctx.orgId, property_id: pid, name: plan.floorplanName, import_batch_id: batch.id,
           beds: plan.beds, baths: plan.baths, sqft: plan.sqft,
+          // beds/baths are NOT NULL and 0 already means Studio, so an unknown
+          // layout cannot be stored as absent — it is stored as a placeholder
+          // and SAID SO here, rather than a rent roll that never mentioned
+          // bedrooms silently asserting that every unit has one.
+          description: plan.bedsKnown ? null
+            : 'Beds and baths were not stated in the imported rent roll — these are placeholders. Correct them here.',
           market_rent_cents: plan.marketRentCents || plan.rentCents || 100000, created_at: nowIso(),
         });
       }
