@@ -17,7 +17,8 @@ import { bars, donut, lines as lineChart } from '../../lib/charts.ts';
 import {
   WO_TRANSITIONS, SLA_HOURS, transitionWo, triageWo, assignWo, woEvent, logMaterial, logLabor, woCost,
   TURN_STAGES, createTurn, advanceTurnTask, turnCost, INSPECTION_TEMPLATES, createInspection, postInspectionDamages,
-  facilitiesStats,
+  facilitiesStats, notifyAssignedTech, notifyTechsOfBoard,
+  inviteBid, recordBid, declineBid, awardBid, bidsFor, type BidRow,
 } from './service.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
 
@@ -32,23 +33,67 @@ registerNav('Operations', { href: '/facilities', label: 'Facilities analytics', 
 registerNav('Operations', { href: '/vendors', label: 'Vendors', perm: 'vendors:view', match: ['/vendors'] });
 
 registerSearch((ctx, query) => {
-  if (!ctx.perms.has('workorders:view')) return [];
   const like = `%${query}%`;
-  const pf = propFilter(ctx, 'w.property_id');
-  return q<any>(
-    `SELECT w.id, w.summary, w.status, u.unit_number FROM work_orders w LEFT JOIN units u ON u.id=w.unit_id
-     WHERE w.org_id=? AND (w.summary LIKE ? OR w.id LIKE ?)${pf.sql} ORDER BY w.created_at DESC LIMIT 5`,
-    ctx.orgId, like, like, ...pf.params,
-  ).map((w) => ({ kind: 'workorder', label: w.summary, sub: `${w.unit_number || 'property'} · ${w.status}`, href: `/workorders/${w.id}` }));
+  const hits: { kind: string; label: string; sub: string; href: string }[] = [];
+  if (ctx.perms.has('workorders:view')) {
+    const pf = propFilter(ctx, 'w.property_id');
+    hits.push(...q<any>(
+      `SELECT w.id, w.summary, w.status, u.unit_number FROM work_orders w LEFT JOIN units u ON u.id=w.unit_id
+       WHERE w.org_id=? AND (w.summary LIKE ? OR w.id LIKE ?)${pf.sql} ORDER BY w.created_at DESC LIMIT 5`,
+      ctx.orgId, like, like, ...pf.params,
+    ).map((w) => ({ kind: 'workorder', label: w.summary, sub: `${w.unit_number || 'property'} · ${w.status}`, href: `/workorders/${w.id}` })));
+  }
+  // Contractors were unreachable from search — typing a vendor's name found
+  // nothing, which is the one thing you want when a plumber is on the phone.
+  if (ctx.perms.has('vendors:view')) {
+    hits.push(...q<any>(
+      `SELECT id, name, category, phone FROM vendors WHERE org_id=? AND active=1 AND name LIKE ? ORDER BY name LIMIT 4`,
+      ctx.orgId, like,
+    ).map((x) => ({ kind: 'vendor', label: x.name, sub: `${String(x.category).replaceAll('_', ' ')}${x.phone ? ` · ${x.phone}` : ''}`, href: `/vendors/${x.id}` })));
+  }
+  return hits;
 });
 
+/** Operations on the dashboard. The facilities analytics page held the numbers
+ * that describe how maintenance is actually running — SLA compliance, how long
+ * jobs take, what they cost per unit, how old the open queue is — and a
+ * separate page is a page nobody opens on a normal morning. The health of the
+ * operation belongs in the overview the operator already looks at; the
+ * analytics page keeps the deeper cuts (per-tech productivity, category
+ * breakdown, turn times) that reward going looking. */
 registerDashboardExtras((ctx, propertyId) => {
   const stats = facilitiesStats(ctx, propertyId);
+  const propSql = propertyId ? ' AND property_id=?' : '';
+  const p = propertyId ? [propertyId] : [];
+  const aging = q<any>(
+    `SELECT CASE WHEN julianday(?) - julianday(created_date) <= 3 THEN '0-3d'
+                 WHEN julianday(?) - julianday(created_date) <= 7 THEN '4-7d'
+                 WHEN julianday(?) - julianday(created_date) <= 14 THEN '8-14d' ELSE '15d+' END AS bucket,
+       COUNT(*) n FROM work_orders WHERE org_id=? AND status NOT IN ('completed','canceled')${propSql} GROUP BY bucket`,
+    ctx.businessDate, ctx.businessDate, ctx.businessDate, ctx.orgId, ...p,
+  );
+  const AGE_ORDER = ['0-3d', '4-7d', '8-14d', '15d+'];
+  const byAge = new Map(aging.map((a) => [a.bucket as string, a.n as number]));
+  const byCategory = q<any>(
+    `SELECT category, COUNT(*) n FROM work_orders WHERE org_id=? AND created_date>=?${propSql} GROUP BY category ORDER BY n DESC LIMIT 6`,
+    ctx.orgId, addDays(ctx.businessDate, -90), ...p,
+  );
+  const panels = stats.open || byCategory.length
+    ? html`<div class="grid cols-2">
+        ${card('Open work order aging', html`${bars(AGE_ORDER.filter((b) => byAge.get(b)).map((b) => ({
+          label: b, value: byAge.get(b)!, tone: b === '15d+' ? 'bad' : b === '8-14d' ? 'warn' : 'info',
+        })))}<div class="muted small" style="margin-top:6px"><a href="/facilities">Facilities analytics →</a> for tech productivity and turn times.</div>`)}
+        ${card('Maintenance requests · last 90 days', bars(byCategory.map((c) => ({ label: String(c.category).replaceAll('_', ' '), value: c.n }))))}
+      </div>`
+    : null;
   return {
     kpis: [
       { label: 'Open work orders', value: stats.open, sub: stats.emergencies ? `${stats.emergencies} EMERGENCY` : `${stats.overSla} past SLA`, tone: stats.emergencies ? 'bad' : stats.overSla > 3 ? 'warn' : undefined, href: '/workorders' },
+      { label: 'SLA compliance', value: `${stats.slaCompliance30d}%`, sub: 'completed on time, 30d', tone: stats.slaCompliance30d >= 90 ? 'ok' : 'warn', href: '/facilities' },
+      { label: 'Avg completion', value: `${stats.avgDaysToComplete}d`, sub: stats.avgRating ? `${stats.avgRating}★ resident rating` : 'no ratings yet', href: '/facilities' },
+      { label: 'Maintenance / unit', value: usd(stats.costPerUnit30d), sub: 'last 30 days', href: '/facilities' },
     ],
-    panels: null,
+    panels,
   };
 });
 
@@ -211,6 +256,7 @@ export function routes(r: Router): void {
     const canAssign = ctx.perms.has('workorders:assign');
     const next = WO_TRANSITIONS[w.status] || [];
     const cost = woCost(w.id);
+    const bidCount = val<number>('SELECT COUNT(*) FROM wo_bids WHERE work_order_id=? AND org_id=?', w.id, ctx.orgId) || 0;
 
     return shell(rq, {
       title: w.summary,
@@ -218,6 +264,7 @@ export function routes(r: Router): void {
       crumbs: [['Work orders', '/workorders']],
       subtitle: html`${statusBadge(w.priority)} ${statusBadge(w.status)} · #${w.id.slice(-6)} · ${w.prop_name}${w.unit_number ? ` · Unit ${w.unit_number}` : ''}${w.sla_due ? html` · SLA ${fmtDate(w.sla_due)}` : ''}`,
       actions: html`<div style="display:flex;gap:6px;flex-wrap:wrap">
+        ${when(canAssign && !['completed', 'canceled', 'closed'].includes(w.status), () => html`<a class="btn btn-ghost btn-sm" href="/workorders/${w.id}/bids" title="Invite outside contractors to bid and compare their prices, start dates and track records side by side">Contractor bids${bidCount ? ` (${bidCount})` : ''}</a>`)}
         ${when(can(ctx, 'pos:create') && !['completed', 'canceled', 'closed'].includes(w.status), () => html`<a class="btn btn-ghost btn-sm" href="/purchasing/new?workorder=${w.id}" title="Order parts or services for this job — routes to the approver over the threshold, then flows into AP">Create purchase order</a>`)}
         ${when(canManage, () => next.filter((s) => !['assigned', 'scheduled'].includes(s)).map((s) => html`<form method="post" action="/workorders/${w.id}/transition"><input type="hidden" name="to" value="${s}" /><button class="btn btn-sm ${s === 'completed' ? '' : 'btn-ghost'}">${s.replaceAll('_', ' ')}</button></form>`))}
       </div>`,
@@ -307,16 +354,19 @@ export function routes(r: Router): void {
 
   r.post('/workorders/:id/assign', requirePerm('workorders:assign'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const userId = rq.body.user_id ? String(rq.body.user_id) : undefined;
+    const before = val<string>('SELECT assigned_to_user_id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     try {
       assignWo(ctx, rq.params.id!, {
-        userId: rq.body.user_id ? String(rq.body.user_id) : undefined,
+        userId,
         vendorId: rq.body.vendor_id ? String(rq.body.vendor_id) : undefined,
         scheduledDate: rq.body.scheduled_date ? String(rq.body.scheduled_date) : undefined,
       });
     } catch (e) {
       return redirect(`/workorders/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/workorders/${rq.params.id}`, 'Assigned.');
+    if (userId && userId !== before) notifyAssignedTech(ctx, rq.params.id!, userId);
+    return redirect(`/workorders/${rq.params.id}`, userId && userId !== before ? 'Assigned — the tech has been notified.' : 'Assigned.');
   });
 
   r.post('/workorders/:id/note', requirePerm('workorders:manage'), (rq) => {
@@ -358,6 +408,10 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const woId = String(rq.body.item_id || '');
     const lane = String(rq.body.lane || '');
+    // Scope the work order to this org AND this user's properties before
+    // touching it — the lane id arrives from the client and the id does too.
+    const wo = q1<any>('SELECT id, property_id, assigned_to_user_id FROM work_orders WHERE id=? AND org_id=?', woId, ctx.orgId);
+    if (!wo || !canAccessProperty(ctx, wo.property_id)) return redirect('/dispatch', 'That work order is no longer available.', 'err');
     try {
       if (lane === 'unassigned') {
         run('UPDATE work_orders SET assigned_to_user_id=NULL WHERE id=? AND org_id=?', woId, ctx.orgId);
@@ -368,7 +422,21 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect('/dispatch', (e as Error).message, 'err');
     }
-    return redirect('/dispatch', 'Reassigned.');
+    // Moving a card is a decision about someone's day; they hear about it from
+    // the product rather than from the board they were not looking at. Only on
+    // a real change of hands — re-dropping a card in the lane it came from is
+    // not news.
+    if (lane !== 'unassigned' && lane !== wo.assigned_to_user_id) notifyAssignedTech(ctx, woId, lane);
+    return redirect('/dispatch', lane === 'unassigned' ? 'Moved to unassigned.' : 'Reassigned — the tech has been notified.');
+  });
+
+  // Broadcast the board to the whole maintenance team.
+  r.post('/dispatch/notify', requirePerm('workorders:assign'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const { sent, recipients } = notifyTechsOfBoard(ctx, ctx.currentPropertyId);
+    if (!sent) return redirect('/dispatch', 'No active maintenance techs to notify — add someone with a maintenance role first.', 'err');
+    audit(ctx, 'dispatch', ctx.businessDate, 'notify_techs', null, { recipients: sent });
+    return redirect('/dispatch', `Dispatch sent to ${sent} tech${sent === 1 ? '' : 's'}: ${recipients.join(', ')}.`);
   });
 
   // ---------- dispatch board ----------
@@ -387,23 +455,233 @@ export function routes(r: Router): void {
       { key: 'unassigned', label: 'Unassigned', items: open.filter((w) => !w.assigned_to_user_id) },
       ...team.map((t) => ({ key: t.id, label: t.name, items: open.filter((w) => w.assigned_to_user_id === t.id) })),
     ];
+    const oldest = open.reduce((n, w) => Math.max(n, diffDays(ctx.businessDate, w.created_date)), 0);
+
+    /** The card's identity line: the number the job is called by, and every
+     * date that decides whether it is late — together, on one row. Age is the
+     * number a dispatcher actually triages on ("that one's been sitting nine
+     * days"), and it was the one number the board did not show. */
+    const woCard = (w: any): ReturnType<typeof html> => {
+      const age = Math.max(0, diffDays(ctx.businessDate, w.created_date));
+      const overdue = w.sla_due && w.sla_due < ctx.businessDate;
+      const ageTone = overdue ? 'bad' : age >= 14 ? 'bad' : age >= 7 ? 'warn' : '';
+      return html`<a class="bcard" href="/workorders/${w.id}" data-dnd-item="${w.id}">
+        <span class="bc-id">
+          <span class="mono">#${w.id.slice(-6)}</span>
+          <span class="bc-age ${ageTone}" title="Reported ${fmtDate(w.created_date)}">${age}d</span>
+          <span class="bc-dates">
+            <i title="Reported">↳ ${fmtDate(w.created_date)}</i>
+            ${when(w.scheduled_date, () => html`<i title="Scheduled">· sched ${fmtDate(w.scheduled_date)}</i>`)}
+            ${when(w.sla_due, () => html`<i class="${overdue ? 'neg' : ''}" title="SLA due">· due ${fmtDate(w.sla_due)}${overdue ? ' ⚠' : ''}</i>`)}
+          </span>
+        </span>
+        <b>${w.summary.slice(0, 44)}</b>
+        <span class="sub">${w.unit_number || w.prop_name} · ${statusBadge(w.priority)}</span>
+      </a>`;
+    };
+
     return shell(rq, {
       title: 'Dispatch board',
       active: '/dispatch',
-      subtitle: 'Drag a card onto a tech to reassign. Vendors are dispatched from the work order page.',
+      subtitle: `Drag a card onto a tech to reassign. Vendors are dispatched from the work order page.${oldest ? ` · oldest open job ${oldest}d` : ''}`,
       wide: true,
+      actions: html`<div style="display:flex;gap:6px;flex-wrap:wrap">
+        <form method="post" action="/dispatch/notify" style="margin:0">
+          <button class="btn btn-sm btn-ghost" title="Text every active tech the state of the board: what is unassigned, what is an emergency, what is past SLA, and what is on them">Notify all techs (${team.length})</button>
+        </form>
+      </div>`,
       content: html`
         <form id="dnd-form" method="post" action="/workorders/reassign" style="display:none">
           <input type="hidden" name="item_id" /><input type="hidden" name="lane" />
         </form>
         <div class="board">${lanes.map((lane) => html`<div class="col" data-dnd-lane="${lane.key}">
           <div class="col-head"><span>${lane.label}</span><span class="badge ${lane.items.length > 8 ? 'warn' : ''}">${lane.items.length}</span></div>
-          <div class="col-body">${lane.items.slice(0, 30).map((w) => html`<a class="bcard" href="/workorders/${w.id}" data-dnd-item="${w.id}">
-            <b>${w.summary.slice(0, 44)}</b>
-            <span class="sub">${w.unit_number || w.prop_name} · ${statusBadge(w.priority)} ${w.scheduled_date ? fmtDate(w.scheduled_date) : ''}</span>
-          </a>`)}</div>
+          <div class="col-body">${lane.items.slice(0, 30).map(woCard)}${lane.items.length > 30 ? html`<a class="small" href="/workorders?assignee=${lane.key === 'unassigned' ? '' : lane.key}">+ ${lane.items.length - 30} more…</a>` : null}</div>
         </div>`)}</div>`,
     });
+  });
+
+  // ---------- outside contractors: bid comparison ----------
+  // Not every technician works for the management company. When the job goes
+  // out to contractors, the decision is a comparison — price against schedule
+  // against track record — and it has to live next to the work order it
+  // decides, not in an inbox.
+  r.get('/workorders/:id/bids', requirePerm('workorders:assign'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const w = q1<any>(
+      `SELECT w.*, u.unit_number, p.name AS prop_name FROM work_orders w
+       LEFT JOIN units u ON u.id=w.unit_id JOIN properties p ON p.id=w.property_id WHERE w.id=? AND w.org_id=?`,
+      rq.params.id!, ctx.orgId,
+    );
+    if (!w || !canAccessProperty(ctx, w.property_id)) return notFound('Work order not found');
+    const bids = bidsFor(ctx, w.id);
+    const invitedIds = new Set(bids.map((b) => b.vendor_id));
+    // Same-category vendors first: a plumbing job invites plumbers. Everyone
+    // else stays available, because trade categories are a guide, not a rule.
+    const candidates = q<any>(
+      `SELECT * FROM vendors WHERE org_id=? AND active=1 ORDER BY CASE WHEN category=? THEN 0 ELSE 1 END, name`,
+      ctx.orgId, w.category,
+    ).filter((x) => !invitedIds.has(x.id));
+
+    const quoted = bids.filter((b) => b.amount_cents !== null && b.status !== 'declined');
+    const low = quoted.length ? Math.min(...quoted.map((b) => b.amount_cents!)) : null;
+    const high = quoted.length ? Math.max(...quoted.map((b) => b.amount_cents!)) : null;
+    const awarded = bids.find((b) => b.status === 'awarded') || null;
+    const soonest = quoted.filter((b) => b.can_start_date).sort((a, b) => String(a.can_start_date).localeCompare(String(b.can_start_date)))[0] || null;
+
+    const bidCard = (b: BidRow): ReturnType<typeof html> => {
+      const coiExpired = !!b.coi_expiry && b.coi_expiry < ctx.businessDate;
+      const isLow = b.amount_cents !== null && b.amount_cents === low && quoted.length > 1;
+      const delta = b.amount_cents !== null && low !== null && b.amount_cents > low ? b.amount_cents - low : 0;
+      return html`<div class="bid-card ${b.status === 'awarded' ? 'awarded' : ''} ${b.status === 'declined' ? 'declined' : ''}">
+        <div class="bid-head">
+          <div>
+            <a class="bid-vendor" href="/vendors/${b.vendor_id}">${b.vendor_name}</a>
+            <span class="bid-cat">${String(b.category).replaceAll('_', ' ')}</span>
+          </div>
+          ${b.status === 'awarded' ? statusBadge('ok', 'awarded')
+            : b.status === 'declined' ? statusBadge(undefined, 'declined')
+            : b.status === 'not_awarded' ? statusBadge(undefined, 'not awarded')
+            : b.status === 'quoted' ? statusBadge('info', 'quoted') : statusBadge('warn', 'awaiting bid')}
+        </div>
+        ${b.amount_cents === null
+          ? html`<div class="bid-amount none">${b.status === 'declined' ? (b.decline_reason || 'Declined to bid') : 'No price yet'}</div>`
+          : html`<div class="bid-amount">${usd(b.amount_cents)}${when(isLow, () => html`<span class="badge ok">lowest</span>`)}${when(delta > 0, () => html`<span class="bid-delta">+${usd(delta)} vs lowest</span>`)}</div>`}
+        <dl class="bid-facts">
+          <div><dt>Labor</dt><dd>${b.labor_cents === null ? '—' : usd(b.labor_cents)}</dd></div>
+          <div><dt>Materials</dt><dd>${b.materials_cents === null ? '—' : usd(b.materials_cents)}</dd></div>
+          <div><dt>Can start</dt><dd>${b.can_start_date ? fmtDate(b.can_start_date) : '—'}</dd></div>
+          <div><dt>Duration</dt><dd>${b.days_to_complete ? `${b.days_to_complete}d` : '—'}</dd></div>
+          <div><dt>Warranty</dt><dd>${b.warranty_months ? `${b.warranty_months} mo` : '—'}</dd></div>
+          <div><dt>Insurance</dt><dd>${b.coi_expiry
+            ? html`<span class="${coiExpired ? 'neg' : ''}">${coiExpired ? 'EXPIRED' : fmtDate(b.coi_expiry)}</span>`
+            : html`<span class="neg">missing</span>`}</dd></div>
+        </dl>
+        <div class="bid-track">
+          ${b.jobs_done} completed job${b.jobs_done === 1 ? '' : 's'}
+          ${b.avg_rating ? html` · ${Math.round(b.avg_rating * 10) / 10}★` : html` · <span class="muted">unrated</span>`}
+          ${b.avg_days ? html` · avg ${Math.round(b.avg_days)}d to close` : null}
+        </div>
+        ${when(b.scope, () => html`<p class="bid-scope">${b.scope}</p>`)}
+        ${when(b.notes, () => html`<p class="bid-scope muted">${b.notes}</p>`)}
+        ${when(!awarded && b.status !== 'declined', () => html`
+          <details class="bid-form"><summary>${b.amount_cents === null ? 'Record their bid' : 'Update bid'}</summary>
+            <form method="post" action="/workorders/${w.id}/bids/${b.id}/quote" class="form-grid">
+              ${field('Total price', moneyInput('amount', b.amount_cents ?? 0, { required: true }))}
+              ${field('Labor', moneyInput('labor', b.labor_cents ?? 0))}
+              ${field('Materials', moneyInput('materials', b.materials_cents ?? 0))}
+              ${field('Can start', input('can_start_date', { type: 'date', value: b.can_start_date || addDays(ctx.businessDate, 2) }))}
+              ${field('Days to complete', input('days_to_complete', { type: 'number', min: '1', value: b.days_to_complete ?? 1 }))}
+              ${field('Warranty (months)', input('warranty_months', { type: 'number', min: '0', value: b.warranty_months ?? 0 }))}
+              ${field('Scope quoted', input('scope', { value: b.scope || '', placeholder: 'Replace 40-gal water heater, haul away old unit' }))}
+              ${field('Notes', input('notes', { value: b.notes || '', placeholder: 'Price holds 30 days' }))}
+              <div class="field"><label>&nbsp;</label><button class="btn btn-sm">Save bid</button></div>
+            </form>
+            <form method="post" action="/workorders/${w.id}/bids/${b.id}/decline" class="toolbar">
+              ${field('Or mark declined', input('reason', { placeholder: 'Too busy this month' }))}
+              <button class="btn btn-sm btn-ghost">Declined</button>
+            </form>
+          </details>`)}
+        ${when(!awarded && b.amount_cents !== null && b.status !== 'declined', () => html`
+          <form method="post" action="/workorders/${w.id}/bids/${b.id}/award" class="toolbar bid-award">
+            ${field('Schedule', input('scheduled_date', { type: 'date', value: b.can_start_date || addDays(ctx.businessDate, 2) }))}
+            <button class="btn btn-sm"${coiExpired ? raw(' disabled title="Insurance certificate expired — renew the COI before awarding"') : null}>Award &amp; dispatch</button>
+          </form>`)}
+      </div>`;
+    };
+
+    return shell(rq, {
+      title: `Bids · ${w.summary}`,
+      active: '/workorders',
+      crumbs: [['Work orders', '/workorders'], [w.summary, `/workorders/${w.id}`]],
+      subtitle: html`${statusBadge(w.priority)} ${statusBadge(w.status)} · #${w.id.slice(-6)} · ${w.prop_name}${w.unit_number ? ` · Unit ${w.unit_number}` : ''} · reported ${fmtDate(w.created_date)} · ${Math.max(0, diffDays(ctx.businessDate, w.created_date))}d ago`,
+      content: html`
+        ${when(awarded, () => html`<div class="card" style="border-color:var(--ok)"><div class="card-body">
+          <b>${awarded!.vendor_name} was awarded this job at ${usd(awarded!.amount_cents || 0)}.</b>
+          <span class="muted small"> The vendor is dispatched on the work order; the other bids are kept as the record of what was compared.</span>
+        </div></div>`)}
+        ${when(quoted.length > 1, () => kpis([
+          { label: 'Bids in', value: quoted.length, sub: `${bids.length - quoted.length} outstanding` },
+          { label: 'Lowest', value: usd(low || 0), tone: 'ok' },
+          { label: 'Spread', value: usd((high || 0) - (low || 0)), sub: low ? `${Math.round((((high || 0) - low) / low) * 100)}% between high and low` : '' },
+          { label: 'Soonest start', value: soonest?.can_start_date ? fmtDate(soonest.can_start_date) : '—', sub: soonest ? soonest.vendor_name : '' },
+        ]))}
+        ${bids.length
+          ? html`<div class="bid-grid">${bids.map(bidCard)}</div>`
+          : emptyState(
+            'No contractors invited yet.',
+            'Invite outside contractors to bid, record what each one quotes, and compare price against start date, warranty and their track record before awarding.',
+          )}
+        ${when(!awarded && candidates.length, () => card('Invite a contractor to bid', html`
+          <form method="post" action="/workorders/${w.id}/bids/invite" class="toolbar">
+            ${field('Vendor', select('vendor_id', candidates.map((x): [string, string] => [x.id, `${x.name} · ${String(x.category).replaceAll('_', ' ')}${x.coi_expiry && x.coi_expiry < ctx.businessDate ? ' (COI EXPIRED)' : ''}`]), '', { blank: 'Choose a contractor…' }))}
+            <button class="btn btn-sm">Request bid</button>
+          </form>
+          <p class="small muted" style="margin:8px 0 0">Contractors in the ${String(w.category).replaceAll('_', ' ')} trade are listed first. Requesting a bid records the invitation on the work order timeline; enter their price here when it comes back.</p>`))}`,
+    });
+  });
+
+  r.post('/workorders/:id/bids/invite', requirePerm('workorders:assign'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const w = q1<any>('SELECT id, property_id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!w || !canAccessProperty(ctx, w.property_id)) return notFound('Work order not found');
+    try {
+      inviteBid(ctx, w.id, String(rq.body.vendor_id || ''));
+    } catch (e) {
+      return redirect(`/workorders/${w.id}/bids`, (e as Error).message, 'err');
+    }
+    return redirect(`/workorders/${w.id}/bids`, 'Bid requested.');
+  });
+
+  r.post('/workorders/:id/bids/:bidId/quote', requirePerm('workorders:assign'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const w = q1<any>('SELECT id, property_id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!w || !canAccessProperty(ctx, w.property_id)) return notFound('Work order not found');
+    const bid = q1<any>('SELECT id FROM wo_bids WHERE id=? AND work_order_id=? AND org_id=?', rq.params.bidId!, w.id, ctx.orgId);
+    if (!bid) return notFound('Bid not found');
+    try {
+      recordBid(ctx, bid.id, {
+        amountCents: v.cents().parse(rq.body.amount),
+        laborCents: rq.body.labor ? v.cents().parse(rq.body.labor) : null,
+        materialsCents: rq.body.materials ? v.cents().parse(rq.body.materials) : null,
+        canStartDate: rq.body.can_start_date ? String(rq.body.can_start_date) : null,
+        daysToComplete: rq.body.days_to_complete ? parseInt(String(rq.body.days_to_complete), 10) : null,
+        warrantyMonths: rq.body.warranty_months ? parseInt(String(rq.body.warranty_months), 10) : null,
+        scope: rq.body.scope ? String(rq.body.scope) : null,
+        notes: rq.body.notes ? String(rq.body.notes) : null,
+      });
+    } catch (e) {
+      return redirect(`/workorders/${w.id}/bids`, (e as Error).message, 'err');
+    }
+    return redirect(`/workorders/${w.id}/bids`, 'Bid recorded.');
+  });
+
+  r.post('/workorders/:id/bids/:bidId/decline', requirePerm('workorders:assign'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const w = q1<any>('SELECT id, property_id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!w || !canAccessProperty(ctx, w.property_id)) return notFound('Work order not found');
+    const bid = q1<any>('SELECT id FROM wo_bids WHERE id=? AND work_order_id=? AND org_id=?', rq.params.bidId!, w.id, ctx.orgId);
+    if (!bid) return notFound('Bid not found');
+    try {
+      declineBid(ctx, bid.id, String(rq.body.reason || ''));
+    } catch (e) {
+      return redirect(`/workorders/${w.id}/bids`, (e as Error).message, 'err');
+    }
+    return redirect(`/workorders/${w.id}/bids`, 'Marked declined.');
+  });
+
+  r.post('/workorders/:id/bids/:bidId/award', requirePerm('workorders:assign'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const w = q1<any>('SELECT id, property_id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!w || !canAccessProperty(ctx, w.property_id)) return notFound('Work order not found');
+    const bid = q1<any>('SELECT id FROM wo_bids WHERE id=? AND work_order_id=? AND org_id=?', rq.params.bidId!, w.id, ctx.orgId);
+    if (!bid) return notFound('Bid not found');
+    try {
+      awardBid(ctx, bid.id, rq.body.scheduled_date ? String(rq.body.scheduled_date) : undefined);
+    } catch (e) {
+      return redirect(`/workorders/${w.id}/bids`, (e as Error).message, 'err');
+    }
+    return redirect(`/workorders/${w.id}/bids`, 'Awarded — the contractor is dispatched on this work order.');
   });
 
   // ---------- turn board ----------

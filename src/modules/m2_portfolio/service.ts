@@ -422,6 +422,12 @@ export function clearOrgData(ctx: Ctx): { counts: Record<string, number> } {
 }
 
 export const UNIT_STATUSES = ['vacant_ready', 'vacant_not_ready', 'occupied', 'notice', 'down', 'model'] as const;
+/** The statuses a human may set directly (M2.2). `occupied` and `notice` are
+ * derived from lease events and never assigned by hand — a unit is occupied
+ * because a lease says so, and letting the two disagree would make the rent
+ * roll a matter of opinion. Every surface that offers a status change reads
+ * this list, so the board, the unit page and the API cannot drift apart. */
+export const MANUAL_UNIT_STATUSES: readonly string[] = ['vacant_ready', 'vacant_not_ready', 'down', 'model'];
 export const UNIT_STATUS_LABELS: Record<string, string> = {
   vacant_ready: 'Vacant · ready',
   vacant_not_ready: 'Vacant · not ready',

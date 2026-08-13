@@ -1,4 +1,4 @@
-import { html, raw } from '../../lib/html.ts';
+import { html, raw, inlineScript } from '../../lib/html.ts';
 import { redirect, forbidden, type Router } from '../../lib/http.ts';
 import { requirePerm, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { cookie } from '../../lib/http.ts';
@@ -44,23 +44,41 @@ const MAP_JS = `
   }).addTo(map);
   document.addEventListener('sl-theme', function () { tiles.setUrl(tileUrl()); });
 
+  // Property names, cities and rents are operator-entered text going into
+  // innerHTML by way of L.divIcon/bindPopup. The JSON island escapes '<' only
+  // far enough to survive its own closing script tag; JSON.parse hands the raw
+  // '<' straight back. Escape at the point of injection instead.
+  //
+  // (This code is served inside an inline script element, so nothing in it —
+  // comments included — may contain a literal closing script tag: the HTML
+  // parser would end the element there and truncate everything below.)
+  function e(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
   function pinHtml(p) {
     var cls = 'slpin' + (p.precise ? '' : ' approx');
     var scale = p.units >= 150 ? ' slpin-lg' : p.units >= 50 ? ' slpin-md' : '';
-    return '<div class="' + cls + scale + '"><span class="slpin-halo"></span><span class="slpin-dot"></span><span class="slpin-tag">' + p.occ + '%</span></div>';
+    // The name rides in the pin itself, not the hover. A map whose labels only
+    // appear under the cursor cannot be read — you have to already know where
+    // a property is to find out which one it is.
+    return '<div class="' + cls + scale + '"><span class="slpin-halo"></span><span class="slpin-dot"></span>' +
+      '<span class="slpin-tag"><b class="slpin-name">' + e(p.name) + '</b><i class="slpin-occ">' + e(p.occ) + '%</i></span></div>';
   }
   function popupHtml(p) {
     return '<div class="slpop">' +
-      '<div class="slpop-name">' + p.name + '</div>' +
-      '<div class="slpop-sub">' + p.city + ', ' + p.state + ' · ' + p.units + ' units' + (p.precise ? '' : ' · approximate location') + '</div>' +
+      '<div class="slpop-name">' + e(p.name) + '</div>' +
+      '<div class="slpop-sub">' + e(p.city) + ', ' + e(p.state) + ' · ' + e(p.units) + ' units' + (p.precise ? '' : ' · approximate location') + '</div>' +
       '<div class="slpop-stats">' +
-        '<div><b>' + p.occ + '%</b><i>Occupancy</i></div>' +
-        '<div><b>' + p.exposure + '%</b><i>Exposure</i></div>' +
-        '<div><b>' + p.avgRent + '</b><i>Avg rent</i></div>' +
+        '<div><b>' + e(p.occ) + '%</b><i>Occupancy</i></div>' +
+        '<div><b>' + e(p.exposure) + '%</b><i>Exposure</i></div>' +
+        '<div><b>' + e(p.avgRent) + '</b><i>Avg rent</i></div>' +
       '</div>' +
       '<div class="slpop-actions">' +
-        '<a class="btn btn-sm" href="/map/open/' + p.id + '">Open dashboard</a>' +
-        '<a class="btn btn-ghost btn-sm" href="/properties/' + p.id + '">Property record</a>' +
+        '<a class="btn btn-sm" href="/map/open/' + encodeURIComponent(p.id) + '">Open dashboard</a>' +
+        '<a class="btn btn-ghost btn-sm" href="/properties/' + encodeURIComponent(p.id) + '">Property record</a>' +
       '</div></div>';
   }
 
@@ -131,7 +149,7 @@ export function dashMapCard(ctx: Ctx): ReturnType<typeof html> {
     </a>
     <script type="application/json" id="dashmap-data">${raw(JSON.stringify(items).replaceAll('<', '\\u003c'))}</script>
     <script src="/assets/vendor/leaflet.js"></script>
-    <script>${raw(DASHMAP_JS)}</script>
+    <script>${inlineScript(DASHMAP_JS)}</script>
   </div>`;
 }
 
@@ -207,7 +225,7 @@ export function mapRoutes(r: Router): void {
         </div>
         <script type="application/json" id="slmap-data">${raw(JSON.stringify(items).replaceAll('<', '\\u003c'))}</script>
         <script src="/assets/vendor/leaflet.js"></script>
-        <script>${raw(MAP_JS)}</script>`,
+        <script>${inlineScript(MAP_JS)}</script>`,
     });
   });
 

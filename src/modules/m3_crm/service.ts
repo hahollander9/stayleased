@@ -1,6 +1,6 @@
 import { q, q1, insert, val, run, update, tx } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
-import { nowIso, addDays, fmtDate, diffDays, dowIdx } from '../../lib/dates.ts';
+import { nowIso, addDays, addMonths, fmtDate, diffDays, dowIdx } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { getSetting, getSettingMerged } from '../../lib/settings.ts';
@@ -428,6 +428,95 @@ export function funnelStats(ctx: Ctx, sinceDate: string, propertyId?: string | n
     return { name: agent.name, leads: mine.length, tours, closes, avgResponseHours };
   }).sort((a, b) => b.closes - a.closes || b.tours - a.tours);
   return { inquiries, toured, applied, leased, bySource, agents };
+}
+
+export interface LeadPerformance {
+  open: number;
+  last30: number;
+  medianResponseHours: number | null;
+  respondedWithinHour: number | null;
+  medianDaysToLease: number | null;
+  byMonth: { label: string; value: number }[];
+  stale: number;
+}
+
+/** Property-scoped leasing analytics: the operating questions a property
+ * manager asks about their own pipeline, which the org-wide funnel cannot
+ * answer. Speed-to-lead leads deliberately — it is the one leasing number
+ * that moves conversion more than anything the team can say later, and a
+ * property that answers in twenty minutes and one that answers tomorrow look
+ * identical on a funnel chart.
+ *
+ * Medians, not means: one lead answered after a two-week vacation drags a mean
+ * response time past the point of usefulness, and the operator needs the
+ * typical experience, not the arithmetic one. */
+export function leadPerformance(ctx: Ctx, propertyId: string, sinceDate: string): LeadPerformance {
+  const leads = q<any>(
+    `SELECT id, status, created_date, created_at, lease_id FROM leads WHERE org_id=? AND property_id=? AND created_date>=?`,
+    ctx.orgId, propertyId, sinceDate,
+  );
+  const open = val<number>(
+    `SELECT COUNT(*) FROM leads WHERE org_id=? AND property_id=? AND status NOT IN ('leased','lost')`,
+    ctx.orgId, propertyId,
+  ) || 0;
+  // A lead nobody has touched in a week is not "open", it is leaking. Counting
+  // it separately is the point: it is the number a manager can act on today.
+  const stale = val<number>(
+    `SELECT COUNT(*) FROM leads WHERE org_id=? AND property_id=? AND status NOT IN ('leased','lost')
+       AND COALESCE(last_activity_at, created_at) < ?`,
+    ctx.orgId, propertyId, `${addDays(ctx.businessDate, -7)}T00:00:00`,
+  ) || 0;
+  const last30 = leads.filter((l) => l.created_date >= addDays(ctx.businessDate, -30)).length;
+
+  const median = (xs: number[]): number | null => {
+    if (!xs.length) return null;
+    const s = [...xs].sort((a, b) => a - b);
+    const mid = Math.floor(s.length / 2);
+    return s.length % 2 ? s[mid]! : (s[mid - 1]! + s[mid]!) / 2;
+  };
+
+  // first outbound touch after the inquiry — the same event kinds the agent
+  // leaderboard counts, so the two numbers can never disagree
+  const touches = q<{ created_at: string; first_touch: string | null }>(
+    `SELECT l.created_at, (SELECT MIN(e.at) FROM lead_events e WHERE e.lead_id=l.id AND e.kind IN ('email_out','sms_out','call')) AS first_touch
+     FROM leads l WHERE l.org_id=? AND l.property_id=? AND l.created_date>=?`,
+    ctx.orgId, propertyId, sinceDate,
+  ).filter((x) => x.first_touch);
+  const hours = touches.map((x) => (new Date(x.first_touch!).getTime() - new Date(x.created_at).getTime()) / 3600000).filter((h) => h >= 0);
+  const medianRaw = median(hours);
+  const medianResponseHours = medianRaw === null ? null : Math.round(medianRaw * 10) / 10;
+  const respondedWithinHour = hours.length ? Math.round((hours.filter((h) => h <= 1).length / hours.length) * 100) : null;
+
+  // inquiry → signed lease. Dated from the lease record rather than the lead's
+  // status flip, because a status can be corrected weeks later and the lease
+  // cannot.
+  const leasedDays: number[] = [];
+  for (const l of leads) {
+    if (!l.lease_id) continue;
+    const signed = val<string>(`SELECT created_at FROM leases WHERE id=? AND org_id=?`, l.lease_id, ctx.orgId);
+    if (!signed) continue;
+    const d = diffDays(signed.slice(0, 10), l.created_date);
+    if (d >= 0) leasedDays.push(d);
+  }
+  const medianDaysToLease = median(leasedDays) === null ? null : Math.round(median(leasedDays)! * 10) / 10;
+
+  // The monthly series reaches back a full year regardless of the funnel
+  // window — a 90-day `sinceDate` would otherwise draw nine empty months and
+  // read as nine months of no leads.
+  const monthCounts = new Map(
+    q<{ mk: string; c: number }>(
+      `SELECT substr(created_date,1,7) AS mk, COUNT(*) AS c FROM leads
+       WHERE org_id=? AND property_id=? AND created_date>=? GROUP BY mk`,
+      ctx.orgId, propertyId, `${addMonths(ctx.businessDate, -11).slice(0, 7)}-01`,
+    ).map((r) => [r.mk, r.c] as const),
+  );
+  const MON = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const byMonth: { label: string; value: number }[] = [];
+  for (let i = 11; i >= 0; i--) {
+    const key = addMonths(ctx.businessDate, -i).slice(0, 7);
+    byMonth.push({ label: MON[Number(key.slice(5, 7))] || key, value: monthCounts.get(key) || 0 });
+  }
+  return { open, last30, medianResponseHours, respondedWithinHour, medianDaysToLease, byMonth, stale };
 }
 
 /** high-exposure floorplan flag (M3.8) */

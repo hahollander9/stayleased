@@ -6,7 +6,7 @@ import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/
 import { requirePerm, requireStaff, propFilter, canAccessProperty, type Ctx , type UserRow } from '../../lib/auth.ts';
 import { q, q1, run, insert, update, val, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
-import { nowIso, fmtDate, addMonths, addDays } from '../../lib/dates.ts';
+import { nowIso, fmtDate, addMonths, addDays, timezoneLabel, timezoneOptions } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { audit } from '../../lib/audit.ts';
 import { v } from '../../lib/validate.ts';
@@ -15,10 +15,10 @@ import {
   registerNav, registerSearch, emptyState, historyPanel, checkbox, moneyInput, type Kpi,
 } from '../../ui/ui.ts';
 import { donut, bars, sparkline, barChart, areaChart, funnelChart, splitBar } from '../../lib/charts.ts';
-import { funnelStats } from '../m3_crm/service.ts';
+import { funnelStats, leadPerformance } from '../m3_crm/service.ts';
 import {
   unitStats, floorplanAvailability, propertySummaries, unitAmenities, effectiveMarketRent,
-  deleteProperty, UNIT_STATUSES, UNIT_STATUS_LABELS,
+  deleteProperty, UNIT_STATUSES, UNIT_STATUS_LABELS, MANUAL_UNIT_STATUSES,
 } from './service.ts';
 import { mapRoutes, dashMapCard } from './map.ts';
 
@@ -92,7 +92,7 @@ export function routes(r: Router): void {
         ${field('Property name', input('name', { value: p?.name, required: true }))}
         ${field('Slug (public URL)', input('slug', { value: p?.slug, required: true, placeholder: 'summit-ridge' }))}
         ${field('Type', select('type', PROPERTY_TYPES, p?.type ?? 'multifamily'))}
-        ${field('Timezone (IANA)', select('timezone', ['America/New_York', 'America/Chicago', 'America/Denver', 'America/Phoenix', 'America/Los_Angeles'].map((z): [string, string] => [z, z]), p?.timezone ?? 'America/Denver'))}
+        ${field('Time zone', select('timezone', timezoneOptions(p?.timezone), p?.timezone ?? 'America/Denver'))}
         ${field('Street address', input('address1', { value: p?.address1, required: true }))}
         ${field('City', input('city', { value: p?.city, required: true }))}
         ${field('State', input('state', { value: p?.state, required: true }))}
@@ -201,19 +201,7 @@ export function routes(r: Router): void {
           <button class="btn">Add item</button>
         </form>`)}`)}`;
     } else if (tab === 'spaces') {
-      body = html`${card('Bookable amenity spaces', html`${tbl(
-        [{ label: 'Space' }, { label: 'Capacity', num: true }, { label: 'Fee', num: true }, { label: 'Hours' }, { label: 'Bookable' }],
-        spaces.map((s) => ({
-          cells: [html`<b>${s.name}</b><span class="sub">${s.description || ''}</span>`, s.capacity ?? '—', usd(s.fee_cents), `${s.open_time}–${s.close_time}`, statusBadge(s.bookable ? 'yes' : 'no')],
-        })),
-        { empty: 'No amenity spaces configured.' },
-      )}
-      ${when(ctx.perms.has('units:manage'), () => html`<form method="post" action="/properties/${p.id}/spaces" class="toolbar" style="margin-top:10px">
-        ${field('Name', input('name', { required: true, placeholder: 'Clubhouse' }))}
-        ${field('Capacity', input('capacity', { type: 'number', value: 20 }))}
-        ${field('Fee', moneyInput('fee', 0))}
-        <button class="btn">Add space</button>
-      </form>`)}`)}`;
+      body = amenitySpacesTab(ctx, p, spaces);
     } else if (tab === 'history') {
       body = card('History', historyPanel(ctx.orgId, 'property', p.id));
     } else {
@@ -234,20 +222,12 @@ export function routes(r: Router): void {
             statusRows.map((s) => ({ label: UNIT_STATUS_LABELS[s.status] || s.status, value: s.n, tone: s.status === 'occupied' ? 'info' : s.status === 'vacant_ready' ? 'ok' : s.status === 'notice' ? 'warn' : s.status === 'down' ? 'bad' : s.status === 'model' ? 'violet' : 'muted' })),
             { centerValue: `${stats.occupancyPct}%`, centerLabel: 'occupied' },
           ))}
-          ${card('Property profile', dl([
-            ['Address', `${p.address1}, ${p.city}, ${p.state} ${p.zip}`],
-            ['Type', statusBadge(undefined, p.type)],
-            ['Timezone', p.timezone],
-            ['Office', p.phone || '—'],
-            ['Email', p.email || '—'],
-            ['Year built', p.year_built || '—'],
-            ['Fiscal year start', `Month ${p.fiscal_year_start_month}`],
-            ['Public site', html`<a href="/p/${p.slug}" target="_blank">/p/${p.slug} ↗</a>`],
-          ]))}
+          ${card('Property profile', propertyProfile(p, { buildings: buildings.length, floorplans: fps.length, units: stats.total }))}
         </div>
         ${card('Floorplan availability', bars(
           fps.map((f) => ({ label: `${f.name} · ${f.beds === 0 ? 'Studio' : f.beds + 'bd'}`, value: f.available, href: `/units?property=${p.id}&floorplan=${f.id}` })),
-        ))}`;
+        ))}
+        ${leasingPanel(ctx, p)}`;
     }
 
     return shell(rq, {
@@ -417,16 +397,30 @@ export function routes(r: Router): void {
       const byStatus = new Map<string, any[]>();
       for (const s of UNIT_STATUSES) byStatus.set(s, []);
       for (const u of units) byStatus.get(u.status)?.push(u);
-      body = html`<div class="board">${UNIT_STATUSES.map((s) => {
-        const list = byStatus.get(s) || [];
-        return html`<div class="col">
-          <div class="col-head"><span>${UNIT_STATUS_LABELS[s]}</span><span class="badge">${list.length}</span></div>
-          <div class="col-body">${list.slice(0, 40).map((u) => html`<a class="bcard" href="/units/${u.id}">
-            <b>${u.unit_number}</b> · ${u.fp_name || '—'}
-            <span class="sub">${u.prop_name}${u.building ? ` · ${u.building}` : ''} · ${usd(u.market_rent_cents)}</span>
-          </a>`)}${list.length > 40 ? html`<a class="small" href="/units?view=list&status=${s}&property=${propId}">+ ${list.length - 40} more…</a>` : null}</div>
-        </div>`;
-      })}</div>`;
+      const canMove = ctx.perms.has('units:manage');
+      body = html`
+        <form id="dnd-form" method="post" action="/units/move" style="display:none">
+          <input type="hidden" name="item_id" /><input type="hidden" name="lane" />
+          <input type="hidden" name="back" value="${swapParam(rq, 'view', 'board')}" />
+        </form>
+        ${when(canMove, () => html`<p class="small muted" style="margin:0 0 10px">Drag a unit onto another column to change its status. Occupied and On notice are set by lease events — those columns do not accept drops, and units in them cannot be dragged out.</p>`)}
+        <div class="board">${UNIT_STATUSES.map((s) => {
+          const list = byStatus.get(s) || [];
+          // Lease-driven lanes are not drop targets. The board refuses the
+          // gesture rather than accepting it and reporting a failure after the
+          // round trip — a column you can drop into is a promise.
+          const droppable = canMove && MANUAL_UNIT_STATUSES.includes(s);
+          return html`<div class="col ${droppable ? 'dnd-ok' : 'dnd-locked'}" ${droppable ? raw(`data-dnd-lane="${s}"`) : null}>
+            <div class="col-head"><span>${UNIT_STATUS_LABELS[s]}</span><span class="badge">${list.length}</span>${when(canMove && !droppable, () => html`<span class="col-lock" title="Set by lease events, not by hand">lease-driven</span>`)}</div>
+            <div class="col-body">${list.slice(0, 40).map((u) => {
+              const draggable = canMove && MANUAL_UNIT_STATUSES.includes(u.status);
+              return html`<a class="bcard" href="/units/${u.id}" ${draggable ? raw(`data-dnd-item="${u.id}"`) : null}>
+                <b>${u.unit_number}</b> · ${u.fp_name || '—'}
+                <span class="sub">${u.prop_name}${u.building ? ` · ${u.building}` : ''} · ${usd(u.market_rent_cents)}</span>
+              </a>`;
+            })}${list.length > 40 ? html`<a class="small" href="/units?view=list&status=${s}&property=${propId}">+ ${list.length - 40} more…</a>` : null}</div>
+          </div>`;
+        })}</div>`;
     } else {
       body = card(null, tbl(
         [{ label: 'Unit' }, { label: 'Property' }, { label: 'Plan' }, { label: 'Sqft', num: true }, { label: 'Status' }, { label: 'Market rent', num: true }],
@@ -506,14 +500,39 @@ export function routes(r: Router): void {
   r.post('/units/:id/status', requirePerm('units:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const u = q1<any>('SELECT * FROM units WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!u) return notFound();
+    if (!u || !canAccessProperty(ctx, u.property_id)) return notFound();
     const to = String(rq.body.status || '');
     // manual transitions limited to non-lease states; occupied/notice always derive from lease events (M2.2)
-    if (!['down', 'model', 'vacant_not_ready', 'vacant_ready'].includes(to)) return badRequest('That status is driven by lease events.');
-    if (['occupied', 'notice'].includes(u.status)) return redirect(`/units/${u.id}`, 'Occupied/notice units change via lease events, not manually.', 'err');
+    if (!MANUAL_UNIT_STATUSES.includes(to)) return badRequest('That status is driven by lease events.');
+    if (!MANUAL_UNIT_STATUSES.includes(u.status)) return redirect(`/units/${u.id}`, 'Occupied/notice units change via lease events, not manually.', 'err');
     update('units', u.id, { status: to });
     audit(ctx, 'unit', u.id, 'status_change', { status: u.status }, { status: to });
     return redirect(`/units/${u.id}`, `Unit marked ${UNIT_STATUS_LABELS[to]}.`);
+  });
+
+  // Board drag-and-drop. Same rules as the unit page's status form — the
+  // gesture is a different way to reach one transition, not a second, laxer
+  // path to it, so both read MANUAL_UNIT_STATUSES and both audit the change.
+  r.post('/units/move', requirePerm('units:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    // The return path is echoed from a hidden field to keep the operator's
+    // filters. Anything that is not a /units board URL is discarded rather
+    // than trusted into a Location header.
+    const asked = String(rq.body.back || '');
+    const back = /^\/units(\?[A-Za-z0-9_=&%.,+-]*)?$/.test(asked) ? asked : '/units';
+    const u = q1<any>('SELECT * FROM units WHERE id=? AND org_id=?', String(rq.body.item_id || ''), ctx.orgId);
+    if (!u || !canAccessProperty(ctx, u.property_id)) return redirect(back, 'That unit is no longer available.', 'err');
+    const to = String(rq.body.lane || '');
+    if (!MANUAL_UNIT_STATUSES.includes(to)) {
+      return redirect(back, `${UNIT_STATUS_LABELS[to] || 'That status'} is set by lease events — move the lease, not the unit.`, 'err');
+    }
+    if (!MANUAL_UNIT_STATUSES.includes(u.status)) {
+      return redirect(back, `Unit ${u.unit_number} is ${UNIT_STATUS_LABELS[u.status] || u.status} — that comes from its lease, so it cannot be dragged out of the column.`, 'err');
+    }
+    if (u.status === to) return redirect(back);
+    update('units', u.id, { status: to });
+    audit(ctx, 'unit', u.id, 'status_change', { status: u.status }, { status: to });
+    return redirect(back, `Unit ${u.unit_number} moved to ${UNIT_STATUS_LABELS[to]}.`);
   });
 }
 
@@ -876,6 +895,208 @@ function dashboardExtras(ctx: Ctx, propertyId: string | null): Extras {
     }
   }
   return out;
+}
+
+/** Amenity spaces, with the bookings they exist to produce. Configuring a
+ * clubhouse at $75 a booking and then having nowhere to see the bookings meant
+ * the fee was a number the operator set and never saw again: no way to tell a
+ * space that earns from one that sits empty, and no way to check that a
+ * booking fee actually reached a resident ledger. The rows now carry their own
+ * booking counts and billed revenue, and the reservations themselves are
+ * listed underneath — upcoming first, because that is the list the front desk
+ * works from. */
+function amenitySpacesTab(ctx: Ctx, p: any, spaces: any[]): ReturnType<typeof html> {
+  const today = ctx.businessDate;
+  const bookings = q<any>(
+    `SELECT ar.*, s.name AS space_name, l.household_name, u.unit_number
+     FROM amenity_reservations ar
+     JOIN amenity_spaces s ON s.id=ar.space_id
+     LEFT JOIN leases l ON l.id=ar.lease_id
+     LEFT JOIN units u ON u.id=l.unit_id
+     WHERE ar.property_id=? AND ar.org_id=? ORDER BY ar.date DESC, ar.start_time DESC LIMIT 400`,
+    p.id, ctx.orgId,
+  );
+  const live = bookings.filter((b) => b.status !== 'canceled');
+  const upcoming = live.filter((b) => b.date >= today).sort((a, b) => (a.date === b.date ? a.start_time.localeCompare(b.start_time) : a.date.localeCompare(b.date)));
+  const past = live.filter((b) => b.date < today);
+  const since = addDays(today, -90);
+
+  // Per space: what is on the calendar, and what those bookings billed. Billed
+  // (not "collected") is the honest word — the fee posts as a charge on the
+  // resident ledger, and whether it has been paid is the ledger's question.
+  const perSpace = new Map<string, { upcoming: number; booked90: number; billed90: number }>();
+  for (const b of live) {
+    const e = perSpace.get(b.space_id) || { upcoming: 0, booked90: 0, billed90: 0 };
+    if (b.date >= today) e.upcoming++;
+    if (b.date >= since && b.date <= today) { e.booked90++; e.billed90 += b.fee_cents || 0; }
+    perSpace.set(b.space_id, e);
+  }
+  const paid = spaces.filter((s) => s.fee_cents > 0);
+  const billed90 = paid.reduce((sum, s) => sum + (perSpace.get(s.id)?.billed90 || 0), 0);
+  const bookingRow = (b: any): { cells: any[] } => ({
+    cells: [
+      html`<b>${fmtDate(b.date)}</b><span class="sub">${b.start_time}–${b.end_time}</span>`,
+      b.space_name,
+      b.lease_id
+        ? html`<a href="/leases/${b.lease_id}">${b.household_name || 'Resident'}</a>${b.unit_number ? html`<span class="sub">Unit ${b.unit_number}</span>` : null}`
+        : (b.household_name || '—'),
+      b.guests,
+      b.fee_cents ? usd(b.fee_cents) : html`<span class="muted">free</span>`,
+      b.fee_cents
+        ? (b.charge_id ? html`<a href="/leases/${b.lease_id}" class="badge ok">billed</a>` : html`<span class="badge warn">not billed</span>`)
+        : '—',
+    ],
+  });
+
+  return html`
+    ${when(paid.length, () => kpis([
+      { label: 'Paid spaces', value: paid.length, sub: `${spaces.length - paid.length} free to reserve` },
+      { label: 'Upcoming bookings', value: upcoming.length, sub: upcoming.length ? `next ${fmtDate(upcoming[0]!.date)}` : 'nothing on the calendar' },
+      { label: 'Billed · last 90 days', value: usd(billed90), sub: `${paid.reduce((n, s) => n + (perSpace.get(s.id)?.booked90 || 0), 0)} paid bookings` },
+    ]))}
+    ${card('Bookable amenity spaces', html`${tbl(
+      [{ label: 'Space' }, { label: 'Capacity', num: true }, { label: 'Fee', num: true }, { label: 'Hours' }, { label: 'Bookable' }, { label: 'Upcoming', num: true }, { label: 'Billed · 90d', num: true }],
+      spaces.map((s) => {
+        const e = perSpace.get(s.id) || { upcoming: 0, booked90: 0, billed90: 0 };
+        return {
+          cells: [
+            html`<b>${s.name}</b><span class="sub">${s.description || ''}</span>`,
+            s.capacity ?? '—',
+            s.fee_cents ? usd(s.fee_cents) : html`<span class="muted">free</span>`,
+            `${s.open_time}–${s.close_time}`,
+            statusBadge(s.bookable ? 'yes' : 'no'),
+            e.upcoming || html`<span class="muted">—</span>`,
+            s.fee_cents ? usd(e.billed90) : '—',
+          ],
+        };
+      }),
+      { empty: 'No amenity spaces configured.' },
+    )}
+    ${when(ctx.perms.has('units:manage'), () => html`<form method="post" action="/properties/${p.id}/spaces" class="toolbar" style="margin-top:10px">
+      ${field('Name', input('name', { required: true, placeholder: 'Clubhouse' }))}
+      ${field('Capacity', input('capacity', { type: 'number', value: 20 }))}
+      ${field('Fee', moneyInput('fee', 0))}
+      <button class="btn">Add space</button>
+    </form>`)}`)}
+    ${card('Upcoming bookings', tbl(
+      [{ label: 'When' }, { label: 'Space' }, { label: 'Reserved by' }, { label: 'Guests', num: true }, { label: 'Fee', num: true }, { label: 'Charge' }],
+      upcoming.slice(0, 40).map(bookingRow),
+      { empty: spaces.length ? 'Nothing booked from today forward. Residents reserve spaces from the resident portal.' : 'Add a bookable space and reservations will appear here.' },
+    ), { flush: true })}
+    ${when(past.length, () => card('Recent bookings', tbl(
+      [{ label: 'When' }, { label: 'Space' }, { label: 'Reserved by' }, { label: 'Guests', num: true }, { label: 'Fee', num: true }, { label: 'Charge' }],
+      past.slice(0, 25).map(bookingRow),
+      { empty: 'No past bookings.' },
+    ), { flush: true }))}`;
+}
+
+const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+
+/** The property profile, formatted as the record it is rather than as an
+ * undifferentiated list of label/value pairs. A definition list gave equal
+ * weight to the street address, the fiscal calendar and the time zone, so
+ * nothing was findable at a glance. Here the identity of the place (address,
+ * how to reach the office, where the public site lives) sits at the top where
+ * it is read, and the settings that govern how the software treats the
+ * property sit below it in a scannable grid.
+ *
+ * Phone and email are dialable and mailable — a manager looking at this card
+ * usually wants to contact the office, not to read a string. */
+function propertyProfile(p: any, counts: { buildings: number; floorplans: number; units: number }): ReturnType<typeof html> {
+  const fact = (k: string, v: string | number | null, sub?: string | null): ReturnType<typeof html> =>
+    html`<div class="pp-fact"><dt>${k}</dt><dd>${v ?? '—'}${when(sub, () => html`<span class="pp-sub">${sub}</span>`)}</dd></div>`;
+  const fyStart = MONTH_NAMES[(Number(p.fiscal_year_start_month) || 1) - 1] || `Month ${p.fiscal_year_start_month}`;
+  return html`<div class="prop-profile">
+    <div class="pp-ident">
+      <div class="pp-addr">
+        <div class="pp-street">${p.address1}</div>
+        <div class="pp-csz">${p.city}, ${p.state} ${p.zip}</div>
+      </div>
+      ${statusBadge(undefined, p.type)}
+    </div>
+    <div class="pp-contact">
+      ${p.phone ? html`<a href="tel:${String(p.phone).replace(/[^\d+]/g, '')}">${p.phone}</a>` : html`<span class="pp-none">No office phone</span>`}
+      ${p.email ? html`<a href="mailto:${p.email}">${p.email}</a>` : html`<span class="pp-none">No office email</span>`}
+      <a href="/p/${p.slug}" target="_blank" rel="noopener">Public site ↗</a>
+    </div>
+    <dl class="pp-facts">
+      ${fact('Time zone', timezoneLabel(p.timezone), p.timezone)}
+      ${fact('Year built', p.year_built || '—')}
+      ${fact('Fiscal year starts', fyStart)}
+      ${fact('Inventory', `${counts.units} unit${counts.units === 1 ? '' : 's'}`, `${counts.buildings} building${counts.buildings === 1 ? '' : 's'} · ${counts.floorplans} floorplan${counts.floorplans === 1 ? '' : 's'}`)}
+    </dl>
+  </div>`;
+}
+
+/** Leasing analytics for one property. The portfolio dashboard already charts
+ * the org-wide funnel; a property manager standing on their own property page
+ * needs the version scoped to the building they run, and needs the two numbers
+ * the funnel cannot show: how fast inquiries get answered, and how many open
+ * leads have gone quiet. Speed-to-lead is first because it is the input the
+ * team controls today; conversion is the output it produces weeks later. */
+function leasingPanel(ctx: Ctx, p: any): ReturnType<typeof html> {
+  if (!ctx.perms.has('leasing:view')) return html``;
+  const since = addMonths(ctx.businessDate, -3);
+  const f = funnelStats(ctx, since, p.id);
+  const perf = leadPerformance(ctx, p.id, since);
+  if (!f.inquiries && !perf.open) {
+    return card('Leasing performance', emptyState(
+      'No leads recorded for this property yet.',
+      'Lead analytics — response time, conversion by source, and cost per lease — appear here once inquiries start arriving.',
+      html`<a class="btn btn-sm" href="/leads">Log a lead</a>`,
+    ));
+  }
+  const rate = (n: number, d: number): string => (d ? `${Math.round((n / d) * 1000) / 10}%` : '—');
+  const respTone = perf.medianResponseHours === null ? undefined : perf.medianResponseHours <= 1 ? 'ok' : perf.medianResponseHours <= 8 ? 'warn' : 'bad';
+  const respValue = perf.medianResponseHours === null
+    ? '—'
+    : perf.medianResponseHours < 1 ? `${Math.round(perf.medianResponseHours * 60)}m` : `${perf.medianResponseHours}h`;
+
+  // Cost per lease is the number that decides next month's ad spend, so a
+  // source with spend but no leases must read as "no leases yet" rather than
+  // as a blank — a blank looks like missing data, not like a bad channel.
+  const sourceRows = f.bySource.map((s) => ({
+    cells: [
+      html`<b>${String(s.source).replaceAll('_', ' ')}</b>`,
+      s.inquiries,
+      s.tours,
+      s.apps,
+      html`<b>${s.leases}</b>`,
+      rate(s.leases, s.inquiries),
+      s.costCents ? usd(s.costCents) : '—',
+      s.costCents ? (s.leases ? usd(Math.round(s.costCents / s.leases)) : html`<span class="muted">no leases yet</span>`) : '—',
+    ],
+  }));
+
+  return html`${card('Leasing performance · last 90 days', html`
+    ${kpis([
+      { label: 'Median response', value: respValue, tone: respTone as any, sub: perf.respondedWithinHour === null ? 'no outbound replies yet' : `${perf.respondedWithinHour}% answered within the hour` },
+      { label: 'Leads (90d)', value: f.inquiries, sub: `${perf.last30} in the last 30 days`, href: `/leads?property=${p.id}` },
+      { label: 'Working now', value: perf.open, tone: perf.stale > 0 ? 'warn' : undefined, sub: perf.stale ? `${perf.stale} untouched 7+ days` : 'all touched this week', href: `/leads?property=${p.id}` },
+      { label: 'Lead to lease', value: rate(f.leased, f.inquiries), sub: `${f.leased} signed` },
+      { label: 'Tour rate', value: rate(f.toured, f.inquiries), sub: `${f.toured} toured` },
+      { label: 'Days to lease', value: perf.medianDaysToLease === null ? '—' : `${perf.medianDaysToLease}`, sub: 'median, inquiry to signature' },
+    ])}
+    <div class="grid cols-2 chart-pair" style="margin-top:12px">
+      <div>
+        <div class="pp-chart-title">Conversion</div>
+        ${funnelChart([
+          { label: 'Inquiries', value: f.inquiries },
+          { label: 'Toured', value: f.toured },
+          { label: 'Applied', value: f.applied },
+          { label: 'Leased', value: f.leased },
+        ])}
+      </div>
+      <div>
+        <div class="pp-chart-title">Leads by month · last 12</div>
+        ${barChart(perf.byMonth.map((m) => m.label), perf.byMonth.map((m) => m.value), { kind: 'num' })}
+      </div>
+    </div>`)}
+  ${card('Lead sources · last 90 days', tbl(
+    [{ label: 'Source' }, { label: 'Leads', num: true }, { label: 'Tours', num: true }, { label: 'Applications', num: true }, { label: 'Leases', num: true }, { label: 'Conversion', num: true }, { label: 'Spend', num: true }, { label: 'Cost per lease', num: true }],
+    sourceRows,
+    { empty: 'No leads in the last 90 days.' },
+  ), { flush: true })}`;
 }
 
 function getProp(ctx: Ctx, pid: string): any {

@@ -43,6 +43,22 @@ export function html(strings: TemplateStringsArray, ...vals: Child[]): Raw {
 
 export const raw = (s: string): Raw => new Raw(s);
 
+/** Body for an inline `<script>` element.
+ *
+ * A script element's content is raw text: the HTML parser ends it at the first
+ * closing script tag ANYWHERE inside, including one sitting in a string
+ * literal or — as happened here — inside a code comment explaining this very
+ * hazard. Everything after that point is reparsed as markup, so the script
+ * silently truncates mid-statement and the page throws "Unexpected end of
+ * input" with nothing to point at.
+ *
+ * Escaping the slash defuses it in every context the sequence can legally
+ * appear: `'<\/script>'` is the same string to JavaScript, and in a comment or
+ * a regex the extra backslash changes nothing that runs. */
+export function inlineScript(js: string): Raw {
+  return new Raw(js.replace(/<\/(script)/gi, '<\\/$1'));
+}
+
 export function join(items: Child[], sep = ''): Raw {
   return new Raw(items.map(renderChild).join(sep));
 }

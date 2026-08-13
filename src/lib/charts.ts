@@ -26,6 +26,13 @@ export function donut(slices: DonutSlice[], opts?: { size?: number; centerLabel?
   const size = opts?.size ?? 150;
   const total = slices.reduce((s, x) => s + x.value, 0) || 1;
   const cx = size / 2, cy = size / 2, r = size / 2 - 8, w = 17;
+  // A donut IS a statement about proportion, so the proportion is what it must
+  // be able to tell you. The count alone makes the reader do the division —
+  // and against a total the chart never states, they cannot.
+  const pct = (v: number): string => {
+    const p = (v / total) * 100;
+    return `${p >= 10 || p === 0 ? Math.round(p) : Math.round(p * 10) / 10}%`;
+  };
   let angle = -Math.PI / 2;
   const paths: string[] = [];
   slices.forEach((s, i) => {
@@ -36,7 +43,7 @@ export function donut(slices: DonutSlice[], opts?: { size?: number; centerLabel?
     const x1 = cx + r * Math.cos(angle), y1 = cy + r * Math.sin(angle);
     const x2 = cx + r * Math.cos(a2 - 0.004), y2 = cy + r * Math.sin(a2 - 0.004);
     const color = s.tone ? toneColor(s.tone) : PALETTE[i % PALETTE.length]!;
-    paths.push(`<path d="M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}" fill="none" stroke="${color}" stroke-width="${w}"><title>${esc(s.label)}: ${s.value}</title></path>`);
+    paths.push(`<path class="donut-arc" d="M ${x1.toFixed(2)} ${y1.toFixed(2)} A ${r} ${r} 0 ${large} 1 ${x2.toFixed(2)} ${y2.toFixed(2)}" fill="none" stroke="${color}" stroke-width="${w}"><title>${esc(s.label)}: ${s.value} · ${pct(s.value)}</title></path>`);
     angle = a2;
   });
   const center = opts?.centerValue
@@ -44,9 +51,9 @@ export function donut(slices: DonutSlice[], opts?: { size?: number; centerLabel?
     : '';
   const legend = slices
     .filter((s) => s.value > 0)
-    .map((s, i) => `<span><span class="sw" style="background:${s.tone ? toneColor(s.tone) : PALETTE[i % PALETTE.length]}"></span>${esc(s.label)} · ${s.value}</span>`)
+    .map((s, i) => `<span class="lg-row" title="${esc(s.label)}: ${s.value} of ${total} · ${pct(s.value)}"><span class="sw" style="background:${s.tone ? toneColor(s.tone) : PALETTE[i % PALETTE.length]}"></span><span class="lg-label">${esc(s.label)} · ${s.value}</span><span class="lg-pct">${pct(s.value)}</span></span>`)
     .join('');
-  return html`<div class="chart" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+  return html`<div class="chart donut-chart" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
     ${raw(`<svg width="${size}" height="${size}" viewBox="0 0 ${size} ${size}" style="max-width:min(46vw,300px)" role="img" aria-label="donut chart">${paths.join('')}${center}</svg>`)}
     <div class="legend" style="flex-direction:column;display:flex;gap:5px">${raw(legend)}</div>
   </div>`;

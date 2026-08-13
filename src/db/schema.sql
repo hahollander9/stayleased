@@ -777,6 +777,36 @@ CREATE TABLE IF NOT EXISTS vendors (
 );
 CREATE INDEX IF NOT EXISTS idx_vendors ON vendors(org_id, category);
 
+-- Competitive bids on a work order. In-house techs are assigned; outside
+-- contractors are *chosen*, and choosing without writing the alternatives down
+-- means the comparison lives in somebody's inbox. A bid is invited, then
+-- quoted (or declined), then exactly one is awarded — awarding dispatches that
+-- vendor through the same COI gate as any other assignment.
+CREATE TABLE IF NOT EXISTS wo_bids (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  property_id TEXT NOT NULL,
+  work_order_id TEXT NOT NULL REFERENCES work_orders(id),
+  vendor_id TEXT NOT NULL REFERENCES vendors(id),
+  status TEXT NOT NULL DEFAULT 'invited', -- invited|quoted|declined|awarded|not_awarded
+  amount_cents INTEGER,
+  labor_cents INTEGER,
+  materials_cents INTEGER,
+  can_start_date TEXT,
+  days_to_complete INTEGER,
+  warranty_months INTEGER,
+  scope TEXT,
+  notes TEXT,
+  decline_reason TEXT,
+  invited_at TEXT NOT NULL,
+  quoted_at TEXT,
+  decided_at TEXT,
+  decided_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_wo_bids ON wo_bids(org_id, work_order_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_wo_bids_uniq ON wo_bids(work_order_id, vendor_id);
+
 CREATE TABLE IF NOT EXISTS wo_materials (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
