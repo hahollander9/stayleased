@@ -1039,6 +1039,10 @@ svg.chart path.ct { transform-box: fill-box; transform-origin: 50% 50%; animatio
 .chart-head-val { animation: chartin .6s cubic-bezier(.16, 1, .3, 1) both; }
 
 @media (prefers-reduced-motion: reduce) {
+  /* the page-entrance animation is the one every screen runs, so it is the one
+     that most owes the reduced-motion promise: visible, and still. It also made
+     Playwright wait for "stable" on pages with hundreds of rows. */
+  .content { animation: none; }
   .slpin-dot, .slpin-halo, .mapview, .map-panel, .map-note { animation: none; }
   svg.chart, svg.chart rect.ct, svg.chart path.ct, .chart-head-val { animation: none; }
   .slpin { transition: none; }

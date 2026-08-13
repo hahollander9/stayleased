@@ -144,6 +144,13 @@ unique; DECISIONS numbers must be claimed against the CURRENT tail, not a cached
 two pending builds both append to BUILDLOG/DECISIONS, ship one build's entries as a paste-in
 file instead of patch hunks (precedent: 2026-08-12).
 
+**Never send BUILDLOG.md or DECISIONS.md through a web-UI upload.** An upload is a whole-file
+replace, not a merge, so it silently deletes whatever landed after the uploader last read the
+file — on 2026-08-13 it took two BUILDLOG entries and decisions #50–51 (the AP money bug) and
+every gate stayed green, because `doclog.test.ts` checks contiguity and uniqueness and an
+overwrite satisfies both. Upload only files your own session authored end to end; these two
+never qualify (DECISIONS #57).
+
 ## Current state & plan
 
 - Live: security hardening, migration UX (Import history, Outbox), agent scoring #1+#2
