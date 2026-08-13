@@ -314,19 +314,22 @@
       }
       requestAnimationFrame(step);
     }
-    document.querySelectorAll('.kpi .k-value, .chart-head-val, .dash-ring .dr-val > div').forEach(function (el) {
-      // count only the leading number node for the ring (keep the label intact)
-      if (el.closest('.dash-ring')) {
-        var node = el.childNodes[0];
-        if (node && node.nodeType === 3) {
-          var span = document.createElement('span');
-          span.textContent = node.textContent;
-          el.replaceChild(span, node);
-          countUp(span, 900);
-        }
-        return;
+    // Data tiles do NOT count up. A KPI that animates is a KPI that displays
+    // numbers which are not true — occupancy reading 10.8% then 26.6% then
+    // 81.6%, delinquency $237.98 then $587.04 then $1,798.00 — while the
+    // Property Comparison table on the same screen shows the real figure
+    // immediately, so the page contradicts itself while it settles. The motion
+    // doctrine already asks for one-shot entrances then stillness; on a number
+    // the honest entrance is simply being correct. countUp is kept for the ring
+    // label, whose value is drawn alongside its arc rather than read.
+    document.querySelectorAll('.dash-ring .dr-val > div').forEach(function (el) {
+      var node = el.childNodes[0];
+      if (node && node.nodeType === 3) {
+        var span = document.createElement('span');
+        span.textContent = node.textContent;
+        el.replaceChild(span, node);
+        countUp(span, 420);
       }
-      countUp(el, 900);
     });
 
     // ring: redraw from zero to its target arc

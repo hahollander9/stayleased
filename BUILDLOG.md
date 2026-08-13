@@ -1195,3 +1195,61 @@ before merge — the parallel-session rule working as written.
 the real report (banner, stacked header, both roster sections, per-unit charge blocks, the lone
 subsidy-coded unit, both summary tables) with synthetic names and numbers. The real file carries
 resident names and is not in the repo.
+
+## 2026-08-13 — The Test LLC audit: the unit layer was perfect, the money layer was wrong five ways
+
+A 152-unit Yardi rent roll went into a live org and was then diffed screen by screen against the
+workbook. Units, leases, names, move-in dates and expirations came through 100% correct. Everything
+about the money did not, and none of it was visible on any screen — which is the part that matters,
+because the totals all *looked* plausible.
+
+**Rent was understated $10,139/mo, and the split was decided by row order.** `harvestSubRowCharges`
+classified charges by whether a code WAS the rent code, so `rnsvchr` — a housing-assistance voucher —
+was read as an ancillary charge on 11 households, and on unit 245, whose only charge carries that
+code, position alone decided it became rent while the identical code on 205 became "other". Charge
+codes are now classified by meaning (`rent | subsidy | ancillary`), rent is the whole contract rent,
+and the voucher share is a payer split in `leases.subsidy_cents`. Rent Roll total: **$177,893.00**,
+matching the report's own Total line. Residents are billed **$166,337.00** — their own portion, never
+the housing authority's. **This reverses #64, shipped the day before.** (#67)
+
+**Renewal offers were priced off the understated rent.** Willie Ashe's unit displayed $340.40 where
+contract rent × 1.15 is $1,470.85 — an operator clicking "Offer renewal" would have sent an offer
+~$1,130/mo low, on a screen where the non-voucher rows beside it were right. This falls out of the
+rent fix; a regression test asserts no lease can price a renewal from a rent below its own recurring
+rent charges.
+
+**16 signed leases were dropped as "32 rows skipped".** The report's Future Residents/Applicants
+section. They now import as fully-executed leases on their units — a pre-lease the portfolio stats
+already understood — so exposure falls 28→13, occupancy stays 81.6%, and vacancy says **12 available ·
+16 pre-leased** instead of offering all 28. Every set-aside row is now listed with a reason. (#70)
+
+**124 households were flagged delinquent for a charge the product invented.** The compliance sweep
+force-placed a $14.50/mo master policy on every imported lease, then reported "124 delinquent
+households · $1,798.00 open" with $0.00 in all four aging buckets. Force-placing is opt-in after a
+migration, and delinquent now means past due. (#69)
+
+**The property was named "Livingston Place at Souther".** Not a column limit — `renderSheetForAi`
+clips cells to 28 characters, and the plan's `document_property` won over the deterministic reader, so
+a clipped string became the persisted name and the public slug. Model strings that get persisted are
+now resolved back to the cell they point at. (#68)
+
+**Smaller, all real:** a move-out 3.5 months before the switch date had rent scheduled to start after
+the household had gone (now: imported exactly as the source states it, but billing nothing); every
+unit read floor 1 though the numbers encode floors 2–5; a DC building was on `America/Denver`; two
+floorplans of very different sizes both claimed "1bd/1ba" the source never stated; Yardi resident ids
+and charge codes were thrown away; and the dashboard counted KPI values up over ~8 seconds, displaying
+wrong numbers the whole way while the table below showed the right one immediately.
+
+**Decisions:** #67, #68, #69, #70.
+
+**Fixture:** `tests/fixtures/livingston_rent_roll.ts` — the audited workbook in full, sanitized. Names
+and resident ids are synthetic; every number, date, unit number, charge code and structural row is the
+source's, because the totals ARE the acceptance criteria. It is the only fixture carrying split charge
+codes, a subsidy-only unit, a future-residents section and a past-dated move-out together.
+
+**Verified:** tsc strict clean · unit suite 392/392, including a new
+`tests/import_livingston.test.ts` that asserts the audit's acceptance criteria against that workbook —
+all nine recon lines tying to the report's own summary, $177,893 rent, $166,337 billed, 205 and 245
+classifying identically, 16 future leases with 12 available, zero delinquent and zero charged at
+import, the full property name with its Yardi code, and the 124 lease names/dates the audit found
+perfect still perfect.
