@@ -15,6 +15,10 @@ export interface UnitStats {
   occupied: number; // includes notice (still physically occupied)
   notice: number;
   vacantReady: number;
+  /** vacant units already carrying a signed future lease */
+  preleased: number;
+  /** vacant, ready, and NOT already promised to anyone */
+  available: number;
   vacantNotReady: number;
   down: number;
   model: number;
@@ -55,6 +59,7 @@ export function unitStats(ctx: Ctx, propertyId?: string | null): UnitStats {
   const avg = val<number>(`SELECT AVG(market_rent_cents) FROM units WHERE org_id=?${pf.sql}`, ctx.orgId, ...pf.params) || 0;
   return {
     total, rentable, occupied, notice, vacantReady, vacantNotReady, down, model,
+    preleased, available: Math.max(0, vacantReady - preleased),
     occupancyPct: rentable ? Math.round((occupied / rentable) * 1000) / 10 : 0,
     exposureCount,
     exposurePct: rentable ? Math.round((exposureCount / rentable) * 1000) / 10 : 0,

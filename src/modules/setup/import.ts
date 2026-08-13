@@ -12,7 +12,8 @@ import { parseSpreadsheet, writeXlsx } from '../../lib/xlsx.ts';
 import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
 import { shell, card, tbl, field, input, select, statusBadge } from '../../ui/ui.ts';
 import {
-  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges, detectDocumentProperty,
+  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges,
+  detectDocumentPropertyBanner, splitPropertyBanner,
   scanRosterSections, parseSourceSummary, norm, PRESETS,
   type ImportKind, type Mapping,
 } from './mapping.ts';
@@ -187,6 +188,8 @@ export function routes(r: Router): void {
     let dataRows: string[][];
     let mapping: Mapping;
     let docProp: string | null = null; // property named by the document itself
+    let docPropCode: string | null = null; // …and the source system's code for it
+    let futureRows: string[][] = []; // signed-but-not-started leases (their own section)
     let aiRentCode = ''; // the charge code the model read as rent
     let sourceSummary: ReturnType<typeof parseSourceSummary> = null;
 
@@ -234,7 +237,19 @@ export function routes(r: Router): void {
         }
       }
 
-      docProp = plan?.document_property || detectDocumentProperty(sheet.rows, headerIdx);
+      // The plan's document_property has already been resolved back to the cell
+      // it points at (see resolveClippedString), so it is a full banner string
+      // here — but it still carries the source system's code, and the
+      // deterministic reader wins whenever the model's answer is merely a
+      // prefix of it. A shorter name is a clipped name, never a better one.
+      const aiBanner = plan?.document_property ? splitPropertyBanner(plan.document_property) : null;
+      const detected = detectDocumentPropertyBanner(sheet.rows, headerIdx);
+      const banner = !aiBanner ? detected
+        : !detected ? aiBanner
+        : detected.name.startsWith(aiBanner.name) ? detected
+        : aiBanner;
+      docProp = banner?.name || null;
+      docPropCode = banner?.code || null;
       aiRentCode = plan?.rent_code || '';
       // read the report's own summary block off the RAW sheet, before any
       // reader has had a chance to drop it — it is the only independent check
@@ -271,18 +286,23 @@ export function routes(r: Router): void {
     // — nothing the file billed monthly is lost
     if (kind === 'rent_roll' && !isPdf) {
       const scan = scanRosterSections(dataRows, mapping);
+      futureRows = scan.futureRows;
       if (scan.sectioned && (scan.futureRows.length || scan.summaryRows)) {
         dataRows = scan.rows;
         mapping.excluded = {
           futureApplicants: scan.futureUnits.length,
           futureUnits: scan.futureUnits.slice(0, 40),
           summaryRows: scan.summaryRows,
+          // enumerated, never just counted: a silent "32 rows skipped" on a
+          // migration is exactly how 16 signed leases went missing
+          setAside: scan.setAside.slice(0, 200),
         };
         if (scan.futureUnits.length) {
           (mapping.notes ||= []).push(
-            `Set aside ${scan.futureUnits.length} future resident/applicant row${scan.futureUnits.length === 1 ? '' : 's'} ` +
-            `(unit${scan.futureUnits.length === 1 ? '' : 's'} ${scan.futureUnits.slice(0, 8).join(', ')}${scan.futureUnits.length > 8 ? `, +${scan.futureUnits.length - 8} more` : ''}) — ` +
-            `those are leases that have not started, and their units are already in the roster above. Only current leases import.`,
+            `${scan.futureUnits.length} future resident/applicant row${scan.futureUnits.length === 1 ? '' : 's'} ` +
+            `(unit${scan.futureUnits.length === 1 ? '' : 's'} ${scan.futureUnits.slice(0, 8).join(', ')}${scan.futureUnits.length > 8 ? `, +${scan.futureUnits.length - 8} more` : ''}) ` +
+            `import as signed future leases on those units — they have not started, so they bill nothing and do not count as occupied, ` +
+            `but the units read as pre-leased rather than available.`,
           );
         }
         if (scan.summaryRows) (mapping.notes ||= []).push(`Read the report's own summary block (${scan.summaryRows} rows) as totals to tie out against, not as units.`);
@@ -302,6 +322,8 @@ export function routes(r: Router): void {
           `read as other monthly charges, not rent, so the split matches the report's charge-code summary.`,
         );
       }
+      // append the two computed columns, so the review screen shows exactly the
+      // numbers that will apply and the operator can re-map either of them
       if (h.harvestedRows > 0 || h.demotedRows > 0) {
         const extraIdx = headers.length;
         headers = [...headers, 'Other monthly charges'];
@@ -317,7 +339,26 @@ export function routes(r: Router): void {
           (mapping.notes ||= []).push(`Folded ${h.harvestedRows} recurring-charge sub-row${h.harvestedRows === 1 ? '' : 's'}${codeStr ? ` (${codeStr})` : ''} — $${(h.totalCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo — into an “Other monthly charges” column billed alongside rent.`);
         }
       }
+      if (h.subsidyCents > 0) {
+        const subIdx = headers.length;
+        headers = [...headers, 'Housing subsidy (of the rent)'];
+        mapping.cols[subIdx] = 'subsidy';
+        dataRows = dataRows.map((r, i) => {
+          const s = h.subsidyByRow.get(i);
+          const row = Array.from({ length: subIdx }, (_, ci) => String(r[ci] ?? ''));
+          row.push(s ? (s.cents / 100).toFixed(2) : '');
+          return row;
+        });
+        const subCodes = [...new Set([...h.subsidyByRow.values()].flatMap((s) => s.codes))];
+        (mapping.notes ||= []).push(
+          `${h.subsidyByRow.size} lease${h.subsidyByRow.size === 1 ? '' : 's'} carry a housing subsidy${subCodes.length ? ` (${subCodes.join(', ')})` : ''} — ` +
+          `$${(h.subsidyCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo. That money stays part of the rent, because it is what the unit rents for; ` +
+          `it is recorded as the share a voucher pays, so each resident is billed only their own portion.`,
+        );
+      }
+      if (Object.keys(h.codeNature).length) mapping.codeNature = h.codeNature;
       if (sourceSummary) mapping.source = sourceSummary;
+      if (docProp) mapping.sourceProperty = { name: docProp, code: docPropCode };
     }
     if (!dataRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found in that file.', 'err');
 
@@ -348,7 +389,7 @@ export function routes(r: Router): void {
       id: batchId, org_id: ctx.orgId, kind, filename: up.filename || null,
       property_id: propertyId, new_property_name: newPropertyName,
       preset: mapping.preset, headers: js(headers), mapping: js(mapping), rows: js(dataRows),
-      staged: '[]', as_of: String(rq.body.as_of || '') || ctx.businessDate,
+      staged: js(futureRows), as_of: String(rq.body.as_of || '') || ctx.businessDate,
       status: 'staged', summary: null, created_by: ctx.userId, created_at: nowIso(), applied_at: null,
     });
     audit(ctx, 'import_batch', batchId, 'upload', null, { kind, filename: up.filename, rows: dataRows.length, preset: mapping.preset });
@@ -527,6 +568,24 @@ function reconStrip(recon: ImportRecon, applied: boolean): Raw {
         </table>`)}
       ${when(recon.columnWarnings.length, () => html`<ul style="margin:8px 0 0;padding-left:18px">${hjoin(recon.columnWarnings.map((w) => html`<li>${w}</li>`), '')}</ul>`)}
     </div>`;
+}
+
+/** Everything the reader set aside, named. A migration that reports "32 rows
+ * skipped" and nothing else is how 16 signed leases disappeared without anyone
+ * noticing — the count was right and the meaning was invisible. */
+function setAsideCard(mapping: Mapping): Raw {
+  const rows = mapping.excluded?.setAside || [];
+  if (!rows.length) return raw('');
+  const byReason = new Map<string, string[]>();
+  for (const r of rows) byReason.set(r.reason, [...(byReason.get(r.reason) || []), r.label]);
+  return card('Rows set aside', html`
+    <p class="muted" style="margin-top:0">Every row this reader did not import as a current lease, and why.</p>
+    ${hjoin([...byReason.entries()].map(([reason, labels]) => html`
+      <div style="margin-bottom:8px">
+        <b>${labels.length} row${labels.length === 1 ? '' : 's'}</b> — ${reason}
+        <div class="muted small" style="margin-top:2px">${labels.slice(0, 60).join(' · ')}${labels.length > 60 ? ` · +${labels.length - 60} more` : ''}</div>
+      </div>`), '')}
+  `);
 }
 
 // ---------- hub page ----------
@@ -781,6 +840,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
       ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}
+      ${setAsideCard(j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] }))}
       ${when(!!validation.duplicateGuard, () => html`<div class="callout bad"><b>Hold on — this looks like it would duplicate residents.</b> ${validation.duplicateGuard!.message}</div>`)}
       ${when(!!preset, () => html`<div class="callout info">Recognized a <b>${preset!.name}</b> export — its columns were pre-mapped. Adjust anything below.</div>`)}
       ${when(mapping.reader === 'ai', () => html`<div class="callout info"><b>Read by AI.</b> The model read the whole document — header, columns, section labels and summary rows. ${(mapping.notes || []).join(' ')} Everything below is already pre-filled from that read — this screen is verification, not data entry. Nothing imports until you apply.</div>`)}

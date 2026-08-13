@@ -291,6 +291,11 @@ export const SPECS: SettingSpec[] = [
     help: 'When a resident’s policy lapses, put them on the master policy automatically rather than waiting for staff.',
     ctl: { t: 'bool', on: 'Enroll automatically' },
   },
+  {
+    key: 'auto_enroll_migrated', group: 'Insurance', label: 'Auto-enroll imported households',
+    help: 'Imported households arrive with no coverage on file because they were just migrated, not because anything lapsed. Off means they are left alone until you decide — no billed master policy appears on a portfolio the day it lands.',
+    ctl: { t: 'bool', on: 'Enroll imported households too' },
+  },
 
   // ---------- AI and automation ----------
   {

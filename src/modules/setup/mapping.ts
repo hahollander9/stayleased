@@ -47,6 +47,8 @@ export const RENT_ROLL_FIELDS: FieldDef[] = [
   { key: 'move_in', label: 'Move-in date', synonyms: ['move in', 'move in date', 'movein', 'moved in', 'occupancy date'], contains: ['move in'] },
   { key: 'move_out', label: 'Move-out date', synonyms: ['move out', 'move out date', 'moveout', 'notice date'], contains: ['move out'] },
   { key: 'extra_monthly', label: 'Other monthly charges', hint: 'parking, storage, pets — imported as a second recurring charge on the lease', synonyms: ['other monthly charges', 'other charges', 'additional charges', 'recurring charges', 'ancillary charges'], contains: ['other charge', 'addl charge'] },
+  { key: 'source_ref', label: 'Resident ID (source system)', hint: 'the id the old system used for this household — kept so records can be tied back to it', synonyms: ['resident id', 'tenant id', 'resident code', 'tenant code', 'tcode', 't code', 'person id'], contains: [] },
+  { key: 'subsidy', label: 'Housing subsidy (of the rent)', hint: 'the part of the rent a voucher or housing authority pays — the rent stays whole, this records who pays it', synonyms: ['subsidy', 'housing subsidy', 'hap', 'hap amount', 'voucher', 'voucher amount', 'assistance', 'housing assistance', 'subsidy amount'], contains: ['subsid', 'voucher', 'hap '] },
 ];
 
 export const VENDOR_FIELDS: FieldDef[] = [
@@ -107,7 +109,7 @@ export const PRESETS: Preset[] = [
     // Name carries the household. Files where Resident IS the name still map
     // through the tenant synonyms (with the value-shape tie-break preferring
     // the column whose samples look like people).
-    map: { 'unit': 'unit', 'unit type': 'floorplan', 'name': 'tenant', 'market rent': 'market_rent', 'actual rent': 'rent', 'resident deposit': 'deposit', 'other deposit': '', 'move in': 'move_in', 'lease from': 'lease_start', 'lease to': 'lease_end', 'move out': 'move_out', 'lease expiration': 'lease_end', 'sq ft': 'sqft', 'unit sq ft': 'sqft', 'charge code': '', 'balance': 'balance' },
+    map: { 'unit': 'unit', 'unit type': 'floorplan', 'name': 'tenant', 'resident': 'source_ref', 'market rent': 'market_rent', 'actual rent': 'rent', 'resident deposit': 'deposit', 'other deposit': '', 'move in': 'move_in', 'lease from': 'lease_start', 'lease to': 'lease_end', 'move out': 'move_out', 'lease expiration': 'lease_end', 'sq ft': 'sqft', 'unit sq ft': 'sqft', 'charge code': '', 'balance': 'balance' },
   },
   {
     key: 'rentmanager', name: 'Rent Manager',
@@ -150,9 +152,13 @@ export interface Mapping {
   /** what the report says about itself (its own summary block), for tie-out */
   source?: SourceSummary;
   /** rows the reader set aside before review, by reason */
-  excluded?: { futureApplicants: number; futureUnits: string[]; summaryRows: number };
+  excluded?: { futureApplicants: number; futureUnits: string[]; summaryRows: number; setAside?: { label: string; reason: string }[] };
   /** the charge code the reader concluded is rent, and where that came from */
   rentCode?: { code: string; from: 'ai' | 'frequency'; extras: string[] };
+  /** the property the document names, and the source system's code for it */
+  sourceProperty?: PropertyBanner;
+  /** every charge code the file used and what the reader decided it means */
+  codeNature?: Record<string, ChargeNature>;
 }
 
 /** Score a header against a field. exact synonym 3 · contains 2 · fuzzy 1. */
@@ -233,7 +239,26 @@ export function autoMap(headers: string[], kind: ImportKind, samples?: string[][
  * above the header ("Station U & O (1022)"). Find it deterministically:
  * among the pre-header rows, skip report/date/page lines, take the first
  * remaining short mostly-alone text cell; strip a trailing "(code)". */
-export function detectDocumentProperty(rows: string[][], headerIdx: number): string | null {
+/** A banner cell names the property and usually carries the source system's own
+ * code for it — "Livingston Place at Southern Avenue (1009)". Split them: the
+ * name is what the operator sees, the code is the key back to the system the
+ * data came from, and without it the next reconciliation has nothing to join on. */
+export interface PropertyBanner {
+  name: string;
+  /** the source system's property code, when the banner carries one */
+  code: string | null;
+}
+
+export function splitPropertyBanner(cellRaw: string): PropertyBanner | null {
+  const cell = String(cellRaw ?? '').trim();
+  if (cell.length < 3) return null;
+  const m = cell.match(/^(.*?)\s*\(([^)]{1,12})\)\s*$/);
+  const name = (m ? m[1]! : cell).trim();
+  if (name.length < 3) return null;
+  return { name, code: m ? m[2]!.trim() || null : null };
+}
+
+export function detectDocumentPropertyBanner(rows: string[][], headerIdx: number): PropertyBanner | null {
   for (let i = 0; i < Math.min(headerIdx, 6); i++) {
     const row = rows[i] || [];
     const filled = row.filter((c) => String(c ?? '').trim());
@@ -241,10 +266,14 @@ export function detectDocumentProperty(rows: string[][], headerIdx: number): str
     const cell = String(row.find((c) => String(c ?? '').trim()) ?? '').trim();
     if (/rent roll|as of|month year|report|page \d|prepared|run date|=/i.test(cell)) continue;
     if (cell.length < 3 || cell.length > 60) continue;
-    const name = cell.replace(/\s*\([^)]{1,12}\)\s*$/, '').trim();
-    if (name.length >= 3) return name;
+    const banner = splitPropertyBanner(cell);
+    if (banner) return banner;
   }
   return null;
+}
+
+export function detectDocumentProperty(rows: string[][], headerIdx: number): string | null {
+  return detectDocumentPropertyBanner(rows, headerIdx)?.name ?? null;
 }
 
 // ---------- stacked (two-row) headers ----------
@@ -283,14 +312,52 @@ export interface SubRowHarvest {
   rows: string[][];
   /** surviving-row index → harvested recurring extras from its sub-rows */
   extraByRow: Map<number, { cents: number; codes: string[] }>;
+  /** surviving-row index → the part of RENT a third party pays (voucher/HAP) */
+  subsidyByRow: Map<number, { cents: number; codes: string[] }>;
   harvestedRows: number;
   droppedTotals: number;
   totalCents: number;
+  /** total housing subsidy folded INTO rent across the file */
+  subsidyCents: number;
   codes: Set<string>;
   /** unit rows whose ONE charge carried a non-rent code and moved to extras */
   demotedRows: number;
   /** the code concluded to be rent ('' when the file has no charge codes) */
   rentCode: string;
+  /** every charge code seen, classified — shown on review so a wrong call is visible */
+  codeNature: Record<string, ChargeNature>;
+}
+
+/** What a charge code MEANS, which decides where its money lands.
+ *
+ * The distinction that matters is not rent-vs-not-rent but *whose rent*: a
+ * housing voucher (`rnsvchr`, HAP, Section 8) is part of the CONTRACT RENT —
+ * it changes who pays, not how much the unit rents for — while parking, pet
+ * and storage are genuinely separate monthly charges that were never rent.
+ *
+ * Getting this wrong is expensive in both directions. Treating a voucher as
+ * an ancillary charge understated the rent roll by $10,139/mo on the
+ * 2026-08-12 Livingston import and priced renewal offers ~$1,130/mo below
+ * contract rent. Treating parking as rent would inflate every rent average and
+ * every renewal in the opposite direction. So unknown codes stay ANCILLARY —
+ * the conservative side — and the reconciliation strip's per-code tie-out is
+ * what catches a wrong call before anything applies. */
+export type ChargeNature = 'rent' | 'subsidy' | 'ancillary';
+
+/** Codes that name a third-party housing payment, i.e. part of contract rent. */
+const SUBSIDY_CODE = /^(rn(sv|sub|hap)|hap|sec8|s8|hcv|subsid|vouch|assist)/i;
+/** Codes that name a genuinely separate monthly service. */
+const ANCILLARY_CODE = /(prk|park|pet|stor|garag|carport|util|cam|trash|trsh|valet|amen|insur|late|admin|fee)/i;
+
+export function classifyChargeCode(code: string, rentCode: string, overrides?: Record<string, ChargeNature>): ChargeNature {
+  const c = String(code || '').trim();
+  if (!c) return 'ancillary';
+  const o = overrides?.[c.toLowerCase()];
+  if (o) return o;
+  if (rentCode && c === rentCode) return 'rent';
+  if (ANCILLARY_CODE.test(c)) return 'ancillary';
+  if (SUBSIDY_CODE.test(c)) return 'subsidy';
+  return 'ancillary';
 }
 
 /** Yardi "Rent Roll with Lease Charges" prints each unit as a block: a unit
@@ -300,8 +367,8 @@ export interface SubRowHarvest {
  * a sub-row). So the harvest is block- and code-aware: gather each block's
  * charges, find the portfolio's rent code (the code most units share, ties
  * broken toward rnt*/
-export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers?: string[], rentCodeHint?: string): SubRowHarvest {
-  const out: SubRowHarvest = { rows: [], extraByRow: new Map(), harvestedRows: 0, droppedTotals: 0, totalCents: 0, codes: new Set(), demotedRows: 0, rentCode: '' };
+export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers?: string[], rentCodeHint?: string, codeOverrides?: Record<string, ChargeNature>): SubRowHarvest {
+  const out: SubRowHarvest = { rows: [], extraByRow: new Map(), subsidyByRow: new Map(), harvestedRows: 0, droppedTotals: 0, totalCents: 0, subsidyCents: 0, codes: new Set(), demotedRows: 0, rentCode: '', codeNature: {} };
   let unitCol = -1;
   let rentCol = -1;
   let tenantCol = -1;
@@ -396,22 +463,44 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
   const rentCode = rentCodeHint && codeUnits.has(rentCodeHint) ? rentCodeHint : byFrequency;
   out.rentCode = rentCode;
 
-  // ---- pass 2: per block, rent = the rent-code charge; everything else = extras
+  const nature = (code: string): ChargeNature => classifyChargeCode(code, rentCode, codeOverrides);
+  const noteNature = (code: string): void => { if (code) out.codeNature[code] = nature(code); };
+
+  // ---- pass 2: per block, RENT is every rent-nature charge (the tenant's own
+  // portion plus any housing subsidy on top of it — together they are what the
+  // unit rents for), and only genuinely ancillary codes become extras. The
+  // subsidy is remembered separately as the payer split: how much of that rent
+  // a third party pays. A block with no rent-nature charge at all falls back to
+  // the first charge, so a file whose codes are all unfamiliar still imports.
   for (const [idx, list] of blocks) {
-    const rent = list.find((c) => c.code && c.code === rentCode) ?? (moneyToCents(String(out.rows[idx]![rentCol] ?? '')) ? null : list[0] ?? null);
-    const extras = list.filter((c) => c !== rent && !(c.fromUnitRow && !rent));
-    const promoted = [...out.rows[idx]!];
-    if (rent) promoted[rentCol] = (rent.cents / 100).toFixed(2);
-    out.rows[idx] = promoted;
-    let cents = 0;
-    const codes: string[] = [];
-    for (const c of extras) {
-      cents += c.cents;
-      if (c.code) { codes.push(c.code); out.codes.add(c.code); }
+    for (const c of list) noteNature(c.code);
+    let rentCents = 0;
+    let subsidyCents = 0;
+    let extraCents = 0;
+    const extraCodes: string[] = [];
+    const subsidyCodes: string[] = [];
+    const rentish = list.filter((c) => nature(c.code) !== 'ancillary');
+    const effective = rentish.length ? rentish : list.slice(0, 1);
+    for (const c of list) {
+      const isRent = effective.includes(c);
+      if (isRent) {
+        rentCents += c.cents;
+        if (nature(c.code) === 'subsidy') { subsidyCents += c.cents; if (c.code) subsidyCodes.push(c.code); }
+      } else {
+        extraCents += c.cents;
+        if (c.code) { extraCodes.push(c.code); out.codes.add(c.code); }
+      }
     }
-    if (cents > 0) {
-      out.extraByRow.set(idx, { cents, codes });
-      out.totalCents += cents;
+    const promoted = [...out.rows[idx]!];
+    promoted[rentCol] = (rentCents / 100).toFixed(2);
+    out.rows[idx] = promoted;
+    if (extraCents > 0) {
+      out.extraByRow.set(idx, { cents: extraCents, codes: extraCodes });
+      out.totalCents += extraCents;
+    }
+    if (subsidyCents > 0) {
+      out.subsidyByRow.set(idx, { cents: subsidyCents, codes: subsidyCodes });
+      out.subsidyCents += subsidyCents;
     }
     out.harvestedRows += list.filter((c) => !c.fromUnitRow).length;
   }
@@ -431,6 +520,15 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
       if (!code || code === rentCode) return;
       const cents = moneyToCents(String(row[rentCol] ?? ''));
       if (cents === null || cents <= 0) return;
+      noteNature(code);
+      if (nature(code) === 'subsidy') {
+        // a fully-subsidised household: the voucher IS the contract rent, so
+        // the amount stays in the rent column and only the payer split records
+        // that none of it comes from the resident
+        out.subsidyByRow.set(idx, { cents, codes: [code] });
+        out.subsidyCents += cents;
+        return;
+      }
       const demoted = [...row];
       demoted[rentCol] = '0.00'; // explicit zero: never fall back to market rent
       out.rows[idx] = demoted;
@@ -440,6 +538,11 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
       out.demotedRows++;
     });
   }
+  // unit rows whose single charge IS the rent code still need their nature known
+  out.rows.forEach((row, idx) => {
+    if (blocks.has(idx)) return;
+    noteNature(codeAt(row));
+  });
   return out;
 }
 
@@ -469,6 +572,9 @@ export interface RosterScan {
   futureUnits: string[];
   /** rows belonging to the report's own summary trailer */
   summaryRows: number;
+  /** every row set aside, with the reason — "32 rows skipped" is how the
+   * future-residents section hid in plain sight on the 2026-08-12 import */
+  setAside: { label: string; reason: string }[];
   /** true when the file actually declared these sections */
   sectioned: boolean;
 }
@@ -486,7 +592,7 @@ const ROSTER_HEADINGS: [RegExp, RosterKind][] = [
  * guard is what keeps the trailer's own "Current/Notice/Vacant Residents"
  * TOTALS line (same words, real numbers) from reading as a second heading. */
 export function scanRosterSections(rows: string[][], mapping: Mapping): RosterScan {
-  const out: RosterScan = { rows: [], futureRows: [], futureUnits: [], summaryRows: 0, sectioned: false };
+  const out: RosterScan = { rows: [], futureRows: [], futureUnits: [], summaryRows: 0, setAside: [], sectioned: false };
   let unitCol = -1;
   for (const [c, f] of Object.entries(mapping.cols)) if (f === 'unit') unitCol = Number(c);
   if (unitCol < 0) { out.rows = rows; return out; }
@@ -503,18 +609,26 @@ export function scanRosterSections(rows: string[][], mapping: Mapping): RosterSc
       state = state === 'trailer' ? 'trailer' : heading;
       out.sectioned = true;
       if (state === 'current') continue; // heading row itself is never data
-      out.summaryRows += state === 'trailer' ? 1 : 0;
+      if (state === 'trailer') { out.summaryRows++; out.setAside.push({ label, reason: 'the report\u2019s own summary block' }); }
       continue;
     }
-    if (state === 'trailer') { out.summaryRows++; continue; }
+    if (state === 'trailer') {
+      out.summaryRows++;
+      const first = String(row.find((c) => String(c ?? '').trim()) ?? '').trim();
+      if (first) out.setAside.push({ label: first, reason: 'the report\u2019s own summary block' });
+      continue;
+    }
     if (state === 'future') {
       out.futureRows.push(row);
-      if (label) out.futureUnits.push(label);
+      if (label) {
+        out.futureUnits.push(label);
+        out.setAside.push({ label: `unit ${label}`, reason: 'future resident/applicant \u2014 imported as a signed future lease' });
+      }
       continue;
     }
     out.rows.push(row);
   }
-  if (!out.sectioned) { out.rows = rows; out.futureRows = []; out.futureUnits = []; out.summaryRows = 0; }
+  if (!out.sectioned) { out.rows = rows; out.futureRows = []; out.futureUnits = []; out.summaryRows = 0; out.setAside = []; }
   return out;
 }
 

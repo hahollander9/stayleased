@@ -51,6 +51,12 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   master_policy_fee_cents: 1450,
   required_liability_cents: 10000000,
   auto_enroll_on_lapse: true,
+  // …but a MIGRATED lease has no coverage record because it was just imported,
+  // not because a policy lapsed, so force-placing a billed master policy on it
+  // is the platform inventing revenue on a portfolio it hasn't begun billing.
+  // Off until the operator says otherwise; auto_enroll_on_lapse still governs
+  // everything that lapses after the migration.
+  auto_enroll_migrated: false,
   // verticals (M18)
   academic_calendar: { fallStart: '2026-08-20', fallEnd: '2027-07-31' },
   bah_table: {

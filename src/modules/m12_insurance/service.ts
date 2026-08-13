@@ -190,7 +190,7 @@ export function complianceSweep(ctx: Ctx, date: string): { lapsed: number; remin
   // have it applied because the organization leaves it on.
   {
     const uncovered = q<any>(
-      `SELECT l.id, l.property_id FROM leases l
+      `SELECT l.id, l.property_id, l.import_batch_id, l.billing_start_date FROM leases l
        WHERE l.org_id=? AND l.status IN ('active','notice','month_to_month')
          AND NOT EXISTS (SELECT 1 FROM insurance_policies ip WHERE ip.lease_id=l.id AND ip.status='active'
                            AND (ip.end_date IS NULL OR ip.end_date >= ?))`,
@@ -198,6 +198,20 @@ export function complianceSweep(ctx: Ctx, date: string): { lapsed: number; remin
     );
     for (const lease of uncovered) {
       if (getSetting<boolean>(ctx, 'auto_enroll_on_lapse', lease.property_id) === false) continue;
+      // A MIGRATED household has no coverage record because it was just typed
+      // into the database, not because anyone let their policy lapse. Force-
+      // placing a billed master policy on it is the platform inventing its own
+      // revenue on a portfolio it has not begun billing: the 2026-08-12 import
+      // auto-enrolled all 124 imported leases at $14.50/mo and then reported
+      // them as "124 delinquent households · $1,798.00 open" — the client's
+      // first view of their own portfolio.
+      //
+      // So this is opt-IN after a migration, twice over: nothing is force-
+      // placed before recurring billing has even started, and an imported
+      // lease needs the property to say yes explicitly rather than inheriting
+      // the platform default.
+      if (lease.billing_start_date && lease.billing_start_date > date) continue;
+      if (lease.import_batch_id && getSetting<boolean>(ctx, 'auto_enroll_migrated', lease.property_id) !== true) continue;
       enrollMaster({ ...ctx, businessDate: date } as Ctx, lease.id, 'auto_enroll');
       enrolled++;
       const contact = primaryContact(ctx.orgId, lease.id);

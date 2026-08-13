@@ -105,13 +105,17 @@ test('gate: a Yardi block-format rent roll uploads, ties out to its own summary,
   // the report's own summary block is read back and every line ties
   assert.match(review, /ties to the summary block of the uploaded report/i);
   assert.doesNotMatch(review, /do(es)? not tie to the summary block/i);
-  assert.match(review, /Rent \(rntnt\)/, 'the tie-out names the rent charge code');
-  assert.match(review, /\$1,839\.00/, 'rent ties to the rntnt line');
-  assert.match(review, /\$2,183\.00/, 'other charges tie to the rnsvchr line');
+  // rent is the CONTRACT rent — both codes together, the report's own Total
+  // line — with the voucher share shown beneath it as who pays (DECISIONS #67)
+  assert.match(review, /Rent \(rntnt \+ rnsvchr\)/, 'the tie-out names both rent-nature codes');
+  assert.match(review, /\$4,022\.00/, 'rent ties to the report\u2019s Total line');
+  assert.match(review, /of which subsidy \(rnsvchr\)/, 'the voucher share is broken out, not hidden');
+  assert.match(review, /\$2,183\.00/, 'and it ties to the rnsvchr line');
   assert.match(review, new RegExp(`${YARDI_EXPECTED.futureApplicants} future applicants set aside`), 'future applicants are their own line, not errors');
   assert.doesNotMatch(review, /probably wrong/, 'genuinely-$0 deposits and balances raise no mis-mapping alarm');
-  // 3 clean + 1 warned (the fully-subsidised unit), and nothing skipped
-  assert.match(review, /3 ready/);
+  // every current unit reviews clean now that a fully-subsidised lease is a
+  // normal lease rather than one billing $0 rent
+  assert.match(review, /4 ready/);
   assert.doesNotMatch(review, /\d+ skipped/, 'a clean report must review with no skipped rows');
 
   await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Apply")')]);

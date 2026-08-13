@@ -11,7 +11,8 @@ import { postBothBases } from '../m9_accounting/service.ts';
 import { ensureBankAccounts } from '../m9_accounting/banking.ts';
 import {
   extractRecord, moneyToCents, toIsoDate, normStatus, splitName, normVendorCategory,
-  type Mapping, type ImportKind, type SourceSummary,
+  classifyChargeCode,
+  type Mapping, type ImportKind, type SourceSummary, type ChargeNature,
 } from './mapping.ts';
 
 /** Validation + transactional apply for Migration Center batches. Preview and
@@ -65,6 +66,8 @@ export interface ImportRecon {
   futureApplicants?: number;
   /** line-by-line comparison against the report's own summary block */
   tieOuts?: TieOut[];
+  /** the part of rentCents paid by vouchers, not by residents */
+  subsidyCents?: number;
 }
 
 /** One row of the tie-out table: what the report says vs what we read. */
@@ -85,7 +88,7 @@ function fmtMoney(c: number): string {
  * standing in as $14.50) shows up here as a line that doesn't match, before
  * anything is written. It also caught the rent/extras split being $1,417 off
  * on the 2026-08-12 Livingston file while the monthly TOTAL still tied. */
-export function tieOutToSource(recon: ImportRecon, source: SourceSummary, rentCode?: string): TieOut[] {
+export function tieOutToSource(recon: ImportRecon, source: SourceSummary, rentCode?: string, codeNature?: Record<string, ChargeNature>): TieOut[] {
   const out: TieOut[] = [];
   const num = (label: string, src: number | null, computed: number): void => {
     if (src === null) return;
@@ -103,11 +106,24 @@ export function tieOutToSource(recon: ImportRecon, source: SourceSummary, rentCo
   // the split matters as much as the total: rent and "other monthly" post to
   // different accounts, so a total that ties with a split that doesn't is
   // still wrong money in the books
-  if (rentCode && source.chargeCodes[rentCode] !== undefined) {
-    money(`Rent (${rentCode})`, source.chargeCodes[rentCode]!, recon.rentCents);
-    const others = Object.entries(source.chargeCodes).filter(([c]) => c !== rentCode);
-    if (others.length) {
-      money(`Other charges (${others.map(([c]) => c).join(', ')})`, others.reduce((a, [, v]) => a + v, 0), recon.extraMonthlyCents);
+  const codes = Object.entries(source.chargeCodes);
+  if (rentCode && codes.length) {
+    // group the report's own per-code totals the same way the reader grouped
+    // them: rent-nature codes (the tenant's portion plus any voucher) are the
+    // contract rent, ancillary codes are the separate monthly charges
+    const natureOf = (c: string): ChargeNature =>
+      codeNature?.[c] ?? (c === rentCode ? 'rent' : classifyChargeCode(c, rentCode));
+    const rentish = codes.filter(([c]) => natureOf(c) !== 'ancillary');
+    const ancillary = codes.filter(([c]) => natureOf(c) === 'ancillary');
+    const subsidy = codes.filter(([c]) => natureOf(c) === 'subsidy');
+    if (rentish.length) {
+      money(`Rent (${rentish.map(([c]) => c).join(' + ')})`, rentish.reduce((a, [, v]) => a + v, 0), recon.rentCents);
+    }
+    if (subsidy.length && recon.subsidyCents !== undefined) {
+      money(`  …of which subsidy (${subsidy.map(([c]) => c).join(', ')})`, subsidy.reduce((a, [, v]) => a + v, 0), recon.subsidyCents);
+    }
+    if (ancillary.length) {
+      money(`Other charges (${ancillary.map(([c]) => c).join(', ')})`, ancillary.reduce((a, [, v]) => a + v, 0), recon.extraMonthlyCents);
     }
   }
   money('Deposits held', source.depositCents, recon.depositCents);
@@ -149,6 +165,30 @@ function uniquePropertySlug(base: string): string {
   return `${slug}-${Date.now() % 100000}`;
 }
 
+/** A rent roll carries no address, so an imported property has no location to
+ * derive a timezone from — and the old hardcoded 'America/Denver' put a
+ * Washington DC building on Mountain time, which moves business-date rollover,
+ * rent-due timing and every late-fee window by two hours. Inherit what the org
+ * already operates in; only fall back to a constant for the very first property,
+ * where there is genuinely nothing to go on. */
+export function importTimezone(ctx: Ctx): string {
+  const existing = q1<{ timezone: string }>(
+    `SELECT timezone, COUNT(*) n FROM properties WHERE org_id=? AND timezone IS NOT NULL AND timezone<>''
+      GROUP BY timezone ORDER BY n DESC LIMIT 1`, ctx.orgId,
+  );
+  return existing?.timezone || 'America/New_York';
+}
+
+/** "201" -> 2, "1102" -> 11, "A-304" -> 3. A unit number that does not encode a
+ * floor (a name, a lot number, a bare 1-2 digits) stays on floor 1 rather than
+ * being given an invented one. */
+export function floorFromUnit(unit: string): number {
+  const digits = String(unit || '').match(/\d{3,4}/);
+  if (!digits) return 1;
+  const n = parseInt(digits[0]!.slice(0, digits[0]!.length - 2), 10);
+  return Number.isFinite(n) && n >= 1 && n <= 99 ? n : 1;
+}
+
 export function ensureOpeningEquityAccount(orgId: string): void {
   if (!q1('SELECT id FROM gl_accounts WHERE org_id=? AND code=?', orgId, '3030')) {
     insert('gl_accounts', {
@@ -184,6 +224,14 @@ interface RRPlan {
   moveOut: string | null;
   /** harvested/mapped recurring non-rent charges (parking, pet, storage…) */
   extraMonthlyCents: number;
+  /** the part of rentCents a voucher/housing authority pays, not the resident */
+  subsidyCents: number;
+  /** read off the unit number when the source has no floor column */
+  floor: number;
+  /** the source lists them as current but their move-out already passed */
+  alreadyMovedOut: boolean;
+  /** the source system's resident id, kept so rows can be tied back */
+  sourceRef: string | null;
   mtm: boolean;
   onNotice: boolean;
 }
@@ -214,7 +262,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
   // reconciliation accumulators (non-error rows only — what would apply)
   const recon: ImportRecon = {
     units: 0, occupied: 0, rentCents: 0, extraMonthlyCents: 0, depositCents: 0, balanceCents: 0, moveOuts: 0,
-    columnWarnings: [], marketRentCents: 0, futureApplicants: mapping.excluded?.futureApplicants ?? 0,
+    columnWarnings: [], marketRentCents: 0, subsidyCents: 0, futureApplicants: mapping.excluded?.futureApplicants ?? 0,
   };
   const colStats = { deposit: { zero: 0, freq: new Map<number, number>() }, balance: { zero: 0, freq: new Map<number, number>() } };
   const rentFreq = new Map<number, number>(); // occupied-row rent value → count
@@ -275,6 +323,13 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     // has to know whether anything else is being billed
     const extraMonthlyCents = moneyToCents(rec.extra_monthly) ?? 0;
     if (rec.extra_monthly && moneyToCents(rec.extra_monthly) === null) warn(`Couldn't read other monthly charges “${rec.extra_monthly}” — ignored.`);
+    // the subsidy is a slice OF the rent, never an addition to it
+    let subsidyCents = moneyToCents(rec.subsidy) ?? 0;
+    if (rec.subsidy && moneyToCents(rec.subsidy) === null) warn(`Couldn't read housing subsidy “${rec.subsidy}” — ignored.`);
+    if (subsidyCents > 0 && subsidyCents > (rentCents ?? marketRentCents ?? 0)) {
+      warn(`Housing subsidy ${fmtMoney(subsidyCents)} is larger than the rent — capped at the rent.`);
+      subsidyCents = rentCents ?? marketRentCents ?? 0;
+    }
     if (occupied && tenantName) {
       if (rentCents === null && marketRentCents !== null) warn('No lease-rent column value — using market rent.');
       if (effRent <= 0 && extraMonthlyCents > 0) {
@@ -292,7 +347,19 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     const moveIn = toIsoDate(rec.move_in);
     const moveOut = toIsoDate(rec.move_out);
     if (rec.move_out && !moveOut) warn(`Couldn't read move-out date “${rec.move_out}” — ignored.`);
-    if (moveOut && moveOut < asOf) warn(`Move-out ${moveOut} is before the switch date — imported on notice; end the lease after import.`);
+    // Bug 8: Yardi listed unit 242 in the CURRENT section with a move-out 3.5
+    // months before the as-of date. Stored correctly, but the household still
+    // counted as occupied and $1,491/mo of rent was scheduled to start billing
+    // after they had gone. The source is genuinely ambiguous, so this is a
+    // review flag rather than a silent correction — and, crucially, no future
+    // rent is scheduled for a tenancy that has already ended.
+    const alreadyMovedOut = !!moveOut && moveOut < asOf;
+    if (alreadyMovedOut) {
+      warn(`Move-out ${moveOut} is ${Math.round((Date.parse(asOf) - Date.parse(moveOut)) / 86400000)} days before the switch date, `
+        + `yet the source still lists this household in its current section. Imported on notice exactly as the source has it — `
+        + `but NO rent is scheduled, because billing a tenancy that already ended is the one thing that cannot be undone by a correction. `
+        + `Confirm the move-out and end the lease, or re-open it if they are still in place.`);
+    }
     let leaseStart = toIsoDate(rec.lease_start) || moveIn;
     let leaseEnd = toIsoDate(rec.lease_end);
     let mtm = false;
@@ -312,10 +379,28 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     const baths = rec.baths ? parseFloat(rec.baths) : NaN;
     let floorplanName = (rec.floorplan || '').trim();
     const bb = floorplanName.match(/^(\d+)\s*(?:bd|br|bed)?\s*[x\/-]\s*(\d+(?:\.\d+)?)/i);
+    // Bug 9: when the source states neither beds/baths nor a floorplan that
+    // encodes them, both were silently defaulted to 1 and the floorplan was
+    // NAMED "1 bed / 1 bath" — so a 331 sq ft plan and a 536 sq ft plan both
+    // claimed the same layout on the strength of nothing. The numbers still
+    // default (columns are NOT NULL and downstream pricing needs a value), but
+    // the plan is no longer named after a guess: an unnamed plan is labelled by
+    // what the source DID give — its size — so the screen says "331 sq ft plan"
+    // rather than asserting a bedroom count nobody supplied.
+    const bedsKnown = Number.isFinite(beds) || !!bb;
     const bedsF = Number.isFinite(beds) ? beds : bb ? parseInt(bb[1]!, 10) : 1;
     const bathsF = Number.isFinite(baths) ? baths : bb ? parseFloat(bb[2]!) : 1;
-    if (!floorplanName) floorplanName = `${bedsF} bed / ${bathsF} bath`;
+    if (!floorplanName) {
+      floorplanName = bedsKnown ? `${bedsF} bed / ${bathsF} bath`
+        : rec.sqft ? `${parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 0} sq ft plan`
+        : 'Unspecified plan';
+    }
     const sqft = rec.sqft ? parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 750 : 750;
+    // Bug 9: every unit imported on floor 1 though unit numbers plainly encode
+    // the floor (201, 301, 401, 501). No floor column exists in a Yardi roll,
+    // so read it off the unit number when the number looks like one — and stay
+    // on 1 when it does not, rather than inventing a floor.
+    const floor = floorFromUnit(unit);
 
     // existing unit checks (only resolvable for a concrete target property)
     const plan: RRPlan = {
@@ -326,6 +411,8 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
       rentCents: effRent, depositCents, balanceCents,
       leaseStart: leaseStart || asOf, leaseEnd: leaseEnd || addMonths(asOf, 12), moveIn: moveIn || leaseStart || null,
       moveOut, extraMonthlyCents: extraMonthlyCents > 0 ? extraMonthlyCents : 0,
+      subsidyCents: subsidyCents > 0 ? subsidyCents : 0,
+      floor, alreadyMovedOut, sourceRef: rec.source_ref || null,
       mtm, onNotice: st === 'notice' || (!!moveOut && occupied),
     };
     if (tenantName && plan.occupied) {
@@ -357,6 +444,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
         rentFreq.set(plan.rentCents, (rentFreq.get(plan.rentCents) || 0) + 1);
       }
       recon.extraMonthlyCents += plan.extraMonthlyCents;
+      recon.subsidyCents = (recon.subsidyCents ?? 0) + plan.subsidyCents;
       recon.depositCents += plan.depositCents;
       recon.balanceCents += plan.balanceCents;
       if (moveOut) recon.moveOuts++;
@@ -404,7 +492,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
 
   // ---- tie the strip out to the report's own summary block
   if (source) {
-    recon.tieOuts = tieOutToSource(recon, source, mapping.rentCode?.code);
+    recon.tieOuts = tieOutToSource(recon, source, mapping.rentCode?.code, mapping.codeNature);
     const off = recon.tieOuts.filter((t) => !t.ok);
     if (off.length) {
       recon.columnWarnings.push(
@@ -432,6 +520,8 @@ export interface ApplySummary {
   portalInvites?: number;
   /** existing residents whose email/phone were filled in by a directory import */
   contactUpdates?: number;
+  /** signed-but-not-started leases created from a future-residents section */
+  futureLeases?: number;
   /** exactly what each merge wrote onto an existing resident, so removing the
    * upload can put those fields back — but only where the value is still the
    * one the import wrote (anything edited since belongs to the operator now) */
@@ -440,6 +530,11 @@ export interface ApplySummary {
   /** what the applied file added up to (rent rolls) — kept on the record so
    * the batch page can show it without re-validating post-apply */
   recon?: ImportRecon;
+}
+
+/** One display name may carry a couple: "Sasha Kim & Ben Kim". */
+export function splitHousehold(name: string): { first: string; last: string; display: string }[] {
+  return name.split(/\s*(?:&| and )\s*/i).filter(Boolean).slice(0, 4).map((p) => splitName(p));
 }
 
 /** "Beltran, Angel" and "Angel Beltran" are the same person. */
@@ -468,6 +563,7 @@ export function portalAccessFor(ctx: Ctx, batchId: string, residentId: string): 
 export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
   const validation = validateRentRoll(ctx, batch);
   if (validation.blockers.length) throw new Error(validation.blockers.join(' '));
+  const mapping = j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] });
   const asOf = batch.as_of || ctx.businessDate;
   const billingStart = firstOfMonth(addMonths(asOf, 1));
   const summary: ApplySummary = { properties: 0, units: 0, residents: 0, leases: 0, vendors: 0, balancesCents: 0, depositsCents: 0, skipped: validation.error, recon: validation.recon };
@@ -479,13 +575,18 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
     const propIds = new Map<string, string>(); // propertyKey → property id
     const mkProperty = (name: string): string => {
       const pid = id('prp');
+      // the source system's own code for this property, when the document
+      // named one — the key the next reconciliation joins on
+      const sourceRef = mapping.sourceProperty && mapping.sourceProperty.name === name
+        ? mapping.sourceProperty.code : null;
       insert('properties', {
         id: pid, org_id: ctx.orgId, name, slug: uniquePropertySlug(name), type: 'multifamily', import_batch_id: batch.id,
-        address1: '(address pending)', city: '—', state: '--', zip: '00000', timezone: 'America/Denver',
+        source_ref: sourceRef,
+        address1: '(address pending)', city: '—', state: '--', zip: '00000', timezone: importTimezone(ctx),
         phone: null, email: null, year_built: null, fiscal_year_start_month: 1, created_at: nowIso(),
       });
       summary.properties++;
-      audit(ctx, 'property', pid, 'import_create', null, { name, batch: batch.id });
+      audit(ctx, 'property', pid, 'import_create', null, { name, batch: batch.id, source_ref: sourceRef });
       return pid;
     };
     if (batch.property_id) propIds.set(batch.property_id, batch.property_id);
@@ -532,7 +633,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
         unitId = id('unt');
         insert('units', {
           id: unitId, org_id: ctx.orgId, property_id: pid, building_id: null, floorplan_id: fid, import_batch_id: batch.id,
-          unit_number: plan.unit, floor: 1, sqft: plan.sqft, status: plan.occupied ? 'occupied' : plan.unitStatus,
+          unit_number: plan.unit, floor: plan.floor, sqft: plan.sqft, status: plan.occupied ? 'occupied' : plan.unitStatus,
           market_rent_cents: plan.marketRentCents || plan.rentCents || 100000, amenities: '[]', notes: null, created_at: nowIso(),
         });
         summary.units++;
@@ -547,14 +648,24 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           household_name: householdName, status: plan.mtm ? 'month_to_month' : plan.onNotice ? 'notice' : 'active',
           start_date: plan.leaseStart, end_date: plan.leaseEnd, move_in_date: plan.moveIn,
           move_out_date: plan.moveOut, notice_date: null, mtm_since: plan.mtm ? (plan.leaseEnd < asOf ? plan.leaseEnd : asOf) : null,
-          rent_cents: plan.rentCents, deposit_cents: plan.depositCents, deposit_alternative: 0,
+          rent_cents: plan.rentCents, subsidy_cents: plan.subsidyCents, deposit_cents: plan.depositCents, deposit_alternative: 0,
           term_months: 12, application_id: null, renewal_of_lease_id: null, template_id: null,
           packet_file_id: null, esign_request_id: null, bed_label: null,
-          billing_start_date: billingStart, created_at: nowIso(),
+          // a tenancy that ended before the switch date never bills forward
+          billing_start_date: plan.alreadyMovedOut ? null : billingStart, created_at: nowIso(),
         });
+        // The lease RENTS for plan.rentCents — that is the contract rent and
+        // what every report, average and renewal is priced off. What the
+        // RESIDENT owes is that less any voucher a housing authority pays, so
+        // the recurring charge (which is what actually bills) carries only
+        // their share. Billing the whole contract rent to the household would
+        // invoice them for someone else's money.
+        const tenantRentCents = Math.max(0, plan.rentCents - plan.subsidyCents);
         insert('lease_charges', {
-          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent', import_batch_id: batch.id,
-          amount_cents: plan.rentCents, gl_account_code: null, rentable_item_id: null,
+          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent',
+          label: plan.subsidyCents > 0 ? 'Rent (resident portion)' : 'Rent', import_batch_id: batch.id,
+          amount_cents: tenantRentCents, gl_account_code: null, rentable_item_id: null,
+          source_code: mapping.rentCode?.code || null,
           start_date: billingStart, end_date: null, created_at: nowIso(),
         });
         if (plan.extraMonthlyCents > 0) {
@@ -563,6 +674,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           insert('lease_charges', {
             id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'other', label: 'Other recurring (imported)', import_batch_id: batch.id,
             amount_cents: plan.extraMonthlyCents, gl_account_code: null, rentable_item_id: null,
+            source_code: null,
             start_date: billingStart, end_date: null, created_at: nowIso(),
           });
         }
@@ -574,6 +686,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
             id: rid, org_id: ctx.orgId, property_id: pid, user_id: null, import_batch_id: batch.id,
             first_name: t.first || t.display, last_name: t.last, email: ti === 0 ? plan.email : null,
             phone: ti === 0 ? plan.phone : null, kind: 'adult', employer: null,
+            source_ref: ti === 0 ? plan.sourceRef : null,
             monthly_income_cents: null, ssn_last4: null, created_at: nowIso(),
           });
           insert('household_members', {
@@ -614,6 +727,65 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           { account: '2100', credit: cents, memo: 'Security deposits held' },
         ],
       });
+    }
+
+    // ---- signed-but-not-started leases (the report's own future-residents
+    // section). These were being dropped: 16 rows, every one a lease someone
+    // has already signed, and their 16 units then read as "ready to lease" so
+    // the dashboard offered availability that does not exist. They import as
+    // fully-executed leases dated from their move-in, which the portfolio
+    // stats already understand as a PRE-LEASE — so exposure falls, occupancy
+    // does not move, and nothing bills until the lease actually starts.
+    for (const raw of j<string[][]>(batch.staged, [])) {
+      const rec = extractRecord(raw, mapping);
+      const unit = (rec.unit || '').trim();
+      const tenantName = (rec.tenant || '').trim();
+      if (!unit || !tenantName || /^vacant$/i.test(tenantName)) continue;
+      const pid = propIds.get(rec.property ? rec.property.trim() : (batch.property_id || `new:${batch.new_property_name}`));
+      if (!pid) continue;
+      const unitRow = q1<{ id: string; market_rent_cents: number }>(
+        'SELECT id, market_rent_cents FROM units WHERE property_id=? AND unit_number=?', pid, unit,
+      );
+      if (!unitRow) { summary.skipped++; continue; }
+      const start = toIsoDate(rec.move_in) || toIsoDate(rec.lease_start);
+      const end = toIsoDate(rec.lease_end);
+      if (!start) { summary.skipped++; continue; }
+      // a future lease already on the books is not imported twice
+      if (q1(`SELECT id FROM leases WHERE unit_id=? AND status='fully_executed' AND start_date=?`, unitRow.id, start)) continue;
+      const rentCents = moneyToCents(rec.rent) || moneyToCents(rec.market_rent) || unitRow.market_rent_cents || 0;
+      const leaseId = id('lse');
+      insert('leases', {
+        id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unitRow.id, import_batch_id: batch.id,
+        household_name: tenantName, status: 'fully_executed',
+        start_date: start, end_date: end || addMonths(start, 12), move_in_date: start,
+        move_out_date: null, notice_date: null, mtm_since: null,
+        rent_cents: rentCents, subsidy_cents: 0, deposit_cents: moneyToCents(rec.deposit) ?? 0, deposit_alternative: 0,
+        term_months: 12, application_id: null, renewal_of_lease_id: null, template_id: null,
+        packet_file_id: null, esign_request_id: null, bed_label: null,
+        // nothing bills before the lease starts
+        billing_start_date: start, created_at: nowIso(),
+      });
+      insert('lease_charges', {
+        id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent', import_batch_id: batch.id,
+        amount_cents: rentCents, gl_account_code: null, rentable_item_id: null, source_code: null,
+        start_date: start, end_date: null, created_at: nowIso(),
+      });
+      for (const [ti, t] of splitHousehold(tenantName).entries()) {
+        const rid = id('res');
+        insert('residents', {
+          id: rid, org_id: ctx.orgId, property_id: pid, user_id: null, import_batch_id: batch.id,
+          first_name: t.first || t.display, last_name: t.last, email: ti === 0 ? (rec.email || null) : null,
+          phone: ti === 0 ? (rec.phone || null) : null, kind: 'adult', employer: null,
+          source_ref: ti === 0 ? (rec.source_ref || null) : null,
+          monthly_income_cents: null, ssn_last4: null, created_at: nowIso(),
+        });
+        insert('household_members', {
+          id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid, import_batch_id: batch.id,
+          role: ti === 0 ? 'primary' : 'co', created_at: nowIso(),
+        });
+        summary.residents++;
+      }
+      summary.futureLeases = (summary.futureLeases || 0) + 1;
     }
 
     ensureBankAccounts(ctx.orgId); // every property gets an operating account row

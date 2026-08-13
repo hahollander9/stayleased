@@ -11,7 +11,7 @@ import {
 } from '../src/modules/setup/import_apply.ts';
 import {
   autoMap, findHeaderRow, mergeStackedHeader, harvestSubRowCharges,
-  scanRosterSections, parseSourceSummary, detectDocumentProperty, type Mapping,
+  scanRosterSections, parseSourceSummary, detectDocumentProperty, moneyToCents, type Mapping,
 } from '../src/modules/setup/mapping.ts';
 import { YARDI_BLOCK_ROLL } from './fixtures/yardi_block_roll.ts';
 
@@ -232,6 +232,7 @@ function readYardi(rows: string[][]): { headers: string[]; dataRows: string[][];
   const h = harvestSubRowCharges(dataRows, mapping, headers);
   dataRows = h.rows;
   if (h.rentCode) mapping.rentCode = { code: h.rentCode, from: 'frequency', extras: [...h.codes] };
+  if (Object.keys(h.codeNature).length) mapping.codeNature = h.codeNature;
   if (h.harvestedRows > 0 || h.demotedRows > 0) {
     const extraIdx = headers.length;
     headers = [...headers, 'Other monthly charges'];
@@ -240,6 +241,17 @@ function readYardi(rows: string[][]): { headers: string[]; dataRows: string[][];
       const e = h.extraByRow.get(i);
       const row = Array.from({ length: extraIdx }, (_, ci) => String(r[ci] ?? ''));
       row.push(e ? (e.cents / 100).toFixed(2) : '');
+      return row;
+    });
+  }
+  if (h.subsidyCents > 0) {
+    const subIdx = headers.length;
+    headers = [...headers, 'Housing subsidy (of the rent)'];
+    mapping.cols[subIdx] = 'subsidy';
+    dataRows = dataRows.map((r, i) => {
+      const sub = h.subsidyByRow.get(i);
+      const row = Array.from({ length: subIdx }, (_, ci) => String(r[ci] ?? ''));
+      row.push(sub ? (sub.cents / 100).toFixed(2) : '');
       return row;
     });
   }
@@ -258,7 +270,7 @@ test('yardi block roll: the header merges, the preset lands, and the property co
   assert.equal(by.rent, 7, 'Amount beside the charge code is the rent');
   assert.equal(by.deposit, 8, 'Resident Deposit, not Other Deposit');
   assert.equal(by.sqft, 2, 'the stacked "Unit / Sq Ft" pair');
-  assert.equal(mapping.cols[3], undefined, 'the resident t-code column stays unmapped');
+  assert.equal(by.source_ref, 3, 'the Resident column is the source system\u2019s id, kept as a key back to it \u2014 not the household name');
 });
 
 test('yardi block roll: roster sections split current leases from future applicants and the trailer', () => {
@@ -270,17 +282,37 @@ test('yardi block roll: roster sections split current leases from future applica
   assert.ok((mapping.excluded?.summaryRows ?? 0) >= 10, 'the report trailer is set aside, not read as units');
 });
 
-test('yardi block roll: a lone non-rent charge code is not rent', () => {
-  const { dataRows, mapping } = readYardi(YARDI_ROWS);
+/** The same `rnsvchr` code must land in the same place on both units, whatever
+ * row it sits on — the audit's Bug 1, where 245 (voucher on its only row) was
+ * read as rent and 205 (voucher on its second row) was read as "other", so
+ * position decided the answer instead of the code. */
+test('the same charge code classifies identically wherever it sits in the block', () => {
+  const { mapping } = readYardi(YARDI_ROWS);
   assert.equal(mapping.rentCode?.code, 'rntnt');
+  assert.equal(mapping.codeNature?.rntnt, 'rent');
+  assert.equal(mapping.codeNature?.rnsvchr, 'subsidy', 'a housing voucher is part of contract rent, not an ancillary charge');
+});
+
+/** Doctrine reversal, 2026-08-13: rent is CONTRACT rent — the tenant's portion
+ * plus any voucher on top of it — because that is what the unit rents for and
+ * what the rent roll's own Total line says. The previous rule (rent = the
+ * rent-code amount alone) understated the rent roll by $10,139/mo and priced
+ * renewal offers ~$1,130/mo below contract rent. Ancillary codes still stay
+ * out of rent; a voucher is not ancillary. */
+test('rent is the contract rent, and the voucher is recorded as who pays it', () => {
+  const { dataRows, mapping } = readYardi(YARDI_ROWS);
   const rentCol = Number(Object.entries(mapping.cols).find(([, f]) => f === 'rent')![0]);
-  const extraCol = Number(Object.entries(mapping.cols).find(([, f]) => f === 'extra_monthly')![0]);
+  const subCol = Number(Object.entries(mapping.cols).find(([, f]) => f === 'subsidy')![0]);
+
+  // 245 is fully subsidised: the voucher IS the rent, none of it from the resident
   const unit245 = dataRows.find((r) => r[0] === '245')!;
-  assert.equal(unit245[rentCol], '0.00', 'the subsidy-coded amount must not stand in as rent');
-  assert.equal(unit245[extraCol], '1417.00', 'it is a recurring non-rent charge');
+  assert.equal(moneyToCents(unit245[rentCol]!), 141700, 'a fully-subsidised unit still rents for $1,417');
+  assert.equal(moneyToCents(unit245[subCol]!), 141700, 'and every cent of it is paid by the voucher');
+
+  // 205 splits: $348 from the resident, $766 from the voucher, $1,114 contract
   const unit205 = dataRows.find((r) => r[0] === '205')!;
-  assert.equal(unit205[rentCol], '348.00', 'the rent-coded amount stays the rent');
-  assert.equal(unit205[extraCol], '766.00', 'the subsidy sub-row folds into other charges');
+  assert.equal(moneyToCents(unit205[rentCol]!), 111400, 'contract rent is both codes together');
+  assert.equal(moneyToCents(unit205[subCol]!), 76600, 'the voucher portion is the payer split');
 });
 
 test('yardi block roll: the report summary is parsed and every recon line ties to it', () => {
@@ -303,8 +335,9 @@ test('yardi block roll: the report summary is parsed and every recon line ties t
   assert.equal(v.error, 0, `a clean report must review clean: ${v.rows.flatMap((r) => r.notes).join(' | ')}`);
   assert.equal(v.recon!.units, 4);
   assert.equal(v.recon!.occupied, 3);
-  assert.equal(v.recon!.rentCents, 183900, 'rent ties to the rntnt line of the charge-code summary');
-  assert.equal(v.recon!.extraMonthlyCents, 218300, 'other charges tie to rnsvchr');
+  assert.equal(v.recon!.rentCents, 402200, 'rent is the contract rent — both codes, the report\u2019s own Total line');
+  assert.equal(v.recon!.subsidyCents, 218300, 'the voucher portion is tracked as who pays, not as a rent reduction');
+  assert.equal(v.recon!.extraMonthlyCents, 0, 'neither code is ancillary, so nothing lands in other charges');
   assert.equal(v.recon!.futureApplicants, 2);
   const ties = v.recon!.tieOuts!;
   assert.ok(ties.length >= 8, 'the tie-out covers units, occupancy, rent, the split, deposits and balances');
@@ -326,13 +359,26 @@ test('yardi block roll: applying it bills rent and the subsidy as separate month
   const sum = (kind: string): number => q1<{ t: number }>(
     `SELECT COALESCE(SUM(lc.amount_cents),0) t FROM lease_charges lc JOIN leases l ON l.id=lc.lease_id WHERE l.property_id=? AND lc.kind=?`, pid, kind,
   )!.t;
-  assert.equal(sum('rent'), 183900, 'rent posts the rntnt total');
-  assert.equal(sum('other'), 218300, 'the subsidy posts as its own recurring line, never merged into rent');
+  // what the RESIDENTS are billed is contract rent less the voucher — billing
+  // them the whole contract rent would invoice them for someone else's money
+  assert.equal(sum('rent'), 183900, 'residents are billed only their own portion');
+  assert.equal(sum('other'), 0, 'the voucher is not an ancillary charge');
+  const contract = q1<{ t: number }>(
+    `SELECT COALESCE(SUM(rent_cents),0) t FROM leases WHERE property_id=?`, pid,
+  )!.t;
+  const subsidy = q1<{ t: number }>(
+    `SELECT COALESCE(SUM(subsidy_cents),0) t FROM leases WHERE property_id=?`, pid,
+  )!.t;
+  assert.equal(contract, 402200, 'the leases carry the full contract rent — what the rent roll reports');
+  assert.equal(subsidy, 218300, 'and the voucher share is recorded against it');
   const u245 = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', pid, '245')!;
-  const lease245 = q1<{ id: string; rent_cents: number }>('SELECT id, rent_cents FROM leases WHERE unit_id=?', u245.id)!;
-  assert.equal(lease245.rent_cents, 0, 'a fully-subsidised unit carries no tenant rent');
-  const other245 = q1<{ amount_cents: number }>(`SELECT amount_cents FROM lease_charges WHERE lease_id=? AND kind='other'`, lease245.id)!;
-  assert.equal(other245.amount_cents, 141700, 'it still bills $1,417/mo — the money is not lost');
+  const lease245 = q1<{ id: string; rent_cents: number; subsidy_cents: number }>(
+    'SELECT id, rent_cents, subsidy_cents FROM leases WHERE unit_id=?', u245.id,
+  )!;
+  assert.equal(lease245.rent_cents, 141700, 'a fully-subsidised unit still rents for $1,417');
+  assert.equal(lease245.subsidy_cents, 141700, 'all of it paid by the voucher');
+  const rent245 = q1<{ amount_cents: number }>(`SELECT amount_cents FROM lease_charges WHERE lease_id=? AND kind='rent'`, lease245.id)!;
+  assert.equal(rent245.amount_cents, 0, 'so the resident is billed nothing');
 });
 
 test('recon warns loudly when a mapping does not tie to the report summary', () => {
