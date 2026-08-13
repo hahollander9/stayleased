@@ -1,6 +1,6 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
-import { boot } from './lib.ts';
+import { boot, newPage } from './lib.ts';
 import { q1 } from '../src/lib/db.ts';
 import type { Browser } from 'playwright';
 
@@ -73,7 +73,7 @@ test('apartments.com-style webhook email → lead + thread + AI action, hands-fr
 });
 
 test('website inquiry auto-engages the Leasing AI (first touch, no staff click)', async () => {
-  const page = await (await browser.newContext()).newPage();
+  const page = await newPage(browser);
   await page.goto(`${base}/p/summit-ridge#contact`);
   await page.fill('#contact input[name=first_name]', 'Nolan');
   await page.fill('#contact input[name=last_name]', 'Frey');

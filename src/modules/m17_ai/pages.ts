@@ -565,6 +565,10 @@ const ASK_CHAT_JS = `
   }
   form.addEventListener('submit', function (e) {
     e.preventDefault();
+    // check busy BEFORE clearing the box: ask() already refuses while a reply is
+    // in flight, so without this a question typed mid-answer is wiped and never
+    // sent. The disabled send button is an affordance, not the guard.
+    if (busy) return;
     var q = input.value.trim(); if (!q) return;
     input.value = '';
     ask(q);
