@@ -11,7 +11,7 @@ import { postBothBases } from '../m9_accounting/service.ts';
 import { ensureBankAccounts } from '../m9_accounting/banking.ts';
 import {
   extractRecord, moneyToCents, toIsoDate, normStatus, splitName, normVendorCategory,
-  type Mapping, type ImportKind,
+  type Mapping, type ImportKind, type SourceSummary,
 } from './mapping.ts';
 
 /** Validation + transactional apply for Migration Center batches. Preview and
@@ -60,6 +60,59 @@ export interface ImportRecon {
   moveOuts: number;
   /** batch-level mis-mapping heuristics ("every deposit is $0", …) */
   columnWarnings: string[];
+  marketRentCents?: number;
+  /** future residents/applicants the reader set aside (pending, not current) */
+  futureApplicants?: number;
+  /** line-by-line comparison against the report's own summary block */
+  tieOuts?: TieOut[];
+}
+
+/** One row of the tie-out table: what the report says vs what we read. */
+export interface TieOut {
+  label: string;
+  source: string;
+  computed: string;
+  ok: boolean;
+}
+
+function fmtMoney(c: number): string {
+  return `$${(c / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+/** Compare the computed totals to the summary block the report printed about
+ * itself. This is the check the 2026-08-11 live import didn't have: every
+ * failure that run produced ($99k of deposits landing as $0, $331k of balances
+ * standing in as $14.50) shows up here as a line that doesn't match, before
+ * anything is written. It also caught the rent/extras split being $1,417 off
+ * on the 2026-08-12 Livingston file while the monthly TOTAL still tied. */
+export function tieOutToSource(recon: ImportRecon, source: SourceSummary, rentCode?: string): TieOut[] {
+  const out: TieOut[] = [];
+  const num = (label: string, src: number | null, computed: number): void => {
+    if (src === null) return;
+    out.push({ label, source: String(src), computed: String(computed), ok: src === computed });
+  };
+  const money = (label: string, src: number | null, computed: number): void => {
+    if (src === null) return;
+    out.push({ label, source: fmtMoney(src), computed: fmtMoney(computed), ok: src === computed });
+  };
+  num('Units', source.units, recon.units);
+  num('Occupied', source.occupiedUnits, recon.occupied);
+  num('Future applicants', source.futureUnits, recon.futureApplicants ?? 0);
+  if (recon.marketRentCents !== undefined) money('Market rent', source.marketRentCents, recon.marketRentCents);
+  money('Monthly charges', source.leaseChargesCents, recon.rentCents + recon.extraMonthlyCents);
+  // the split matters as much as the total: rent and "other monthly" post to
+  // different accounts, so a total that ties with a split that doesn't is
+  // still wrong money in the books
+  if (rentCode && source.chargeCodes[rentCode] !== undefined) {
+    money(`Rent (${rentCode})`, source.chargeCodes[rentCode]!, recon.rentCents);
+    const others = Object.entries(source.chargeCodes).filter(([c]) => c !== rentCode);
+    if (others.length) {
+      money(`Other charges (${others.map(([c]) => c).join(', ')})`, others.reduce((a, [, v]) => a + v, 0), recon.extraMonthlyCents);
+    }
+  }
+  money('Deposits held', source.depositCents, recon.depositCents);
+  money('Balances owed', source.balanceCents, recon.balanceCents);
+  return out;
 }
 
 export interface Validation {
@@ -159,7 +212,10 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     return ci !== undefined ? (headers[Number(ci)] || `column ${Number(ci) + 1}`) : '';
   };
   // reconciliation accumulators (non-error rows only — what would apply)
-  const recon: ImportRecon = { units: 0, occupied: 0, rentCents: 0, extraMonthlyCents: 0, depositCents: 0, balanceCents: 0, moveOuts: 0, columnWarnings: [] };
+  const recon: ImportRecon = {
+    units: 0, occupied: 0, rentCents: 0, extraMonthlyCents: 0, depositCents: 0, balanceCents: 0, moveOuts: 0,
+    columnWarnings: [], marketRentCents: 0, futureApplicants: mapping.excluded?.futureApplicants ?? 0,
+  };
   const colStats = { deposit: { zero: 0, freq: new Map<number, number>() }, balance: { zero: 0, freq: new Map<number, number>() } };
   const rentFreq = new Map<number, number>(); // occupied-row rent value → count
 
@@ -213,9 +269,19 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     const rentCents = moneyToCents(rec.rent);
     const marketRentCents = moneyToCents(rec.market_rent);
     const effRent = rentCents ?? marketRentCents ?? 0;
+    // read the extras first: a lease can legitimately bill $0 rent and still
+    // bill real money (a voucher/subsidy unit, where the whole contract rent
+    // sits under a non-rent charge code), so the "needs a rent amount" rule
+    // has to know whether anything else is being billed
+    const extraMonthlyCents = moneyToCents(rec.extra_monthly) ?? 0;
+    if (rec.extra_monthly && moneyToCents(rec.extra_monthly) === null) warn(`Couldn't read other monthly charges “${rec.extra_monthly}” — ignored.`);
     if (occupied && tenantName) {
       if (rentCents === null && marketRentCents !== null) warn('No lease-rent column value — using market rent.');
-      if (effRent <= 0) fail('Occupied row needs a rent amount (rent or market rent column).');
+      if (effRent <= 0 && extraMonthlyCents > 0) {
+        warn(`No rent charge — this lease bills ${fmtMoney(extraMonthlyCents)}/mo of other recurring charges only.`);
+      } else if (effRent <= 0) {
+        fail('Occupied row needs a rent amount (rent or market rent column).');
+      }
     }
     const depositCents = moneyToCents(rec.deposit) ?? 0;
     if (rec.deposit && moneyToCents(rec.deposit) === null) warn(`Couldn't read deposit “${rec.deposit}” — ignored.`);
@@ -251,10 +317,6 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     if (!floorplanName) floorplanName = `${bedsF} bed / ${bathsF} bath`;
     const sqft = rec.sqft ? parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 750 : 750;
 
-    // recurring non-rent charges (harvested sub-rows or a mapped column)
-    const extraMonthlyCents = moneyToCents(rec.extra_monthly) ?? 0;
-    if (rec.extra_monthly && moneyToCents(rec.extra_monthly) === null) warn(`Couldn't read other monthly charges “${rec.extra_monthly}” — ignored.`);
-
     // existing unit checks (only resolvable for a concrete target property)
     const plan: RRPlan = {
       propertyKey, unit, floorplanName, beds: bedsF, baths: bathsF, sqft,
@@ -288,6 +350,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     // above defeat TS narrowing on the local)
     if (out.rows[out.rows.length - 1]!.level !== 'error') {
       recon.units++;
+      recon.marketRentCents = (recon.marketRentCents ?? 0) + (marketRentCents ?? 0);
       if (plan.occupied) {
         recon.occupied++;
         recon.rentCents += plan.rentCents;
@@ -309,11 +372,18 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
 
   // ---- column-level mis-mapping heuristics (batch warnings, not row noise)
   const fmt = (c: number): string => `$${(c / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+  const source = mapping.source;
   for (const [field, label] of [['deposit', 'deposit'], ['balance', 'balance']] as const) {
     if (!mappedFields.has(field) || recon.units < 10) continue;
     const s = colStats[field];
     const nonzero = [...s.freq.values()].reduce((a, b) => a + b, 0);
     if (nonzero === 0) {
+      // …unless the report itself says the total is zero. An all-$0 column is
+      // the signature of a mis-mapping, but on a portfolio that genuinely
+      // holds no deposits it is the truth, and crying wolf on a correct import
+      // teaches operators to click past the warning that matters.
+      const reported = field === 'deposit' ? source?.depositCents : source?.balanceCents;
+      if (reported === 0) continue;
       recon.columnWarnings.push(`The ${label} column (mapped from “${headerFor(field)}”) produced $0 on every row — that mapping is probably wrong. ${field === 'deposit' ? 'Deposits held would import as nothing.' : 'Balances owed would import as nothing.'}`);
       continue;
     }
@@ -329,6 +399,19 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     if (count >= 3 && cents > 0 && cents <= 50000) {
       recon.columnWarnings.push(`${count} occupied units import with rent ${fmt(cents)} — in block-format rent rolls a small identical “rent” is usually a recurring charge (parking, storage) sitting on the unit row, not the rent. Check those rows before applying.`);
       break; // one such warning is enough
+    }
+  }
+
+  // ---- tie the strip out to the report's own summary block
+  if (source) {
+    recon.tieOuts = tieOutToSource(recon, source, mapping.rentCode?.code);
+    const off = recon.tieOuts.filter((t) => !t.ok);
+    if (off.length) {
+      recon.columnWarnings.push(
+        `${off.length} line${off.length === 1 ? ' does' : 's do'} not tie to the summary block of the uploaded report: ` +
+        `${off.map((t) => `${t.label} (report ${t.source}, read ${t.computed})`).join('; ')}. ` +
+        `Fix the mapping before applying — the report is the authority here.`,
+      );
     }
   }
   out.recon = recon;
