@@ -60,10 +60,19 @@ export async function login(page: Page, base: string, email: string, password = 
   await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Sign in")')]);
 }
 
-export async function newPage(browser: Browser, opts?: { mobile?: boolean }): Promise<Page> {
+/** The only door to a page in this suite. A test that calls browser.newPage()
+ * or browser.newContext() directly quietly opts out of everything set here —
+ * which is how askdock's two theme pages kept the animated path after the rest
+ * of the suite moved off it, and then failed on CI and nowhere else. Options
+ * that a test genuinely needs to vary belong here as parameters. */
+export async function newPage(
+  browser: Browser,
+  opts?: { mobile?: boolean; colorScheme?: 'light' | 'dark' },
+): Promise<Page> {
   const ctx = await browser.newContext({
     viewport: opts?.mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
     deviceScaleFactor: opts?.mobile ? 2 : 1,
+    ...(opts?.colorScheme ? { colorScheme: opts.colorScheme } : {}),
     // Drive the app as a reduced-motion user gets it. Playwright will not click
     // an element until it is "stable" — two identical frames — and the .content
     // entrance animation on a 362-row table never settled inside 30s on a

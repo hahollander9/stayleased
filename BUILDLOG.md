@@ -964,3 +964,37 @@ teaches everyone to ignore the red.
 
 **Verified:** tsc strict clean · unit suite 353/353 · full e2e (all 31 files) · `ai.test.ts` 3×
 green, and red against the un-guarded handler.
+
+
+## 2026-08-13 — Three pages had opted out of the helper, and CI found the two that mattered
+
+The reduced-motion change went green locally at 175/175 and came back from CI at 174/175. The
+failure was `askdock.test.ts:86` — `page.click('[data-theme-toggle]')`, 30s timeout, element
+resolved, "waiting for element to be visible, enabled and **stable**". The same signature as the
+`reports.test.ts` failure the reduced-motion fix was written to cure, on a different element, one
+run later.
+
+**Because that test never got the fix.** `newPage()` in `e2e/lib.ts` is where the suite decides what
+kind of browser it is driving — viewport, device scale, and now reduced motion. The theme gate needs
+a `colorScheme`, the helper took no such option, so it called `browser.newPage({ colorScheme })`
+directly and inherited none of the rest. When the suite moved to reduced motion, those two pages
+stayed on the animated path. A third (`ilsemail.test.ts:76`) had done the same with a bare
+`browser.newContext()`, and was passing only by luck of what it clicks.
+
+Local machines have the cores to finish a 0.3s entrance before Playwright gives up; a 2-core hosted
+runner does not. So the bug was invisible in exactly the place it was introduced and visible only in
+the place that matters, which is the argument for the gate existing at all.
+
+**Fixed by closing the door rather than patching the two callers.** `colorScheme` is now a parameter
+on `newPage()`, all three sites go through the helper, and `tests/e2e_hygiene.test.ts` asserts no
+file under `e2e/` calls `browser.newPage`/`browser.newContext` directly — so the next test that
+needs an option adds it to the helper instead of stepping around it. Verified both directions: green
+as it stands, and red naming `ilsemail.test.ts:76` when the bypass is put back. (#54)
+
+Worth recording for its own sake: with reduced motion the hosted runner ran all 175 in **6m38s**.
+The previous two CI runs were cancelled at the 40-minute cap. The animation was not a small tax.
+
+**Decisions:** #54.
+
+**Verified:** tsc strict clean · unit suite 354/354 (the new guard included) · full e2e (all 31
+files) · `askdock` + `ilsemail` scoped green · the guard confirmed red against a reintroduced bypass.
