@@ -318,7 +318,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     // money
     const rentCents = moneyToCents(rec.rent);
     const marketRentCents = moneyToCents(rec.market_rent);
-    const effRent = rentCents ?? marketRentCents ?? 0;
+    let effRent = rentCents ?? marketRentCents ?? 0;
     // read the extras first: a lease can legitimately bill $0 rent and still
     // bill real money (a voucher/subsidy unit, where the whole contract rent
     // sits under a non-rent charge code), so the "needs a rent amount" rule
@@ -332,18 +332,44 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
       warn(`Housing subsidy ${fmtMoney(subsidyCents)} is larger than the rent — capped at the rent.`);
       subsidyCents = rentCents ?? marketRentCents ?? 0;
     }
-    if (occupied && tenantName) {
-      if (rentCents === null && marketRentCents !== null) warn('No lease-rent column value — using market rent.');
-      if (effRent <= 0 && extraMonthlyCents > 0) {
-        warn(`No rent charge — this lease bills ${fmtMoney(extraMonthlyCents)}/mo of other recurring charges only.`);
-      } else if (effRent <= 0) {
-        fail('Occupied row needs a rent amount (rent or market rent column).');
-      }
-    }
     const depositCents = moneyToCents(rec.deposit) ?? 0;
     if (rec.deposit && moneyToCents(rec.deposit) === null) warn(`Couldn't read deposit “${rec.deposit}” — ignored.`);
     const balanceCents = moneyToCents(rec.balance) ?? 0;
     if (rec.balance && moneyToCents(rec.balance) === null) warn(`Couldn't read balance “${rec.balance}” — ignored.`);
+    if (occupied && tenantName) {
+      if (rentCents === null && marketRentCents !== null) warn('No lease-rent column value — using market rent.');
+      if (effRent < 0) {
+        // belt for anything the harvest floor missed: a negative schedule is
+        // a concession, never a rent
+        warn(`Scheduled charges net ${fmtMoney(effRent)}/mo — importing the rent as $0.00 and keeping the concession in other charges.`);
+        effRent = 0;
+      }
+      if (effRent <= 0 && extraMonthlyCents !== 0) {
+        warn(extraMonthlyCents > 0
+          ? `No rent charge — this lease bills ${fmtMoney(extraMonthlyCents)}/mo of other recurring charges only.`
+          : `No rent charge — this lease carries a ${fmtMoney(-extraMonthlyCents)}/mo concession (a credit posts monthly, exactly as the source schedules it).`);
+      } else if (effRent <= 0) {
+        // A row the reader cannot price is not automatically a bad row. On a
+        // migration, the zero-rent occupied rows are usually the REAL edge of
+        // the portfolio — abatements, employee units, parking licenses — and
+        // on the 606-unit file they carried its largest balances. Evidence of
+        // a real tenancy imports at $0 with a warning; only a row with no
+        // money, no dates and no history anywhere still fails, because that
+        // shape is a mis-mapped column, not a household.
+        const evidence: string[] = [];
+        if (balanceCents !== 0) evidence.push(`a ${fmtMoney(Math.abs(balanceCents))} ${balanceCents > 0 ? 'balance owed' : 'credit balance'}`);
+        if (depositCents > 0) evidence.push(`a ${fmtMoney(depositCents)} deposit on file`);
+        if (toIsoDate(rec.move_in)) evidence.push(`a move-in date`);
+        else if (toIsoDate(rec.lease_end)) evidence.push(`a lease date`);
+        if (subsidyCents > 0) evidence.push(`a housing subsidy`);
+        if (evidence.length) {
+          warn(`Occupied with $0 scheduled rent — imported, but nothing bills until a charge is added. `
+            + `The row carries ${evidence.join(', ')}, so it reads as a real tenancy (an abatement, employee unit, or license), not a mis-mapping.`);
+        } else {
+          fail('Occupied row needs a rent amount (rent or market rent column).');
+        }
+      }
+    }
 
     // dates
     const moveIn = toIsoDate(rec.move_in);
@@ -373,7 +399,21 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
         if (!mtm) warn('No lease-end date — assuming a 12-month term.');
       }
       if (leaseEnd < asOf) mtm = true; // expired term still in place = month-to-month
-      if (leaseEnd < leaseStart) fail('Lease end is before lease start.');
+      if (leaseEnd < leaseStart) {
+        if (leaseEnd < asOf) {
+          // an END that predates its own START, both in the past, is a
+          // holdover whose original term expired before a later transfer or
+          // re-entry updated the move-in (unit 1970-02B on the 606-unit file:
+          // move-in 2024-08-01, expiration 2023-03-25, $41k balance). The
+          // household is real; the term is what's broken. Read it as a
+          // month-to-month holdover and say so — never discard the row.
+          mtm = true;
+          warn(`Lease end ${leaseEnd} predates the lease start ${leaseStart} — reading this as an expired term and the household as a month-to-month holdover. Verify the dates against the source.`);
+          leaseEnd = addMonths(leaseStart, 12);
+        } else {
+          fail('Lease end is before lease start.');
+        }
+      }
     }
 
     // beds/baths/sqft/floorplan
@@ -397,7 +437,12 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
         : rec.sqft ? `${parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 0} sq ft plan`
         : 'Unspecified plan';
     }
-    const sqft = rec.sqft ? parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 750 : 750;
+    // Sq ft: what the source states, and NOTHING when it states none. The
+    // first pass turned "Unit Sq Ft = 0" into 750 on every row — 454,500
+    // invented square feet on the 606-unit file, and every $/SF metric built
+    // on them would have been fiction. 0 means "unknown" downstream.
+    const sqftParsed = rec.sqft ? parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) : NaN;
+    const sqft = Number.isFinite(sqftParsed) && sqftParsed > 0 ? sqftParsed : 0;
     // Bug 9: every unit imported on floor 1 though unit numbers plainly encode
     // the floor (201, 301, 401, 501). No floor column exists in a Yardi roll,
     // so read it off the unit number when the number looks like one — and stay
@@ -412,7 +457,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
       tenants: [], email: rec.email || null, phone: rec.phone || null,
       rentCents: effRent, depositCents, balanceCents,
       leaseStart: leaseStart || asOf, leaseEnd: leaseEnd || addMonths(asOf, 12), moveIn: moveIn || leaseStart || null,
-      moveOut, extraMonthlyCents: extraMonthlyCents > 0 ? extraMonthlyCents : 0,
+      moveOut, extraMonthlyCents,
       subsidyCents: subsidyCents > 0 ? subsidyCents : 0,
       floor, bedsKnown, alreadyMovedOut, sourceRef: rec.source_ref || null,
       mtm, onNotice: st === 'notice' || (!!moveOut && occupied),
@@ -621,7 +666,11 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           // bedrooms silently asserting that every unit has one.
           description: plan.bedsKnown ? null
             : 'Beds and baths were not stated in the imported rent roll — these are placeholders. Correct them here.',
-          market_rent_cents: plan.marketRentCents || plan.rentCents || 100000, created_at: nowIso(),
+          // what the source stated — a $0 market rent (parking, employee
+          // units) stays $0. The old `|| 100000` fallback invented a $1,000
+          // market rent on 39 units of the 606-unit file, which then leaked
+          // into future-lease pricing and every market-rent average.
+          market_rent_cents: plan.marketRentCents || plan.rentCents || 0, created_at: nowIso(),
         });
       }
       fpCache.set(fpKey, fid);
@@ -642,7 +691,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
         insert('units', {
           id: unitId, org_id: ctx.orgId, property_id: pid, building_id: null, floorplan_id: fid, import_batch_id: batch.id,
           unit_number: plan.unit, floor: plan.floor, sqft: plan.sqft, status: plan.occupied ? 'occupied' : plan.unitStatus,
-          market_rent_cents: plan.marketRentCents || plan.rentCents || 100000, amenities: '[]', notes: null, created_at: nowIso(),
+          market_rent_cents: plan.marketRentCents || plan.rentCents || 0, amenities: '[]', notes: null, created_at: nowIso(),
         });
         summary.units++;
       }
@@ -676,11 +725,15 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           source_code: mapping.rentCode?.code || null,
           start_date: billingStart, end_date: null, created_at: nowIso(),
         });
-        if (plan.extraMonthlyCents > 0) {
+        if (plan.extraMonthlyCents !== 0) {
           // parking/pet/storage lines folded in from the source file — billed
-          // monthly alongside rent as their own charge line, never merged into it
+          // monthly alongside rent as their own charge line, never merged into
+          // it. A NEGATIVE line is a concession the source bills monthly (the
+          // employee units): it posts as a recurring credit, exactly as the
+          // prior system's schedule did.
           insert('lease_charges', {
-            id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'other', label: 'Other recurring (imported)', import_batch_id: batch.id,
+            id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'other',
+            label: plan.extraMonthlyCents > 0 ? 'Other recurring (imported)' : 'Concession (imported)', import_batch_id: batch.id,
             amount_cents: plan.extraMonthlyCents, gl_account_code: null, rentable_item_id: null,
             source_code: null,
             start_date: billingStart, end_date: null, created_at: nowIso(),
@@ -760,7 +813,10 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
       if (!start) { summary.skipped++; continue; }
       // a future lease already on the books is not imported twice
       if (q1(`SELECT id FROM leases WHERE unit_id=? AND status='fully_executed' AND start_date=?`, unitRow.id, start)) continue;
-      const rentCents = moneyToCents(rec.rent) || moneyToCents(rec.market_rent) || unitRow.market_rent_cents || 0;
+      // the row's own money, missing-vs-zero respected: an explicit $0 parking
+      // license stays $0 — the old || chain fell through to the unit's market
+      // rent and billed three $0 licenses at an invented $1,000/mo
+      const rentCents = moneyToCents(rec.rent) ?? moneyToCents(rec.market_rent) ?? unitRow.market_rent_cents ?? 0;
       const leaseId = id('lse');
       insert('leases', {
         id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unitRow.id, import_batch_id: batch.id,
@@ -770,8 +826,13 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
         rent_cents: rentCents, subsidy_cents: 0, deposit_cents: moneyToCents(rec.deposit) ?? 0, deposit_alternative: 0,
         term_months: 12, application_id: null, renewal_of_lease_id: null, template_id: null,
         packet_file_id: null, esign_request_id: null, bed_label: null,
-        // nothing bills before the lease starts
-        billing_start_date: start, created_at: nowIso(),
+        // nothing bills before the lease starts — and nothing bills BACKWARD
+        // either. A "future" row whose move-in already passed (Yardi keeps
+        // parking renewals in applicant status for months) activates as
+        // in-place, but its billing starts with the migration's first cycle
+        // like every other imported lease: the months before the switch belong
+        // to the prior system, and the report's own balances say $0 is owed.
+        billing_start_date: start < billingStart ? billingStart : start, created_at: nowIso(),
       });
       insert('lease_charges', {
         id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent', import_batch_id: batch.id,

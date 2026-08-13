@@ -657,15 +657,23 @@
 // ---------- file dropzones: drag-drop + chosen-file feedback ----------
 (function () {
   'use strict';
+  var zones = [];
   document.querySelectorAll('[data-dropzone]').forEach(function (zone) {
     var input = zone.querySelector('input[type=file]');
     var nameEl = zone.querySelector('[data-dz-name]');
     if (!input) return;
     function show() {
       var n = input.files ? input.files.length : 0;
-      if (nameEl) nameEl.textContent = n === 1 ? input.files[0].name : n > 1 ? n + ' files selected' : '';
+      if (nameEl) nameEl.textContent = n === 1 ? '✓ ' + input.files[0].name + ' — ready to upload' : n > 1 ? '✓ ' + n + ' files selected — ready to upload' : '';
       zone.classList.toggle('has-file', n > 0);
     }
+    function accept(files) {
+      input.files = files;
+      show();
+      zone.classList.add('drag');
+      setTimeout(function () { zone.classList.remove('drag'); }, 600);
+    }
+    zones.push({ zone: zone, accept: accept });
     input.addEventListener('change', show);
     ['dragover', 'dragenter'].forEach(function (ev) {
       zone.addEventListener(ev, function (e) { e.preventDefault(); zone.classList.add('drag'); });
@@ -674,10 +682,48 @@
     zone.addEventListener('drop', function (e) {
       e.preventDefault();
       zone.classList.remove('drag');
-      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) {
-        input.files = e.dataTransfer.files;
-        show();
-      }
+      if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length) accept(e.dataTransfer.files);
     });
+  });
+  if (!zones.length) {
+    // still guard the page: a stray file drop must never replace the app
+    ['dragover', 'drop'].forEach(function (ev) {
+      document.addEventListener(ev, function (e) {
+        if (e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], 'Files') >= 0) e.preventDefault();
+      });
+    });
+    return;
+  }
+  // Page-level net. A drop that misses the 590×130 dashed target used to hand
+  // the file to the BROWSER, which navigated away from the app — "drag and
+  // drop doesn't work." Now: a file dropped anywhere on a page with exactly
+  // one visible dropzone lands in that dropzone; with several, the nearest
+  // one takes it; either way the navigation default is always cancelled.
+  function visible(z) {
+    var r = z.zone.getBoundingClientRect();
+    return r.width > 0 && r.height > 0 && z.zone.offsetParent !== null;
+  }
+  document.addEventListener('dragover', function (e) {
+    e.preventDefault();
+  });
+  document.addEventListener('drop', function (e) {
+    e.preventDefault();
+    if (e.target && e.target.closest && e.target.closest('[data-dropzone]')) return; // the zone handled it
+    if (!e.dataTransfer || !e.dataTransfer.files || !e.dataTransfer.files.length) return;
+    var vis = zones.filter(visible);
+    if (!vis.length) return;
+    var best = vis[0];
+    if (vis.length > 1) {
+      var bd = Infinity;
+      vis.forEach(function (z) {
+        var r = z.zone.getBoundingClientRect();
+        var dx = Math.max(r.left - e.clientX, 0, e.clientX - r.right);
+        var dy = Math.max(r.top - e.clientY, 0, e.clientY - r.bottom);
+        var d = dx * dx + dy * dy;
+        if (d < bd) { bd = d; best = z; }
+      });
+    }
+    best.accept(e.dataTransfer.files);
+    best.zone.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 })();

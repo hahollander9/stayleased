@@ -14,7 +14,7 @@ import { shell, card, tbl, field, input, select, statusBadge } from '../../ui/ui
 import {
   autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges,
   detectDocumentPropertyBanner, splitPropertyBanner,
-  scanRosterSections, parseSourceSummary, norm, PRESETS,
+  scanRosterSections, parseSourceSummary, norm, PRESETS, extractRecord, toIsoDate,
   type ImportKind, type Mapping,
 } from './mapping.ts';
 import {
@@ -304,6 +304,22 @@ export function routes(r: Router): void {
             `import as signed future leases on those units — they have not started, so they bill nothing and do not count as occupied, ` +
             `but the units read as pre-leased rather than available.`,
           );
+          // Yardi keeps parking-license renewals in "applicant" status for
+          // months, so a future-section row can carry a move-in that already
+          // passed. Those import as in-place (their dates say so) with billing
+          // held to the migration's first cycle — but the operator should hear
+          // that the occupancy count will now read higher than the report's.
+          const importAsOf = String(rq.body.as_of || '') || ctx.businessDate;
+          const started = futureRows
+            .map((row) => extractRecord(row, mapping))
+            .filter((rec2) => { const mi = toIsoDate(rec2.move_in) || toIsoDate(rec2.lease_start); return !!mi && mi < importAsOf && (rec2.tenant || '').trim() && !/^vacant$/i.test((rec2.tenant || '').trim()); });
+          if (started.length) {
+            (mapping.notes ||= []).push(
+              `${started.length} of them (${started.slice(0, 8).map((rec2) => rec2.unit).join(', ')}${started.length > 8 ? ', …' : ''}) list${started.length === 1 ? 's' : ''} a move-in that has ALREADY passed — ` +
+              `the source still holds them as applicants, so its own occupancy count excludes them. They import as in-place leases billing from the first migration cycle; ` +
+              `occupancy here will read ${started.length} higher than the report's summary until that difference is reconciled in the source.`,
+            );
+          }
         }
         if (scan.summaryRows) (mapping.notes ||= []).push(`Read the report's own summary block (${scan.summaryRows} rows) as totals to tie out against, not as units.`);
       }
@@ -335,8 +351,11 @@ export function routes(r: Router): void {
           return row;
         });
         const codeStr = [...h.codes].slice(0, 5).join(', ');
-        if (h.harvestedRows > 0) {
-          (mapping.notes ||= []).push(`Folded ${h.harvestedRows} recurring-charge sub-row${h.harvestedRows === 1 ? '' : 's'}${codeStr ? ` (${codeStr})` : ''} — $${(h.totalCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo — into an “Other monthly charges” column billed alongside rent.`);
+        if (h.extraByRow.size > 0) {
+          // counts and dollars here come from the same fold the tie-table
+          // reads — the note may never disagree with the table beside it
+          const net = h.totalCents < 0 ? ' net (includes concessions)' : '';
+          (mapping.notes ||= []).push(`${h.extraByRow.size} lease${h.extraByRow.size === 1 ? ' carries' : 's carry'} other monthly charges${codeStr ? ` (${codeStr})` : ''} — $${(h.totalCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo${net} — billed alongside rent as their own line.`);
         }
       }
       if (h.subsidyCents > 0) {
@@ -352,7 +371,7 @@ export function routes(r: Router): void {
         const subCodes = [...new Set([...h.subsidyByRow.values()].flatMap((s) => s.codes))];
         (mapping.notes ||= []).push(
           `${h.subsidyByRow.size} lease${h.subsidyByRow.size === 1 ? '' : 's'} carry a housing subsidy${subCodes.length ? ` (${subCodes.join(', ')})` : ''} — ` +
-          `$${(h.subsidyCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo. That money stays part of the rent, because it is what the unit rents for; ` +
+          `$${(h.subsidyCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}/mo. That money stays part of the rent, because it is what the unit rents for; ` +
           `it is recorded as the share a voucher pays, so each resident is billed only their own portion.`,
         );
       }
@@ -436,6 +455,16 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const batch = batchById(ctx, rq.params.id!);
     if (!batch || batch.status !== 'staged') return notFound('Import not found');
+    // the apply endpoint holds the same line the review screen draws: a
+    // rent-roll import that skips rows or fails its own tie-out applies only
+    // with the operator's explicit acknowledgement — never by default
+    if (batch.kind === 'rent_roll') {
+      const v = validate(ctx, batch);
+      const gate = applyGate(v);
+      if (gate && String(rq.body.ack || '') !== '1') {
+        return redirect(`/setup/import/b/${batch.id}`, `Not applied: ${gate} Fix the mapping, or tick the confirmation to apply anyway.`, 'err');
+      }
+    }
     try {
       const s =
         batch.kind === 'vendors' ? applyVendors(ctx, batch)
@@ -584,6 +613,31 @@ function setAsideCard(mapping: Mapping): Raw {
       <div style="margin-bottom:8px">
         <b>${labels.length} row${labels.length === 1 ? '' : 's'}</b> — ${reason}
         <div class="muted small" style="margin-top:2px">${labels.slice(0, 60).join(' · ')}${labels.length > 60 ? ` · +${labels.length - 60} more` : ''}</div>
+      </div>`), '')}
+  `);
+}
+
+/** Validator-skipped rows, named — the set-aside card's other half. The
+ * reader's set-asides (future residents, the report trailer) are intentional;
+ * these rows FAILED, and a migration that quietly shrinks is how a portfolio
+ * loses exactly the households it most needs to manage. On the 606-unit file
+ * the preview capped at 60 notes while 75 rows skipped — the card exists so
+ * the full list, grouped by reason, is impossible to miss. */
+function willNotImportCard(validation: Validation): Raw {
+  const errs = validation.rows.filter((r) => r.level === 'error');
+  if (!errs.length) return raw('');
+  const byReason = new Map<string, string[]>();
+  for (const r of errs) {
+    const key = r.notes[r.notes.length - 1] || 'Failed validation.';
+    const label = (r.rec.unit || r.rec.tenant || `row ${r.n}`) as string;
+    byReason.set(key, [...(byReason.get(key) || []), label]);
+  }
+  return card(`Will not import — ${errs.length} row${errs.length === 1 ? '' : 's'}`, html`
+    <p class="muted" style="margin-top:0">Each of these fails validation and is skipped on apply. If any look like real units or households, fix the mapping first — applying without them builds a smaller portfolio than the report describes.</p>
+    ${hjoin([...byReason.entries()].map(([reason, labels]) => html`
+      <div style="margin-bottom:8px">
+        <b>${labels.length} row${labels.length === 1 ? '' : 's'}</b> — ${reason}
+        <div class="muted small" style="margin-top:2px">${labels.slice(0, 80).join(' · ')}${labels.length > 80 ? ` · +${labels.length - 80} more` : ''}</div>
       </div>`), '')}
   `);
 }
@@ -815,6 +869,19 @@ function removePage(rq: Rq, batch: BatchRow & { created_at?: string; summary?: s
 
 // ---------- review page (mapping + preview + apply) ----------
 
+/** Why this apply needs an explicit confirmation, or null when it is clean.
+ * The strip can say "9 lines do not tie — fix the mapping" while a green
+ * enabled Apply button says the opposite; on the 606-unit file that
+ * contradiction offered to build a portfolio 67 units short in one click.
+ * The button now carries the same message the strip does. */
+function applyGate(validation: Validation): string | null {
+  const tiesOff = (validation.recon?.tieOuts || []).filter((t) => !t.ok).length;
+  const parts: string[] = [];
+  if (validation.error) parts.push(`${validation.error} row${validation.error === 1 ? '' : 's'} will not import`);
+  if (tiesOff) parts.push(`${tiesOff} line${tiesOff === 1 ? '' : 's'} do${tiesOff === 1 ? 'es' : ''} not tie to the report's own summary`);
+  return parts.length ? `${parts.join(' and ')}.` : null;
+}
+
 function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
   const ctx = rq.ctx as Ctx;
   const headers = j<string[]>(batch.headers, []);
@@ -840,6 +907,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
       ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}
+      ${willNotImportCard(validation)}
       ${setAsideCard(j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] }))}
       ${when(!!validation.duplicateGuard, () => html`<div class="callout bad"><b>Hold on — this looks like it would duplicate residents.</b> ${validation.duplicateGuard!.message}</div>`)}
       ${when(!!preset, () => html`<div class="callout info">Recognized a <b>${preset!.name}</b> export — its columns were pre-mapped. Adjust anything below.</div>`)}
@@ -899,6 +967,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
         <form method="post" action="/setup/import/b/${batch.id}/discard"><button class="btn btn-ghost" type="submit">Discard</button></form>
         <form method="post" action="/setup/import/b/${batch.id}/apply" class="btn-row" style="align-items:center;gap:12px">
           ${when(!!validation.duplicateGuard, () => html`<label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="confirm_duplicates" value="1" /> Add them as new residents — I checked, they aren't already on these leases</label>`)}
+          ${when(kind === 'rent_roll' && applyGate(validation), () => html`<label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" name="ack" value="1" /> ${applyGate(validation)!} Apply anyway — I accept the gaps listed above.</label>`)}
           <button class="btn" type="submit" ${applyable === 0 || validation.blockers.length ? 'disabled' : ''}>Apply ${String(applyable)} row${applyable === 1 ? '' : 's'}</button>
         </form>
       </div>

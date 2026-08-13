@@ -596,7 +596,17 @@ export function depositHeld(ctx: Ctx, leaseId: string): number {
     `SELECT COALESCE(SUM(amount_cents),0) FROM deposit_activity WHERE org_id=? AND lease_id=? AND kind IN ('interest','apply','refund')`,
     ctx.orgId, leaseId,
   ) || 0;
-  return accrued + activity;
+  // Migrated leases: the deposit arrived already held — there is no deposit
+  // charge to sum, because billing the resident again for money the prior
+  // system collected would be wrong. The lease row and the conversion JE are
+  // the record ($140,081.02 on the 606-unit import read as "$0.00 held across
+  // 0 households" here while the GL carried it). Reversal-safe: removing the
+  // upload removes the lease, and this term with it.
+  const migrated = accrued === 0 ? (val<number>(
+    `SELECT COALESCE(deposit_cents,0) FROM leases WHERE id=? AND org_id=? AND import_batch_id IS NOT NULL`,
+    leaseId, ctx.orgId,
+  ) || 0) : 0;
+  return accrued + migrated + activity;
 }
 
 export interface DispositionResult {
@@ -775,8 +785,12 @@ export function receivablesStats(ctx: Ctx, mk: string, propertyId?: string | nul
   // billed = everything posted in the month by DATE (recurring rent carries
   // month_key = its month, but one-off fees post with month_key NULL — counting
   // by date keeps them in the denominator so the rate can't overstate)
+  // opening balances are carried-in AR from the prior system, not this
+  // month's billing — counting them made every migrated org read "0%
+  // collected" in its switch month, which is precisely the state the
+  // "billing starts …" branch below exists to explain
   const billed = val<number>(
-    `SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND date LIKE ? AND status='active' AND kind NOT IN ('deposit')${propSql}`,
+    `SELECT COALESCE(SUM(amount_cents),0) FROM charges WHERE org_id=? AND date LIKE ? AND status='active' AND kind NOT IN ('deposit','opening_balance')${propSql}`,
     ctx.orgId, mk + '%', ...propParams,
   ) || 0;
   const collectedGross = val<number>(

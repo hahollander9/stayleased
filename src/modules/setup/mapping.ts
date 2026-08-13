@@ -381,6 +381,14 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
   }
   if (unitCol < 0 || rentCol < 0) { out.rows = rows; return out; }
 
+  // ---- the NAMED code column resolves before anything else: pass 1 needs it
+  //      to recognise negative and zero charge rows as charges. A concession
+  //      row (rtempcon −1,619) or a $0 tenant-portion row (rntnt 0 on a fully
+  //      voucher-paid household) is still a charge row — on the 606-unit file
+  //      eight such rows fell through here and surfaced as "No unit number".
+  const named = headers ? headers.findIndex((h) => norm(String(h ?? '')) === 'charge code') : -1;
+  const namedCodeCol = named >= 0 && named !== rentCol && !mappedCols.has(named) ? named : -1;
+
   // ---- pass 1: keep rows, group charge sub-rows into blocks under their unit
   interface Charge { code: string; cents: number; fromUnitRow: boolean }
   const blocks = new Map<number, Charge[]>(); // out.rows index → charges
@@ -401,7 +409,8 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
     if (isTotal) { out.droppedTotals++; continue; }
     const cents = moneyToCents(String(row[rentCol] ?? ''));
     const tenant = tenantCol >= 0 ? String(row[tenantCol] ?? '').trim() : '';
-    if (cents !== null && cents > 0 && !tenant && lastUnitIdx >= 0) {
+    const coded = namedCodeCol >= 0 && String(row[namedCodeCol] ?? '').trim() !== '';
+    if (cents !== null && (cents > 0 || coded) && !tenant && lastUnitIdx >= 0) {
       pending.push({ idx: lastUnitIdx, row });
       chargeRowCells.push(row);
       continue;
@@ -409,12 +418,11 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
     out.rows.push(row); // unknown blank-unit row: keep — the validator reports it
     lastUnitIdx = -1; // …and close the attribution window (summary blocks, stray headers)
   }
-  // ---- code column: named outright by a "Charge Code" header when the file
-  //      has one (deterministic, and it survives a file whose every unit
-  //      carries exactly one charge — where there are no sub-rows to vote
-  //      with); otherwise the unmapped column charge sub-rows consistently fill
-  const named = headers ? headers.findIndex((h) => norm(String(h ?? '')) === 'charge code') : -1;
-  let codeCol = named >= 0 && named !== rentCol && !mappedCols.has(named) ? named : -1;
+  // ---- code column: the named header when the file has one (deterministic,
+  //      and it survives a file whose every unit carries exactly one charge —
+  //      where there are no sub-rows to vote with); otherwise the unmapped
+  //      column charge sub-rows consistently fill
+  let codeCol = namedCodeCol;
   if (codeCol < 0) {
     const codeColVotes = new Map<number, number>();
     for (const r of chargeRowCells) {
@@ -436,7 +444,7 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
     if (!list.length) {
       const parent = out.rows[idx]!;
       const pCents = moneyToCents(String(parent[rentCol] ?? ''));
-      if (pCents !== null && pCents > 0 && codeCol >= 0) list.push({ code: codeAt(parent), cents: pCents, fromUnitRow: true });
+      if (pCents !== null && codeCol >= 0 && (pCents > 0 || (pCents !== 0 && codeAt(parent)))) list.push({ code: codeAt(parent), cents: pCents, fromUnitRow: true });
     }
     list.push({ code: codeAt(row), cents: moneyToCents(String(row[rentCol] ?? ''))!, fromUnitRow: false });
     blocks.set(idx, list);
@@ -480,7 +488,12 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
     const extraCodes: string[] = [];
     const subsidyCodes: string[] = [];
     const rentish = list.filter((c) => nature(c.code) !== 'ancillary');
-    const effective = rentish.length ? rentish : list.slice(0, 1);
+    // fall back to the first charge ONLY when the roster named no rent code at
+    // all (a file of unfamiliar codes must still import). When the rent code
+    // is known, a block of purely ancillary codes is exactly that — billing a
+    // $4.20 trash line as the rent moved that $4.20 into every rent total and
+    // put the strip off by the same amount, twice.
+    const effective = rentish.length ? rentish : rentCode ? [] : list.slice(0, 1);
     for (const c of list) {
       const isRent = effective.includes(c);
       if (isRent) {
@@ -491,10 +504,15 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
         if (c.code) { extraCodes.push(c.code); out.codes.add(c.code); }
       }
     }
+    // a block whose rent-nature charges net BELOW zero is a concession larger
+    // than the rent (employee units): rent floors at $0 and the negative
+    // remainder is preserved as a concession in the extras column, so the
+    // monthly total still ties to the report
+    if (rentCents < 0) { extraCents += rentCents; rentCents = 0; }
     const promoted = [...out.rows[idx]!];
     promoted[rentCol] = (rentCents / 100).toFixed(2);
     out.rows[idx] = promoted;
-    if (extraCents > 0) {
+    if (extraCents !== 0) {
       out.extraByRow.set(idx, { cents: extraCents, codes: extraCodes });
       out.totalCents += extraCents;
     }
@@ -519,9 +537,9 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
       const code = codeAt(row);
       if (!code || code === rentCode) return;
       const cents = moneyToCents(String(row[rentCol] ?? ''));
-      if (cents === null || cents <= 0) return;
+      if (cents === null || cents === 0) return;
       noteNature(code);
-      if (nature(code) === 'subsidy') {
+      if (cents > 0 && nature(code) === 'subsidy') {
         // a fully-subsidised household: the voucher IS the contract rent, so
         // the amount stays in the rent column and only the payer split records
         // that none of it comes from the resident
@@ -529,6 +547,10 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
         out.subsidyCents += cents;
         return;
       }
+      // negative single charge — an employee concession billed against the
+      // unit (rtempcon −3,322 on the 606-unit file). Rent floors at $0 and
+      // the concession lands in extras, signed, so the schedule still nets
+      // and the monthly total still ties to the report.
       const demoted = [...row];
       demoted[rentCol] = '0.00'; // explicit zero: never fall back to market rent
       out.rows[idx] = demoted;

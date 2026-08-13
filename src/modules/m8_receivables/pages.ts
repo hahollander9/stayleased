@@ -32,10 +32,21 @@ registerNav('Money', { href: '/deposits', label: 'Deposits', perm: 'deposits:man
 registerDashboardExtras((ctx, propertyId) => {
   const aging = agingRows(ctx, { propertyId });
   const total = aging.reduce((s, a) => s + a.balance, 0);
+  // the workbench already draws this line — the tile must draw the same one.
+  // "Delinquent" means past due; a migrated portfolio whose balances are all
+  // in Current is carrying arrears, not failing to collect ("$2,014,934.18 ·
+  // 330 households DELINQUENT" was the 606-unit org's first dashboard).
+  const pastDue = aging.filter((a) => a.d1_30 + a.d31_60 + a.d61_90 + a.d90p > 0);
+  const pastDueTotal = pastDue.reduce((s, a) => s + a.d1_30 + a.d31_60 + a.d61_90 + a.d90p, 0);
   const stats = receivablesStats(ctx, monthKey(ctx.businessDate), propertyId);
   return {
     kpis: [
-      { label: 'Delinquent', value: usd(total), sub: `${aging.length} households`, tone: total > 0 ? 'bad' : 'ok', href: '/delinquency' },
+      {
+        label: 'Delinquent', value: usd(pastDueTotal),
+        sub: pastDueTotal > 0 ? `${pastDue.length} household${pastDue.length === 1 ? '' : 's'} past due`
+          : total > 0 ? `${usd(total)} open balances, none past due` : 'nothing past due',
+        tone: pastDueTotal > 0 ? 'bad' : 'ok', href: '/delinquency',
+      },
       stats.billingStartsOn
         ? { label: 'Collection rate', value: '—', sub: `billing starts ${fmtDate(stats.billingStartsOn)}`, href: '/receivables' }
         : { label: 'Collection rate', value: `${stats.collectionRate}%`, sub: fmtMonth(monthKey(ctx.businessDate)), tone: stats.collectionRate >= 95 ? 'ok' : 'warn', href: '/receivables' },

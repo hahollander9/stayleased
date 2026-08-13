@@ -370,10 +370,17 @@ export function routes(r: Router): void {
     if (status) { where += ' AND u.status=?'; params.push(status); }
     if (fpId) { where += ' AND u.floorplan_id=?'; params.push(fpId); }
     if (beds !== '') { where += ' AND f.beds=?'; params.push(parseInt(beds, 10)); }
+    // the cap exists so a huge portfolio cannot render an unbounded board —
+    // but it must never masquerade as the total. At 606 units the old
+    // "LIMIT 600" quietly dropped six units and the subtitle counted 600.
+    const totalUnits = q1<{ c: number }>(
+      `SELECT COUNT(*) c FROM units u LEFT JOIN floorplans f ON f.id=u.floorplan_id JOIN properties p ON p.id=u.property_id WHERE ${where}`,
+      ...params,
+    )?.c ?? 0;
     const units = q<any>(
       `SELECT u.*, f.name AS fp_name, f.beds, f.baths, b.name AS building, p.name AS prop_name
        FROM units u LEFT JOIN floorplans f ON f.id=u.floorplan_id LEFT JOIN buildings b ON b.id=u.building_id JOIN properties p ON p.id=u.property_id
-       WHERE ${where} ORDER BY p.name, u.unit_number LIMIT 600`,
+       WHERE ${where} ORDER BY p.name, u.unit_number LIMIT 2000`,
       ...params,
     );
     const props = q<any>(`SELECT id, name FROM properties WHERE org_id=?${propFilter(ctx, 'id').sql} ORDER BY name`, ctx.orgId, ...propFilter(ctx, 'id').params);
@@ -442,7 +449,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Units',
       active: '/units',
-      subtitle: `${units.length} unit${units.length === 1 ? '' : 's'} · status lifecycle is driven by lease events`,
+      subtitle: `${totalUnits} unit${totalUnits === 1 ? '' : 's'}${units.length < totalUnits ? ` · showing the first ${units.length} — filter by property or status to narrow` : ''} · status lifecycle is driven by lease events`,
       wide: view === 'board',
       content: html`${filterBar}${body}`,
     });

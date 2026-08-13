@@ -6,6 +6,7 @@ import { boot, login, newPage } from './lib.ts';
 import { ROOT } from '../src/lib/db.ts';
 import { writeXlsx } from '../src/lib/xlsx.ts';
 import { YARDI_BLOCK_ROLL, YARDI_EXPECTED } from '../tests/fixtures/yardi_block_roll.ts';
+import { AUDUBON_BLOCK_ROLL } from '../tests/fixtures/audubon_block_roll.ts';
 import type { Browser } from 'playwright';
 
 /** Phase 2 / M2.5 gate: the top module bar renders, the Setup hub loads, the
@@ -16,6 +17,8 @@ let base: string;
 let browser: Browser;
 let close: () => Promise<void>;
 const YARDI_PATH = join(ROOT, 'data', 'e2e-yardi-block-roll.xlsx');
+const AUDUBON_PATH = join(ROOT, 'data', 'e2e-audubon-block-roll.xlsx');
+const AUDUBON_GATE_PATH = join(ROOT, 'data', 'e2e-audubon-gate.xlsx');
 
 before(async () => {
   const b = await boot();
@@ -23,9 +26,19 @@ before(async () => {
   browser = b.browser;
   close = b.close;
   writeFileSync(YARDI_PATH, writeXlsx([{ name: 'Report1', rows: YARDI_BLOCK_ROLL }]));
+  writeFileSync(AUDUBON_PATH, writeXlsx([{ name: 'Report1', rows: AUDUBON_BLOCK_ROLL }]));
+  // the gate variant: a different property, and a summary the read cannot tie
+  // to (14 units claimed, 13 on the roster) — the honest-apply gate must hold
+  const gateRows = AUDUBON_BLOCK_ROLL.map((r) => r.slice());
+  gateRows[1] = ['Audubon Gate House (1019)', '', '', '', '', '', '', '', '', '', '', '', '', ''];
+  const totals = gateRows.findIndex((r) => String(r[0]).startsWith('Totals:'));
+  gateRows[totals]![10] = '14';
+  writeFileSync(AUDUBON_GATE_PATH, writeXlsx([{ name: 'Report1', rows: gateRows }]));
 });
 after(async () => {
   rmSync(YARDI_PATH, { force: true });
+  rmSync(AUDUBON_PATH, { force: true });
+  rmSync(AUDUBON_GATE_PATH, { force: true });
   await close();
 });
 
@@ -123,5 +136,91 @@ test('gate: a Yardi block-format rent roll uploads, ties out to its own summary,
   const prop = await page.content();
   assert.match(prop, new RegExp(YARDI_EXPECTED.property));
   assert.match(prop, /Imported .*3 leases/i, 'the vacant unit and the future applicants get no lease');
+  await page.close();
+});
+
+test('gate: the 606-unit shapes — zero-rent tenancies, concessions, parking — review clean and apply whole', async () => {
+  const page = await newPage(browser);
+  await login(page, base, 'admin@summitridge.demo');
+  await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
+  await page.setInputFiles('input[name=file]', AUDUBON_PATH);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  assert.match(page.url(), /\/setup\/import\/b\/imp/, 'should land on the review page');
+  const review = await page.content();
+
+  // nothing real is discarded, and the strip ties line for line
+  assert.doesNotMatch(review, /Will not import/, 'every tenancy shape reads as importable');
+  assert.doesNotMatch(review, /\d+ skipped/, 'no skipped rows on a clean report');
+  assert.doesNotMatch(review, /do(es)? not tie to the summary block/i, 'every line ties — including the negative concession in other charges');
+  assert.match(review, /-\$?3,313\.60|\$-3,313\.60/, 'other charges carry the concession, signed');
+  // the zero-rent households import with their evidence named, not silently
+  assert.match(review, /\$0 scheduled rent/, 'zero-rent tenancies warn and import');
+  assert.match(review, /month-to-month holdover/, 'the inverted term reads as a holdover');
+
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Apply")')]);
+  assert.match(page.url(), /\/properties\/prp/, 'apply lands on the property');
+  const prop = await page.content();
+  assert.match(prop, /Audubon Mills/);
+  assert.match(prop, /Imported .*13 units/i, 'all twelve units import — parking and employee units included');
+  await page.close();
+});
+
+test('gate: an import that cannot tie to its own report applies only with explicit acknowledgement', async () => {
+  const page = await newPage(browser);
+  await login(page, base, 'admin@summitridge.demo');
+  await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
+  await page.setInputFiles('input[name=file]', AUDUBON_GATE_PATH);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  assert.match(page.url(), /\/setup\/import\/b\/imp/);
+  const review = await page.content();
+  assert.match(review, /do(es)? not tie to the summary block/i, 'the doctored summary must read as off');
+  assert.match(review, /Apply anyway/, 'the gap is acknowledged next to the button, not hidden');
+
+  // applying without the acknowledgement is refused server-side
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Apply")')]);
+  assert.match(page.url(), /\/setup\/import\/b\/imp/, 'stays on the review page');
+  assert.match(await page.content(), /Not applied:/, 'the refusal says why');
+
+  // ticking it is an explicit decision, and then the apply proceeds
+  await page.check('input[name=ack]');
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Apply")')]);
+  assert.match(page.url(), /\/properties\/prp/, 'acknowledged apply lands on the property');
+  await page.close();
+});
+
+test('a file dropped anywhere on the import page lands in the dropzone — and never replaces the app', async () => {
+  const page = await newPage(browser);
+  await login(page, base, 'admin@summitridge.demo');
+  await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
+  const before = page.url();
+  const result = await page.evaluate(() => {
+    const out: { guardActive: boolean; dropPrevented: boolean; fileCount: number; fileName: string; feedback: string; hasFileClass: boolean } =
+      { guardActive: false, dropPrevented: false, fileCount: 0, fileName: '', feedback: '', hasFileClass: false };
+    // page-level guard: dragging a file over ANYWHERE must be cancelled
+    const over = new DragEvent('dragover', { bubbles: true, cancelable: true });
+    document.body.dispatchEvent(over);
+    out.guardActive = over.defaultPrevented;
+    // drop OUTSIDE the zone (on the page body) — the file must be routed in
+    const dt = new DataTransfer();
+    dt.items.add(new File(['a,b\n1,2'], 'stray.csv', { type: 'text/csv' }));
+    const drop = new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: dt });
+    document.body.dispatchEvent(drop);
+    out.dropPrevented = drop.defaultPrevented;
+    const zone = document.querySelector('[data-dropzone]');
+    const input = zone ? (zone.querySelector('input[type=file]') as HTMLInputElement | null) : null;
+    out.fileCount = input && input.files ? input.files.length : 0;
+    out.fileName = input && input.files && input.files[0] ? input.files[0].name : '';
+    out.feedback = zone ? (zone.querySelector('[data-dz-name]')?.textContent || '') : '';
+    out.hasFileClass = !!(zone && zone.classList.contains('has-file'));
+    return out;
+  });
+  assert.equal(result.guardActive, true, 'a page-level dragover guard is active');
+  assert.equal(result.dropPrevented, true, 'the drop default (navigate to the file) is cancelled');
+  assert.equal(result.fileCount, 1, 'the stray drop landed in the dropzone input');
+  assert.equal(result.fileName, 'stray.csv');
+  assert.match(result.feedback, /ready to upload/, 'the zone says the file is ready — a drop is visibly acknowledged');
+  assert.equal(result.hasFileClass, true);
+  await page.waitForTimeout(250);
+  assert.equal(page.url(), before, 'the app did not navigate away');
   await page.close();
 });
