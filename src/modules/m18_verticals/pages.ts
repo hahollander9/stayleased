@@ -69,7 +69,7 @@ export function routes(r: Router): void {
     const props = q<any>(`SELECT * FROM properties WHERE org_id=? AND type='student' ORDER BY name`, ctx.orgId);
     if (!props.length) return shell(rq, { title: 'Student housing', active: '/student', content: emptyState('No student properties', 'Set a property\'s type to student to activate by-the-bed leasing.') });
     const prop = props.find((p) => p.id === rq.query.get('property')) || props[0]!;
-    const cal = academicCalendar(ctx);
+    const cal = academicCalendar(ctx, prop.id);
     const roster = bedRoster(ctx, prop.id);
     const pacing = preLeasePacing(ctx, prop.id);
     const groups = suggestGroups(ctx, prop.id);

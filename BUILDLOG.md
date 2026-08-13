@@ -850,7 +850,6 @@ pre-existing patterns at lines this diff does not touch).
 of codes but not their amounts, and extending the hard-won Yardi harvest to carry them was not worth
 the risk in this build — shipping a tested but unreachable function would have been worse. It is the
 obvious next source: what a portfolio actually bills is stronger evidence than what a lease permits.
-
 ## 2026-08-12 — CI restored: the gates run by a machine instead of by whoever remembered
 
 **Built.** `.github/workflows/ci.yml` was lost to a web-UI upload months ago (dot-directories do not
@@ -868,14 +867,14 @@ suite cannot burn an hour.
 red about a third of the time on day one, and a gate nobody trusts is worse than no gate. The unit
 step therefore re-runs once on failure — the same rule CLAUDE.md gives a human — and emits a GitHub
 warning annotation when it does, so a flake that turns constant is visible in the run history rather
-than absorbed. Two failures in a row still fails the job. (#50)
+than absorbed. Two failures in a row still fails the job. (#52)
 
 **Verified against a real run, not asserted.** The full e2e suite (all 31 files, which
 `scripts/e2e.sh` runs and which no session today had run end to end) was executed locally exactly as
 the workflow will run it, before the workflow was pushed. Shipping CI that is born red would have
 taught everyone to ignore it in its first hour.
 
-**Decisions:** #50.
+**Decisions:** #52.
 
 ## 2026-08-12 — CI's first run found the money bug that had been filed as a flake
 
@@ -895,7 +894,7 @@ twice.** In the CI logs it read as a $500 cash discrepancy on the void test and 
 as a surplus in the bank-feed test two tests later.
 
 **The fix** takes the clock out of the decision: the live generation is the one nothing has reversed
-yet. Exact, deterministic, and what the code always meant. (#51)
+yet. Exact, deterministic, and what the code always meant. (#53)
 
 **Verified by breaking it first.** Both regression tests — one forcing the inverted timestamp, one
 voiding a reissued payment to prove only the live generation is reversed — were run against the OLD
@@ -907,10 +906,54 @@ justification was this flake. Keeping it now "just in case" is how a suite learn
 real failure, so it is gone and CLAUDE.md's Known-flake section is replaced with a note saying a red
 suite is real.
 
-**Decisions:** #51.
+**Decisions:** #53.
 
 **Verified:** tsc strict clean · unit suite · full e2e (all 31 files) · the two new tests red against
 the old query, green against the new one.
+
+## 2026-08-13 — The settings page was right and the product was not listening
+
+**Twenty places where a per-property override reached nothing.** The hierarchy, the editor, the
+narrowing save (#47) and the permission fences were all correct; the consumers were not. Seven reads
+passed no property id while one sat in scope (`business_hours` and `pet_policy` in the leasing agent —
+two lines above `tourSlots(ctx, lead.property_id, …)`; `ai_plan_bounds`; `auto_enroll_on_lapse`, read
+once before the loop that force-places a billed master policy; `writeoff_approval_threshold_cents`,
+the only approval threshold in the codebase that was not property-scoped; `academic_calendar`, where
+two student properties can sit next to two different universities). Thirteen more read an
+object-valued setting with `getSetting`, which replaces wholesale while overrides are stored as
+partial diffs.
+
+**Three of those throw.** `late_fee_policy` overridden at one property → `policy.graceDays` undefined
+→ `addDays(due, undefined)` → `RangeError: Invalid time value` out of `lateFeeCandidates`, taking the
+nightly late-fee run down for the whole organization. `tour_hours` → `hours.days.includes(...)` on
+undefined, on the **public** property site's booking page. `quiet_hours` → `quiet.end.slice(...)` on
+the comms send path. Two more compute wrong money (`convenience_fee` → `NaN` on the charge;
+`partial_payments` → every underpayment refused), and `screening_criteria` silently disables the
+income test and the eviction lookback on the adverse-action path.
+
+**The gate, not the list.** `tests/settings_scope.test.ts` scans `src/` for every settings read with a
+literal key and fails on either violation; five behavioural tests then drive a *partial* override
+through the real consumer, because the lint proves the call shape and only a run proves the value.
+Settings that genuinely have no property dimension declare `orgOnly` and are held to it in both
+directions.
+
+**The level switcher.** Rebuilt as a scope bar: colour-railed by level, the level named in the
+eyebrow, each property carrying its override count, a one-click way back to the organization, a
+"show only what is set here" filter, sticky under the top chrome (`--chrome-h`), and every Save
+button naming the level it saves to. Settings the product reads org-wide render at the property level
+as facts with the reason, not as controls.
+
+**Verified:** tsc strict clean · unit **349/349** (+9; the accounting flake reproduced on a pristine
+worktree 1 run in 5 and is unrelated — it does NOT always pass solo, contrary to the note in
+`CLAUDE.md`) · seeded e2e **89/89** across smoke, clientready, goldenpath, workingmodel, crm,
+payments, ai, pricing, comms, portal, applications, verticals, utilities, hubs, navmenus · the page
+eyeballed at 1440 and 390, org and property levels, scrolled — which is how three defects invisible to
+every test were found: a quoted attribute escaped by the tagged template so the current level stopped
+looking current, a sticky offset left applied to a `position: relative` box on phones (a 54px gap above
+and the first card's heading covered below), and a level rail escaping the card because the phone rule
+said `static`. Rebased onto the parallel session's settings reorganization (#48/#49) — the scope bar sits above its
+proposals card and folded sections, and the "only what is set here" filter applies to all of them.
+Plan: `docs/superpowers/plans/2026-08-13-property-scoped-settings.md`. (#50, #51)
 
 ## 2026-08-12 — The rent roll reads itself: charge-code semantics, roster sections, and a tie-out to the report's own summary
 
@@ -929,7 +972,7 @@ now sweeps every unit row: a lone charge whose code is not the rent code moves t
 the rent cell becomes an explicit `0.00` (not blank — blank falls back to market rent and would have
 double-counted it). The code column is also found by name now (`Charge Code`) rather than only by
 voting on sub-rows, so a file where every unit has exactly one charge can still be read. Rent-code
-election counts UNITS, so single-charge units get a vote. (#50)
+election counts UNITS, so single-charge units get a vote. (#52)
 
 **A lease can bill $0 rent and still bill real money.** Demoting unit 245's charge exposed the
 validator's `effRent <= 0 → error` rule, which would have dropped a fully-subsidised household
@@ -943,7 +986,7 @@ of them produced 16 "duplicate unit" plus 16 "needs a rent amount" errors), and 
 summary trailer. Future applicants become a counted, named line on the recon strip instead of 32
 errors. A heading may never become a property: `validatePlan` demotes any AI-proposed section whose
 name is roster vocabulary into a skip row, for the same reason the stacked-header merge is
-unconditional — deterministic vocabulary beats a model's row label. (#51)
+unconditional — deterministic vocabulary beats a model's row label. (#53)
 
 **The strip now ties to the report's own summary block, which is the doctrine item that was still
 unimplemented.** `parseSourceSummary` reads the "Summary Groups" table and the "Summary of Charges by
@@ -952,7 +995,7 @@ report-says / read-as table, line by line. On the Livingston file all nine lines
 units · 124 occupied · 16 future · $207,488.00 market · $177,893.00 monthly · $166,337.00 rntnt ·
 $11,556.00 rnsvchr · $0.00 deposits · $0.00 balances. The $1,417 split error is exactly the kind of
 defect this catches that a total never would — rent and other-monthly post to different accounts, so
-a total that ties over a split that doesn't is still wrong money in the books. (#52)
+a total that ties over a split that doesn't is still wrong money in the books. (#54)
 
 **Two warnings that were crying wolf.** Deposits and balances are genuinely $0 across this portfolio,
 and the all-zero-column guard called both mis-mappings. It now stands down when the report's own
@@ -973,7 +1016,7 @@ itself either way.
 exact, and the applied books carry $166,337.00 of rent and $11,556.00 of other recurring charges
 against a report that says exactly that.
 
-**Decisions:** #52, #53, #54.
+**Decisions:** #54, #55, #56.
 
 **Verified:** tsc strict clean · unit suite 360/360 (9 new in `tests/import_recon.test.ts`) · scoped
 e2e batch for import (setup · clientready · workingmodel · goldenpath · smoke) 27/27, including a new
@@ -992,8 +1035,8 @@ leaving twice. The $500 cash discrepancy observed here is the same defect, and t
 observation corroborates rather than excuses it. Recorded so the engineering memory does not keep a
 "known flake" that has been disproved.
 
-**Numbering:** this build first claimed #50–#52 against the then-current tail of `main` (#49). The
-CI/AP build was already in flight and holds #50–#51, so these entries were renumbered to #52–#54
+**Numbering:** this build first claimed #52–#54 against the then-current tail of `main` (#49). The
+CI/AP build was already in flight and holds #52–#53, so these entries were renumbered to #54–#56
 before merge — the parallel-session rule working as written.
 
 **Fixture note:** the shape lives in `tests/fixtures/yardi_block_roll.ts` — structurally identical to

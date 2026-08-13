@@ -4,7 +4,7 @@ import { sysCtx, type Ctx } from '../../lib/auth.ts';
 import { id } from '../../lib/ids.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { on } from '../../lib/events.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSettingMerged, scorerMode } from '../../lib/settings.ts';
 import { detectLeadIntent, type LeadIntent } from '../../lib/lead_intent.ts';
 import { leaseBalance } from '../m8_receivables/service.ts';
 
@@ -183,8 +183,8 @@ export function computeDelinquencyInputs(
     `SELECT COALESCE(SUM(amount_cents),0) FROM payments WHERE lease_id=? AND status IN ('pending','settled') AND received_date>=?`,
     lease.id, addDays(bd, -14),
   ) || 0;
-  const lateFee = getSetting<{ graceDays: number }>(ctx, 'late_fee_policy', lease.property_id);
-  const scoring = getSetting<{ noticeThresholdDays: number }>(ctx, 'delinquency_scoring', lease.property_id);
+  const lateFee = getSettingMerged<{ graceDays: number }>(ctx, 'late_fee_policy', lease.property_id);
+  const scoring = getSettingMerged<{ noticeThresholdDays: number }>(ctx, 'delinquency_scoring', lease.property_id);
   return {
     openBalanceCents, monthlyRentCents: lease.rent_cents, daysPastDue,
     lateMonths12, nsf6mo, nsf60d, brokenPlan12mo,
@@ -452,7 +452,7 @@ export function scoreOneLead(ctx: Ctx, leadId: string): HeatBucket | null {
   // Active mode only: a hot lead we answered ≥24h ago with silence since
   // deserves a phone call, not another email. One open task, ever — the
   // dedupe makes the sweep and the event hooks collision-safe.
-  if (a.bucket === 'hot' && getSetting<{ mode: string }>(ctx, 'lead_scoring')?.mode === 'active') {
+  if (a.bucket === 'hot' && scorerMode(ctx, 'lead_scoring') === 'active') {
     const lastOut = val<string>(
       `SELECT MAX(at) FROM lead_events WHERE lead_id=? AND kind IN ('email_out','sms_out')`, lead.id,
     );

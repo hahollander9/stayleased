@@ -7,7 +7,7 @@ import { nowIso, fmtDate, monthKey, addMonths, addDays, fmtMonth, diffDays } fro
 import { usd, splitCents } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
 import { audit } from '../../lib/audit.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, scorerMode } from '../../lib/settings.ts';
 import { notify } from '../../lib/templates.ts';
 import { toCsv } from '../../lib/csv.ts';
 import {
@@ -222,7 +222,7 @@ export function routes(r: Router): void {
     // M19 delinquency scorer: latest behavioral bucket per lease. The chip's
     // tooltip carries the deterministic reason — the same sentence the agent
     // is allowed to quote. In shadow mode chips inform; nothing else changes.
-    const scoring = getSetting<{ mode: string }>(ctx, 'delinquency_scoring');
+    const scoring = { mode: scorerMode(ctx, 'delinquency_scoring') };
     const scoreRows = q<any>(
       `SELECT da.lease_id, da.bucket, da.reason FROM delinquency_assessments da
         WHERE da.org_id=? AND da.as_of_date=(SELECT MAX(a2.as_of_date) FROM delinquency_assessments a2 WHERE a2.lease_id=da.lease_id AND a2.as_of_date<=?)`,

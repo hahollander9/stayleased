@@ -3,7 +3,7 @@ import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, fmtDate, diffDays, dowIdx } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { getDials } from '../../lib/sim/dials.ts';
 import { sendEmail, sendSms } from '../../lib/sim/messaging.ts';
@@ -134,7 +134,10 @@ export function messageLead(ctx: Ctx, leadId: string, channel: 'email' | 'sms', 
 // ---------- tours (M3.3) ----------
 
 export function tourSlots(ctx: Ctx, propertyId: string, date: string): string[] {
-  const hours = getSetting<{ start: string; end: string; days: number[]; slotMinutes: number }>(ctx, 'tour_hours', propertyId);
+  // merged: a property that moved only its first slot must keep the
+  // organization's tour days — this runs on the public property site, where an
+  // undefined `days` is a 500 on a prospect's booking page
+  const hours = getSettingMerged<{ start: string; end: string; days: number[]; slotMinutes: number }>(ctx, 'tour_hours', propertyId);
   if (!hours.days.includes(dowIdx(date))) return [];
   const out: string[] = [];
   const [sh, sm] = hours.start.split(':').map(Number);

@@ -1,4 +1,4 @@
-import { html, raw, when, join, type Raw } from '../../lib/html.ts';
+import { html, raw, when, join, type Child, type Raw } from '../../lib/html.ts';
 import {
   redirect, notFound, forbidden, fileRes, type Router, type Rq, badRequest,
 } from '../../lib/http.ts';
@@ -17,7 +17,7 @@ import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dia
 import { receiveInbound } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
-import { SPECS, GROUPS, renderSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
+import { SPECS, GROUPS, renderSetting, describeSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
 import { pendingProposals, proposalDelta, acceptProposal, dismissProposal } from '../setup/policy_proposals.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
@@ -282,19 +282,36 @@ export function routes(r: Router): void {
     const settingRow = (sp: SettingSpec): Raw => {
       const effective = effectiveFor(sp.key);
       const overridden = overriddenKeys.has(sp.key);
+      // a setting the product reads once for the whole organization: at the
+      // property level it is stated as a fact, because a control that saves and
+      // changes nothing is worse than no control — the operator walks away
+      // believing it is set
+      const orgWideHere = !!propId && !!sp.orgOnly;
       return html`<div class="set-row">
-        <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}${sp.pending ? html` <span class="badge">not enforced yet</span>` : ''}</h3>
+        <h3>${sp.label}${overridden ? html` <span class="badge accent">overridden here</span>` : ''}${orgWideHere ? html` <span class="badge">organization-wide</span>` : ''}${sp.pending ? html` <span class="badge">not enforced yet</span>` : ''}</h3>
         <p class="muted small set-help">${sp.help}${sp.pending ? html` <b>This one is recorded but nothing acts on it yet.</b>` : ''}</p>
-        <form method="post" action="/admin/settings">
-          <input type="hidden" name="key" value="${sp.key}" />
-          <input type="hidden" name="property" value="${propId}" />
-          ${renderSetting(sp, effective)}
-          ${orgLevelReadOnly ? raw('') : html`<div class="btn-row">
-            <button class="btn btn-sm">Save</button>
-            ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
-          </div>`}
-        </form>
+        ${orgWideHere
+          ? html`<div class="set-orgwide">
+              <div class="set-orgwide-val">${describeSetting(sp, effective)}</div>
+              <p class="small muted" style="margin:8px 0 0">${sp.orgOnlyWhy || 'The product reads this once for the whole organization.'}
+                <a href="${href('')}">Change it at the organization level</a></p>
+            </div>`
+          : html`<form method="post" action="/admin/settings">
+              <input type="hidden" name="key" value="${sp.key}" />
+              <input type="hidden" name="property" value="${propId}" />
+              ${renderSetting(sp, effective, !!propId)}
+              ${orgLevelReadOnly ? raw('') : html`<div class="btn-row">
+                <button class="btn btn-sm">${propId ? `Save for ${propName}` : `Save for ${orgName}`}</button>
+                ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
+              </div>`}
+            </form>`}
       </div>`;
+    };
+    /** the "only what is set here" filter, applied wherever settings are listed */
+    const shown = (specs: SettingSpec[]): SettingSpec[] => onlySet ? specs.filter((sp) => setHere.has(sp.key)) : specs;
+    const groupHeading = (group: string, specs: SettingSpec[]): Child => {
+      const setInGroup = specs.filter((sp) => setHere.has(sp.key)).length;
+      return setInGroup ? html`${group} <span class="badge ${propId ? 'accent' : ''}">${String(setInGroup)} set here</span>` : group;
     };
     const jurisdictionNote = states.length
       ? `Set by law where your properties are — ${states.join(', ')}. Confirm each against the statute; the product does not assert a number it would have to keep current for you.`
@@ -324,18 +341,89 @@ export function routes(r: Router): void {
       const merged = pick(SETTING_DEFAULTS[key], orgLevel.get(key));
       return propId ? pick(merged, propLevel.get(key)) : merged;
     };
+    // How many overrides each property already carries — the one fact that
+    // makes the level switcher worth looking at rather than just operating.
+    const overrideCounts = new Map<string, number>(
+      q<{ property_id: string; n: number }>(
+        `SELECT property_id, COUNT(*) AS n FROM settings WHERE org_id=? AND property_id<>'' GROUP BY property_id`,
+        ctx.orgId,
+      ).map((r) => [r.property_id, r.n]),
+    );
+    const visibleOverrides = props.reduce((n: number, p: any) => n + (overrideCounts.get(p.id) || 0), 0);
+    const propsWithOverrides = props.filter((p: any) => overrideCounts.get(p.id)).length;
+    // "set here" at the level being edited: an override at a property, a
+    // deliberate choice at the organization. Both answer "what has actually
+    // been decided here, as opposed to inherited?"
+    const setHere = propId ? overriddenKeys : new Set(orgLevel.keys());
+    const onlySet = rq.query.get('only') === 'set';
+    const href = (pid: string, only = onlySet): string =>
+      `/admin/settings${pid ? `?property=${pid}` : '?property='}${only ? '&only=set' : ''}`;
+    const n = (count: number, one: string, many = one + 's'): string => `${count} ${count === 1 ? one : many}`;
+
+    // The switcher is chips while an operator can take them all in at a glance,
+    // and a select once they cannot — one control either way, chosen by scale,
+    // rather than a dropdown that hides how many properties differ.
+    const asChips = props.length <= 8;
+    // `html` escapes what it interpolates, so a quoted attribute value must
+    // arrive already raw or it renders as aria-current=&quot;true&quot; and the
+    // selected chip silently stops looking selected
+    const CURRENT = raw('aria-current="true"');
+    const levelChip = (pid: string, label: Child, count: number, kind: string): Raw => html`
+      <a class="lvl lvl-${kind}" href="${href(pid)}" ${pid === propId ? CURRENT : raw('')}>
+        <span>${label}</span>${when(count > 0, () => html`<span class="n" title="settings recorded at this level">${count}</span>`)}
+      </a>`;
+    const switcher = asChips
+      ? html`<div class="scope-levels" role="group" aria-label="Settings level">
+          ${levelChip('', 'Organization defaults', orgLevel.size, 'org')}
+          ${props.map((p: any) => levelChip(p.id, p.name, overrideCounts.get(p.id) || 0, 'prop'))}
+        </div>`
+      : html`<form method="get" class="scope-pick" data-autosubmit>
+          ${when(onlySet, () => html`<input type="hidden" name="only" value="set" />`)}
+          ${field('Level', html`<select name="property" aria-label="Settings level">
+            <option value="" ${propId ? '' : 'selected'}>Organization defaults${orgLevel.size ? ` · ${orgLevel.size} set` : ''}</option>
+            <optgroup label="Override one property">
+              ${props.map((p: any) => html`<option value="${p.id}" ${p.id === propId ? 'selected' : ''}>${p.name}${overrideCounts.get(p.id) ? ` · ${overrideCounts.get(p.id)} overridden` : ' · follows the organization'}</option>`)}
+            </optgroup>
+          </select>`)}
+          <noscript><button class="btn btn-sm">Go to level</button></noscript>
+        </form>`;
+
+    const scopeNote = propId
+      ? html`${overriddenKeys.size
+          ? html`<b>${n(overriddenKeys.size, 'setting')}</b> overridden here; everything else follows ${orgName}`
+          : html`Nothing is overridden here yet — every setting below is inherited, shown as it currently applies`}
+        — and saving records that setting for ${propName} alone.`
+      : orgLevelReadOnly
+      ? html`These apply to every property in ${orgName}, including ones outside your access, so they are read-only for you. Pick one of your properties to set an override there.`
+      : html`These apply to <b>every property</b> in ${orgName} — ${n(props.length, 'property', 'properties')} — except where a property overrides them.
+        ${visibleOverrides
+          ? html`${n(visibleOverrides, 'override')} recorded across ${n(propsWithOverrides, 'property', 'properties')}.`
+          : html`No property overrides anything yet.`}`;
+
     return shell(rq, {
       title: 'Settings',
       active: '/admin/settings',
-      subtitle: orgLevelReadOnly
-        ? 'Organization defaults, shown for reference. They apply to every property, so changing them needs access to the whole organization — pick one of your properties above to set an override there.'
-        : propId
-        ? `What applies at ${propName}. Saving a setting here records it for this property; clearing it hands that setting back to the organization.`
-        : 'How this organization runs — what residents are charged, when, and how much the AI decides on its own. Every setting can be overridden per property.',
+      subtitle: 'What residents are charged, when, and how much each agent decides on its own — set once for the organization, then overridden building by building where a building differs.',
       content: html`
-        <form method="get" class="toolbar" data-autosubmit>
-          ${field('Level', select('property', [['', 'Organization defaults'], ...props.map((p): [string, string] => [p.id, `Override: ${p.name}`])], propId))}
-        </form>
+        <div class="scope" data-level="${propId ? 'property' : 'org'}">
+          <div class="scope-in">
+            <div class="scope-who">
+              <div class="scope-eyebrow">${propId ? 'Editing one property' : 'Editing the organization'}</div>
+              <h2 class="scope-name">${propId ? propName : orgName}</h2>
+              <p class="scope-note small">${scopeNote}</p>
+            </div>
+            ${when(!asChips || !!propId, () => html`<div class="scope-act">
+              ${asChips ? raw('') : switcher}
+              ${when(!!propId, () => html`<a class="btn btn-sm btn-ghost" href="${href('')}">Back to organization defaults</a>`)}
+            </div>`)}
+          </div>
+          ${asChips ? switcher : raw('')}
+          ${when(setHere.size > 0, () => html`<div class="scope-filter">
+            <a class="lvl ${onlySet ? '' : 'lvl-off'}" href="${href(propId, !onlySet)}" ${onlySet ? CURRENT : raw('')}>
+              ${onlySet ? 'Showing only what is set here' : `Show only what is set here (${setHere.size})`}
+            </a>
+          </div>`)}
+        </div>
         ${when(!orgLevelReadOnly && !!proposals.length, () => card(
           html`Read from your documents <span class="badge accent">${String(proposals.length)} to review</span>`,
           html`<p class="muted small" style="margin-top:0;max-width:68ch">Your leases state most of these already. Each one shows the
@@ -368,19 +456,20 @@ export function routes(r: Router): void {
           })}`,
         ))}
         ${GROUPS.map((group) => {
-          const inGroup = SPECS.filter((sp) => sp.group === group && !sp.source && !sp.advanced);
-          return inGroup.length ? card(group, html`${inGroup.map(settingRow)}`) : raw('');
+          const inGroup = shown(SPECS.filter((sp) => sp.group === group && !sp.source && !sp.advanced));
+          return inGroup.length ? card(groupHeading(group, inGroup), html`${inGroup.map(settingRow)}`) : raw('');
         })}
         ${foldedSection('Read from your documents',
           `Your leases state these. ${proposals.length ? 'Confirm the proposals above, or edit a value directly.' : 'Nothing is waiting for review — upload signed leases and the system reads them.'}`,
-          SPECS.filter((sp) => sp.source === 'documents'), settingRow)}
+          shown(SPECS.filter((sp) => sp.source === 'documents')), settingRow)}
         ${foldedSection('Set by where you operate',
           jurisdictionNote,
-          SPECS.filter((sp) => sp.source === 'jurisdiction'), settingRow)}
+          shown(SPECS.filter((sp) => sp.source === 'jurisdiction')), settingRow)}
         ${foldedSection('Specialty housing',
           'Only relevant if you run student or military housing.',
-          SPECS.filter((sp) => sp.advanced), settingRow)}
-        ${dangerZone}`,
+          shown(SPECS.filter((sp) => sp.advanced)), settingRow)}
+        ${when(onlySet && setHere.size === 0, () => card('Nothing set here', html`<p class="muted" style="margin:0">Every setting at this level is inherited. <a href="${href(propId, false)}">Show all settings</a>.</p>`))}
+        ${propId ? raw('') : dangerZone}`,
     });
   });
 
@@ -394,6 +483,11 @@ export function routes(r: Router): void {
     // an org default reaches every property, including ones outside the grant
     if (!propId && !ctx.allProperties) return forbidden('Changing an organization default requires access to the whole organization.');
     const back = `/admin/settings?property=${propId}`;
+    // the product reads this one org-wide, so a property row would be stored
+    // and then ignored — refuse it rather than bank a setting that does nothing
+    if (propId && spec.orgOnly) {
+      return redirect(back, `${spec.label} applies to the whole organization — it cannot be set for one property.`, 'err');
+    }
     let value: unknown;
     try {
       // the spec validates in the operator's terms — a bad late fee is a
@@ -401,7 +495,7 @@ export function routes(r: Router): void {
       const current = spec.matrix
         ? getSetting(sysCtx(ctx.orgId), key, propId || undefined)   // open-ended: replace, so deletions stick
         : getSettingMerged(sysCtx(ctx.orgId), key, propId || undefined);
-      value = parseSetting(spec, rq.body as Record<string, unknown>, current);
+      value = parseSetting(spec, rq.body as Record<string, unknown>, current, !!propId);
     } catch (e) {
       return redirect(back, (e as Error).message, 'err');
     }

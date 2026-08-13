@@ -7,7 +7,7 @@ import type { Ctx } from '../../lib/auth.ts';
 import { sysCtx, hashPassword , tempPassword } from '../../lib/auth.ts';
 import { sendPortalInvite } from '../people/portal.ts';
 import { emit, on } from '../../lib/events.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged, scorerMode } from '../../lib/settings.ts';
 import { latestAssessment } from '../m19_scoring/service.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { audit } from '../../lib/audit.ts';
@@ -87,7 +87,7 @@ export function leaseFromApplication(ctx: Ctx, applicationId: string): string {
   const adults = q<any>(`SELECT * FROM applicants WHERE application_id=? AND kind IN ('primary','co')`, applicationId);
   const primary = adults.find((a) => a.kind === 'primary') || adults[0];
   const conditions = app.status === 'approved_conditions';
-  const criteria = getSetting<any>(ctx, 'screening_criteria', app.property_id);
+  const criteria = getSettingMerged<any>(ctx, 'screening_criteria', app.property_id);
   const depositMult = conditions ? criteria.conditionalDepositMultiplier || 1.5 : 1;
   const deposit = Math.round((app.rent_cents * depositMult) / 500) * 500;
   const leaseId = id('lse');
@@ -592,7 +592,7 @@ export function renewalMatrix(ctx: Ctx, lease: any): { term_months: number; rent
 /** M19 cross-guard: true when active-mode scoring has the lease in the
  * escalate bucket. Shadow mode never holds anything. */
 export function renewalHeldForDelinquency(ctx: Ctx, leaseId: string): boolean {
-  const scoring = getSetting<{ mode: string }>(ctx, 'delinquency_scoring');
+  const scoring = { mode: scorerMode(ctx, 'delinquency_scoring') };
   if (scoring?.mode !== 'active') return false;
   return latestAssessment(ctx, leaseId)?.bucket === 'escalate';
 }
