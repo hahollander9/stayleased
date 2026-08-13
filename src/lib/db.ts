@@ -76,6 +76,10 @@ export function db(): DatabaseSync {
     "ALTER TABLE properties ADD COLUMN source_ref TEXT", // Yardi property code, e.g. '1009'
     "ALTER TABLE residents ADD COLUMN source_ref TEXT", // Yardi resident id, e.g. 't0002302'
     "ALTER TABLE lease_charges ADD COLUMN source_code TEXT", // charge code, e.g. 'rntnt' / 'rnsvchr'
+    // Affordable housing: the part of CONTRACT RENT a voucher/housing authority
+    // pays. rent_cents stays whole (it is what the unit rents for); this records
+    // who pays it, so the resident is billed only their own share.
+    "ALTER TABLE leases ADD COLUMN subsidy_cents INTEGER NOT NULL DEFAULT 0",
   ];
   for (const m of MIGRATIONS) {
     try {

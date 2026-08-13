@@ -11,7 +11,8 @@ import { postBothBases } from '../m9_accounting/service.ts';
 import { ensureBankAccounts } from '../m9_accounting/banking.ts';
 import {
   extractRecord, moneyToCents, toIsoDate, normStatus, splitName, normVendorCategory,
-  type Mapping, type ImportKind, type SourceSummary,
+  classifyChargeCode,
+  type Mapping, type ImportKind, type SourceSummary, type ChargeNature,
 } from './mapping.ts';
 
 /** Validation + transactional apply for Migration Center batches. Preview and
@@ -65,6 +66,8 @@ export interface ImportRecon {
   futureApplicants?: number;
   /** line-by-line comparison against the report's own summary block */
   tieOuts?: TieOut[];
+  /** the part of rentCents paid by vouchers, not by residents */
+  subsidyCents?: number;
 }
 
 /** One row of the tie-out table: what the report says vs what we read. */
@@ -85,7 +88,7 @@ function fmtMoney(c: number): string {
  * standing in as $14.50) shows up here as a line that doesn't match, before
  * anything is written. It also caught the rent/extras split being $1,417 off
  * on the 2026-08-12 Livingston file while the monthly TOTAL still tied. */
-export function tieOutToSource(recon: ImportRecon, source: SourceSummary, rentCode?: string): TieOut[] {
+export function tieOutToSource(recon: ImportRecon, source: SourceSummary, rentCode?: string, codeNature?: Record<string, ChargeNature>): TieOut[] {
   const out: TieOut[] = [];
   const num = (label: string, src: number | null, computed: number): void => {
     if (src === null) return;
@@ -103,11 +106,24 @@ export function tieOutToSource(recon: ImportRecon, source: SourceSummary, rentCo
   // the split matters as much as the total: rent and "other monthly" post to
   // different accounts, so a total that ties with a split that doesn't is
   // still wrong money in the books
-  if (rentCode && source.chargeCodes[rentCode] !== undefined) {
-    money(`Rent (${rentCode})`, source.chargeCodes[rentCode]!, recon.rentCents);
-    const others = Object.entries(source.chargeCodes).filter(([c]) => c !== rentCode);
-    if (others.length) {
-      money(`Other charges (${others.map(([c]) => c).join(', ')})`, others.reduce((a, [, v]) => a + v, 0), recon.extraMonthlyCents);
+  const codes = Object.entries(source.chargeCodes);
+  if (rentCode && codes.length) {
+    // group the report's own per-code totals the same way the reader grouped
+    // them: rent-nature codes (the tenant's portion plus any voucher) are the
+    // contract rent, ancillary codes are the separate monthly charges
+    const natureOf = (c: string): ChargeNature =>
+      codeNature?.[c] ?? (c === rentCode ? 'rent' : classifyChargeCode(c, rentCode));
+    const rentish = codes.filter(([c]) => natureOf(c) !== 'ancillary');
+    const ancillary = codes.filter(([c]) => natureOf(c) === 'ancillary');
+    const subsidy = codes.filter(([c]) => natureOf(c) === 'subsidy');
+    if (rentish.length) {
+      money(`Rent (${rentish.map(([c]) => c).join(' + ')})`, rentish.reduce((a, [, v]) => a + v, 0), recon.rentCents);
+    }
+    if (subsidy.length && recon.subsidyCents !== undefined) {
+      money(`  …of which subsidy (${subsidy.map(([c]) => c).join(', ')})`, subsidy.reduce((a, [, v]) => a + v, 0), recon.subsidyCents);
+    }
+    if (ancillary.length) {
+      money(`Other charges (${ancillary.map(([c]) => c).join(', ')})`, ancillary.reduce((a, [, v]) => a + v, 0), recon.extraMonthlyCents);
     }
   }
   money('Deposits held', source.depositCents, recon.depositCents);
@@ -198,6 +214,8 @@ interface RRPlan {
   moveOut: string | null;
   /** harvested/mapped recurring non-rent charges (parking, pet, storage…) */
   extraMonthlyCents: number;
+  /** the part of rentCents a voucher/housing authority pays, not the resident */
+  subsidyCents: number;
   mtm: boolean;
   onNotice: boolean;
 }
@@ -228,7 +246,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
   // reconciliation accumulators (non-error rows only — what would apply)
   const recon: ImportRecon = {
     units: 0, occupied: 0, rentCents: 0, extraMonthlyCents: 0, depositCents: 0, balanceCents: 0, moveOuts: 0,
-    columnWarnings: [], marketRentCents: 0, futureApplicants: mapping.excluded?.futureApplicants ?? 0,
+    columnWarnings: [], marketRentCents: 0, subsidyCents: 0, futureApplicants: mapping.excluded?.futureApplicants ?? 0,
   };
   const colStats = { deposit: { zero: 0, freq: new Map<number, number>() }, balance: { zero: 0, freq: new Map<number, number>() } };
   const rentFreq = new Map<number, number>(); // occupied-row rent value → count
@@ -289,6 +307,13 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     // has to know whether anything else is being billed
     const extraMonthlyCents = moneyToCents(rec.extra_monthly) ?? 0;
     if (rec.extra_monthly && moneyToCents(rec.extra_monthly) === null) warn(`Couldn't read other monthly charges “${rec.extra_monthly}” — ignored.`);
+    // the subsidy is a slice OF the rent, never an addition to it
+    let subsidyCents = moneyToCents(rec.subsidy) ?? 0;
+    if (rec.subsidy && moneyToCents(rec.subsidy) === null) warn(`Couldn't read housing subsidy “${rec.subsidy}” — ignored.`);
+    if (subsidyCents > 0 && subsidyCents > (rentCents ?? marketRentCents ?? 0)) {
+      warn(`Housing subsidy ${fmtMoney(subsidyCents)} is larger than the rent — capped at the rent.`);
+      subsidyCents = rentCents ?? marketRentCents ?? 0;
+    }
     if (occupied && tenantName) {
       if (rentCents === null && marketRentCents !== null) warn('No lease-rent column value — using market rent.');
       if (effRent <= 0 && extraMonthlyCents > 0) {
@@ -340,6 +365,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
       rentCents: effRent, depositCents, balanceCents,
       leaseStart: leaseStart || asOf, leaseEnd: leaseEnd || addMonths(asOf, 12), moveIn: moveIn || leaseStart || null,
       moveOut, extraMonthlyCents: extraMonthlyCents > 0 ? extraMonthlyCents : 0,
+      subsidyCents: subsidyCents > 0 ? subsidyCents : 0,
       mtm, onNotice: st === 'notice' || (!!moveOut && occupied),
     };
     if (tenantName && plan.occupied) {
@@ -371,6 +397,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
         rentFreq.set(plan.rentCents, (rentFreq.get(plan.rentCents) || 0) + 1);
       }
       recon.extraMonthlyCents += plan.extraMonthlyCents;
+      recon.subsidyCents = (recon.subsidyCents ?? 0) + plan.subsidyCents;
       recon.depositCents += plan.depositCents;
       recon.balanceCents += plan.balanceCents;
       if (moveOut) recon.moveOuts++;
@@ -418,7 +445,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
 
   // ---- tie the strip out to the report's own summary block
   if (source) {
-    recon.tieOuts = tieOutToSource(recon, source, mapping.rentCode?.code);
+    recon.tieOuts = tieOutToSource(recon, source, mapping.rentCode?.code, mapping.codeNature);
     const off = recon.tieOuts.filter((t) => !t.ok);
     if (off.length) {
       recon.columnWarnings.push(
@@ -567,14 +594,23 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           household_name: householdName, status: plan.mtm ? 'month_to_month' : plan.onNotice ? 'notice' : 'active',
           start_date: plan.leaseStart, end_date: plan.leaseEnd, move_in_date: plan.moveIn,
           move_out_date: plan.moveOut, notice_date: null, mtm_since: plan.mtm ? (plan.leaseEnd < asOf ? plan.leaseEnd : asOf) : null,
-          rent_cents: plan.rentCents, deposit_cents: plan.depositCents, deposit_alternative: 0,
+          rent_cents: plan.rentCents, subsidy_cents: plan.subsidyCents, deposit_cents: plan.depositCents, deposit_alternative: 0,
           term_months: 12, application_id: null, renewal_of_lease_id: null, template_id: null,
           packet_file_id: null, esign_request_id: null, bed_label: null,
           billing_start_date: billingStart, created_at: nowIso(),
         });
+        // The lease RENTS for plan.rentCents — that is the contract rent and
+        // what every report, average and renewal is priced off. What the
+        // RESIDENT owes is that less any voucher a housing authority pays, so
+        // the recurring charge (which is what actually bills) carries only
+        // their share. Billing the whole contract rent to the household would
+        // invoice them for someone else's money.
+        const tenantRentCents = Math.max(0, plan.rentCents - plan.subsidyCents);
         insert('lease_charges', {
-          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent', import_batch_id: batch.id,
-          amount_cents: plan.rentCents, gl_account_code: null, rentable_item_id: null,
+          id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent',
+          label: plan.subsidyCents > 0 ? 'Rent (resident portion)' : 'Rent', import_batch_id: batch.id,
+          amount_cents: tenantRentCents, gl_account_code: null, rentable_item_id: null,
+          source_code: mapping.rentCode?.code || null,
           start_date: billingStart, end_date: null, created_at: nowIso(),
         });
         if (plan.extraMonthlyCents > 0) {
@@ -583,6 +619,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           insert('lease_charges', {
             id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'other', label: 'Other recurring (imported)', import_batch_id: batch.id,
             amount_cents: plan.extraMonthlyCents, gl_account_code: null, rentable_item_id: null,
+            source_code: null,
             start_date: billingStart, end_date: null, created_at: nowIso(),
           });
         }

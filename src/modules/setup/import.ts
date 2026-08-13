@@ -316,6 +316,8 @@ export function routes(r: Router): void {
           `read as other monthly charges, not rent, so the split matches the report's charge-code summary.`,
         );
       }
+      // append the two computed columns, so the review screen shows exactly the
+      // numbers that will apply and the operator can re-map either of them
       if (h.harvestedRows > 0 || h.demotedRows > 0) {
         const extraIdx = headers.length;
         headers = [...headers, 'Other monthly charges'];
@@ -331,6 +333,24 @@ export function routes(r: Router): void {
           (mapping.notes ||= []).push(`Folded ${h.harvestedRows} recurring-charge sub-row${h.harvestedRows === 1 ? '' : 's'}${codeStr ? ` (${codeStr})` : ''} — $${(h.totalCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo — into an “Other monthly charges” column billed alongside rent.`);
         }
       }
+      if (h.subsidyCents > 0) {
+        const subIdx = headers.length;
+        headers = [...headers, 'Housing subsidy (of the rent)'];
+        mapping.cols[subIdx] = 'subsidy';
+        dataRows = dataRows.map((r, i) => {
+          const s = h.subsidyByRow.get(i);
+          const row = Array.from({ length: subIdx }, (_, ci) => String(r[ci] ?? ''));
+          row.push(s ? (s.cents / 100).toFixed(2) : '');
+          return row;
+        });
+        const subCodes = [...new Set([...h.subsidyByRow.values()].flatMap((s) => s.codes))];
+        (mapping.notes ||= []).push(
+          `${h.subsidyByRow.size} lease${h.subsidyByRow.size === 1 ? '' : 's'} carry a housing subsidy${subCodes.length ? ` (${subCodes.join(', ')})` : ''} — ` +
+          `$${(h.subsidyCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo. That money stays part of the rent, because it is what the unit rents for; ` +
+          `it is recorded as the share a voucher pays, so each resident is billed only their own portion.`,
+        );
+      }
+      if (Object.keys(h.codeNature).length) mapping.codeNature = h.codeNature;
       if (sourceSummary) mapping.source = sourceSummary;
       if (docProp) mapping.sourceProperty = { name: docProp, code: docPropCode };
     }

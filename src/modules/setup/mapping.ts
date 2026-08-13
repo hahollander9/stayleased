@@ -47,6 +47,7 @@ export const RENT_ROLL_FIELDS: FieldDef[] = [
   { key: 'move_in', label: 'Move-in date', synonyms: ['move in', 'move in date', 'movein', 'moved in', 'occupancy date'], contains: ['move in'] },
   { key: 'move_out', label: 'Move-out date', synonyms: ['move out', 'move out date', 'moveout', 'notice date'], contains: ['move out'] },
   { key: 'extra_monthly', label: 'Other monthly charges', hint: 'parking, storage, pets — imported as a second recurring charge on the lease', synonyms: ['other monthly charges', 'other charges', 'additional charges', 'recurring charges', 'ancillary charges'], contains: ['other charge', 'addl charge'] },
+  { key: 'subsidy', label: 'Housing subsidy (of the rent)', hint: 'the part of the rent a voucher or housing authority pays — the rent stays whole, this records who pays it', synonyms: ['subsidy', 'housing subsidy', 'hap', 'hap amount', 'voucher', 'voucher amount', 'assistance', 'housing assistance', 'subsidy amount'], contains: ['subsid', 'voucher', 'hap '] },
 ];
 
 export const VENDOR_FIELDS: FieldDef[] = [
@@ -155,6 +156,8 @@ export interface Mapping {
   rentCode?: { code: string; from: 'ai' | 'frequency'; extras: string[] };
   /** the property the document names, and the source system's code for it */
   sourceProperty?: PropertyBanner;
+  /** every charge code the file used and what the reader decided it means */
+  codeNature?: Record<string, ChargeNature>;
 }
 
 /** Score a header against a field. exact synonym 3 · contains 2 · fuzzy 1. */
@@ -308,14 +311,52 @@ export interface SubRowHarvest {
   rows: string[][];
   /** surviving-row index → harvested recurring extras from its sub-rows */
   extraByRow: Map<number, { cents: number; codes: string[] }>;
+  /** surviving-row index → the part of RENT a third party pays (voucher/HAP) */
+  subsidyByRow: Map<number, { cents: number; codes: string[] }>;
   harvestedRows: number;
   droppedTotals: number;
   totalCents: number;
+  /** total housing subsidy folded INTO rent across the file */
+  subsidyCents: number;
   codes: Set<string>;
   /** unit rows whose ONE charge carried a non-rent code and moved to extras */
   demotedRows: number;
   /** the code concluded to be rent ('' when the file has no charge codes) */
   rentCode: string;
+  /** every charge code seen, classified — shown on review so a wrong call is visible */
+  codeNature: Record<string, ChargeNature>;
+}
+
+/** What a charge code MEANS, which decides where its money lands.
+ *
+ * The distinction that matters is not rent-vs-not-rent but *whose rent*: a
+ * housing voucher (`rnsvchr`, HAP, Section 8) is part of the CONTRACT RENT —
+ * it changes who pays, not how much the unit rents for — while parking, pet
+ * and storage are genuinely separate monthly charges that were never rent.
+ *
+ * Getting this wrong is expensive in both directions. Treating a voucher as
+ * an ancillary charge understated the rent roll by $10,139/mo on the
+ * 2026-08-12 Livingston import and priced renewal offers ~$1,130/mo below
+ * contract rent. Treating parking as rent would inflate every rent average and
+ * every renewal in the opposite direction. So unknown codes stay ANCILLARY —
+ * the conservative side — and the reconciliation strip's per-code tie-out is
+ * what catches a wrong call before anything applies. */
+export type ChargeNature = 'rent' | 'subsidy' | 'ancillary';
+
+/** Codes that name a third-party housing payment, i.e. part of contract rent. */
+const SUBSIDY_CODE = /^(rn(sv|sub|hap)|hap|sec8|s8|hcv|subsid|vouch|assist)/i;
+/** Codes that name a genuinely separate monthly service. */
+const ANCILLARY_CODE = /(prk|park|pet|stor|garag|carport|util|cam|trash|trsh|valet|amen|insur|late|admin|fee)/i;
+
+export function classifyChargeCode(code: string, rentCode: string, overrides?: Record<string, ChargeNature>): ChargeNature {
+  const c = String(code || '').trim();
+  if (!c) return 'ancillary';
+  const o = overrides?.[c.toLowerCase()];
+  if (o) return o;
+  if (rentCode && c === rentCode) return 'rent';
+  if (ANCILLARY_CODE.test(c)) return 'ancillary';
+  if (SUBSIDY_CODE.test(c)) return 'subsidy';
+  return 'ancillary';
 }
 
 /** Yardi "Rent Roll with Lease Charges" prints each unit as a block: a unit
@@ -325,8 +366,8 @@ export interface SubRowHarvest {
  * a sub-row). So the harvest is block- and code-aware: gather each block's
  * charges, find the portfolio's rent code (the code most units share, ties
  * broken toward rnt*/
-export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers?: string[], rentCodeHint?: string): SubRowHarvest {
-  const out: SubRowHarvest = { rows: [], extraByRow: new Map(), harvestedRows: 0, droppedTotals: 0, totalCents: 0, codes: new Set(), demotedRows: 0, rentCode: '' };
+export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers?: string[], rentCodeHint?: string, codeOverrides?: Record<string, ChargeNature>): SubRowHarvest {
+  const out: SubRowHarvest = { rows: [], extraByRow: new Map(), subsidyByRow: new Map(), harvestedRows: 0, droppedTotals: 0, totalCents: 0, subsidyCents: 0, codes: new Set(), demotedRows: 0, rentCode: '', codeNature: {} };
   let unitCol = -1;
   let rentCol = -1;
   let tenantCol = -1;
@@ -421,22 +462,44 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
   const rentCode = rentCodeHint && codeUnits.has(rentCodeHint) ? rentCodeHint : byFrequency;
   out.rentCode = rentCode;
 
-  // ---- pass 2: per block, rent = the rent-code charge; everything else = extras
+  const nature = (code: string): ChargeNature => classifyChargeCode(code, rentCode, codeOverrides);
+  const noteNature = (code: string): void => { if (code) out.codeNature[code] = nature(code); };
+
+  // ---- pass 2: per block, RENT is every rent-nature charge (the tenant's own
+  // portion plus any housing subsidy on top of it — together they are what the
+  // unit rents for), and only genuinely ancillary codes become extras. The
+  // subsidy is remembered separately as the payer split: how much of that rent
+  // a third party pays. A block with no rent-nature charge at all falls back to
+  // the first charge, so a file whose codes are all unfamiliar still imports.
   for (const [idx, list] of blocks) {
-    const rent = list.find((c) => c.code && c.code === rentCode) ?? (moneyToCents(String(out.rows[idx]![rentCol] ?? '')) ? null : list[0] ?? null);
-    const extras = list.filter((c) => c !== rent && !(c.fromUnitRow && !rent));
-    const promoted = [...out.rows[idx]!];
-    if (rent) promoted[rentCol] = (rent.cents / 100).toFixed(2);
-    out.rows[idx] = promoted;
-    let cents = 0;
-    const codes: string[] = [];
-    for (const c of extras) {
-      cents += c.cents;
-      if (c.code) { codes.push(c.code); out.codes.add(c.code); }
+    for (const c of list) noteNature(c.code);
+    let rentCents = 0;
+    let subsidyCents = 0;
+    let extraCents = 0;
+    const extraCodes: string[] = [];
+    const subsidyCodes: string[] = [];
+    const rentish = list.filter((c) => nature(c.code) !== 'ancillary');
+    const effective = rentish.length ? rentish : list.slice(0, 1);
+    for (const c of list) {
+      const isRent = effective.includes(c);
+      if (isRent) {
+        rentCents += c.cents;
+        if (nature(c.code) === 'subsidy') { subsidyCents += c.cents; if (c.code) subsidyCodes.push(c.code); }
+      } else {
+        extraCents += c.cents;
+        if (c.code) { extraCodes.push(c.code); out.codes.add(c.code); }
+      }
     }
-    if (cents > 0) {
-      out.extraByRow.set(idx, { cents, codes });
-      out.totalCents += cents;
+    const promoted = [...out.rows[idx]!];
+    promoted[rentCol] = (rentCents / 100).toFixed(2);
+    out.rows[idx] = promoted;
+    if (extraCents > 0) {
+      out.extraByRow.set(idx, { cents: extraCents, codes: extraCodes });
+      out.totalCents += extraCents;
+    }
+    if (subsidyCents > 0) {
+      out.subsidyByRow.set(idx, { cents: subsidyCents, codes: subsidyCodes });
+      out.subsidyCents += subsidyCents;
     }
     out.harvestedRows += list.filter((c) => !c.fromUnitRow).length;
   }
@@ -456,6 +519,15 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
       if (!code || code === rentCode) return;
       const cents = moneyToCents(String(row[rentCol] ?? ''));
       if (cents === null || cents <= 0) return;
+      noteNature(code);
+      if (nature(code) === 'subsidy') {
+        // a fully-subsidised household: the voucher IS the contract rent, so
+        // the amount stays in the rent column and only the payer split records
+        // that none of it comes from the resident
+        out.subsidyByRow.set(idx, { cents, codes: [code] });
+        out.subsidyCents += cents;
+        return;
+      }
       const demoted = [...row];
       demoted[rentCol] = '0.00'; // explicit zero: never fall back to market rent
       out.rows[idx] = demoted;
@@ -465,6 +537,11 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers
       out.demotedRows++;
     });
   }
+  // unit rows whose single charge IS the rent code still need their nature known
+  out.rows.forEach((row, idx) => {
+    if (blocks.has(idx)) return;
+    noteNature(codeAt(row));
+  });
   return out;
 }
 
