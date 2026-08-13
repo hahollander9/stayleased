@@ -850,3 +850,89 @@ pre-existing patterns at lines this diff does not touch).
 of codes but not their amounts, and extending the hard-won Yardi harvest to carry them was not worth
 the risk in this build — shipping a tested but unreachable function would have been worse. It is the
 obvious next source: what a portfolio actually bills is stronger evidence than what a lease permits.
+
+## 2026-08-13 — Thirteen surfaces the operator actually touches, and the comment that deleted the map
+
+**Built (Henry, one batch across two messages plus a follow-up):** thirteen changes, all of them in
+the places a working manager puts their hands, plus one bug that was hiding under the first of them.
+
+- **Map pins carry their names.** Occupancy sat in the pin tag and the name only appeared on hover —
+  so reading the map required already knowing which dot was which. The name is now the label and
+  occupancy is the annotation beside it; the hovered pin lifts clear of its neighbours so overlapping
+  labels stay recoverable at low zoom.
+- **The donut says what share.** `donut()` had the count and withheld the proportion, which is the one
+  thing a donut is *for*. Arcs and legend rows now carry the percentage, the legend right-aligns it
+  into a readable column, and hovering an arc dims the others.
+- **Four time zones, named the way people say them.** The picker asked for an IANA identifier out of a
+  list of five. It now offers Eastern / Central / Mountain / Pacific, stores the same IANA id, and —
+  the part that matters — appends any *stored* zone outside the four rather than dropping it, because
+  a select that omits the saved value posts a different one back on the next unrelated save. An
+  Arizona or Alaska property would have quietly relocated itself.
+- **Property profile, formatted as a record.** A flat `dl` gave the street address the same weight as
+  the fiscal calendar. Identity (address, dialable phone, mailable email, public site) now leads;
+  settings sit under it in a scannable grid; "Month 1" reads "January".
+- **Leasing analytics on the property page.** Median speed-to-lead first (the input the team controls
+  today), then leads 90d/30d, working-now with an untouched-7-days count, lead-to-lease, tour rate,
+  median days to signature, a conversion funnel, twelve months of lead volume, and a source table
+  carrying spend and **cost per lease**. Medians, not means — one lead answered after a vacation
+  destroys a mean. `/leads` gained the `property` filter those tiles link into; without it every tile
+  landed on the whole portfolio and answered a different question than the one clicked.
+- **Amenity bookings are visible.** Spaces could carry a fee and there was nowhere to see a booking.
+  Rows now show upcoming count and 90-day billed revenue; upcoming and recent reservations list
+  underneath with whether the fee actually reached a resident ledger ("billed" / "not billed").
+- **The unit board drags.** `.col` had no lane wiring at all. Lanes, draggable cards, a `/units/move`
+  route sharing `MANUAL_UNIT_STATUSES` with the unit page's status form, and audit on every move.
+  Occupied and On notice are lease-driven, so those columns refuse the drop and their cards refuse to
+  be dragged — the board declines the gesture instead of accepting it and failing after a round trip.
+  The return path is echoed from a hidden field and pattern-validated before it reaches a `Location`.
+- **Dispatch cards show their dates and their age.** Number, days open, reported / scheduled / due on
+  one identity line, with the age chip going amber at 7 days and red at 14 or past SLA. Age is what a
+  dispatcher actually triages on and it was the one number the board omitted.
+- **Techs get told.** Assignment was silent in both directions — the board and the work-order form
+  changed hands in the database and the person holding the job found out next time they opened the
+  app. Both now notify the assignee (only on a real change of hands), and the board has a **Notify all
+  techs** broadcast: unassigned count, emergencies, past SLA, what is on you and how old.
+- **Facilities analytics fold into the overview.** SLA compliance, average completion, maintenance per
+  unit, work-order aging and 90-day request mix now render on the dashboard the operator already opens.
+  `/facilities` keeps the deeper cuts (per-tech productivity, turn times) that reward going looking.
+- **Outside contractors bid.** New `wo_bids` table and a comparison page per work order: invite
+  same-trade vendors first, record price / labor / materials / start date / duration / warranty /
+  scope, and compare against each vendor's own completed-job count, rating and average days to close.
+  Lowest is badged, everyone else shows their delta, and award **is** the dispatch — routed through
+  `assignWo`, so the COI gate still blocks an expired certificate, and inside a transaction so a
+  blocked award leaves the comparison untouched rather than half-applied.
+- **Search reaches pages and vendors, and Enter works.** The palette returned results and then did
+  nothing when you pressed Enter unless you first pressed the down arrow — which is indistinguishable
+  from a broken search box. The top hit is now selected as results land, Enter honours results still
+  in flight, nav destinations are searchable (typing "dispatch" goes to the dispatch board), vendors
+  are searchable at all, and result labels are escaped before they reach `innerHTML`.
+- **Ask is a companion, not a modal.** Scrim and backdrop-blur are gone in both states; the page
+  behind stays readable and clickable, because the questions people ask are about what is on the
+  screen. A pin button docks it beside the content (`.app` gives up the width rather than hiding
+  content under it) and carries the panel *and its conversation* across navigations via
+  sessionStorage. Escape and click-away dismiss only while floating; closing unpins.
+
+**The bug under the first change.** Adding an HTML-escape helper to the map's inline client script
+meant writing a comment about escaping — and that comment contained a literal closing script tag. An
+HTML parser ends a script element at that sequence *wherever* it appears, comments included, so the
+map's JavaScript truncated mid-file and the browser reported only "Unexpected end of input". The
+symptom was a map with no pins and a green typecheck. Fixed structurally, not locally: `inlineScript()`
+in `lib/html.ts` escapes the slash (`<\/script`, identical to JavaScript in strings, comments and
+regexes alike) and both map scripts route through it. `tests/inline_script.test.ts` guards the helper
+and re-reads `map.ts` to assert neither constant carries the sequence.
+
+**Also fixed, found while in the code:** the map's pin and popup markup interpolated operator-entered
+property names straight into `innerHTML` — the JSON island escapes `<` only far enough to survive its
+own closing tag, and `JSON.parse` hands the raw character back. Property ids now go through
+`encodeURIComponent` in the generated hrefs. And `/workorders/reassign` scoped the work order by org
+but not by `canAccessProperty`; it does now, before touching anything.
+
+**Gates:** `tsc` clean · 356/356 unit (351 + 5 new) · scoped e2e 48/48 green across smoke, map,
+facilities, askdock, crm, goldenpath, clientready, navmenus, hubs, workingmodel · drag-drop, bid
+award, COI refusal and the `/units/move` refusal paths verified in a real browser and by direct POST.
+
+**Correction to this file's own known-flake note:** `tests/accounting.test.ts` (`AP void/reissue`,
+`bank feed reconcile`) is documented as passing solo. It does not. Measured today at 3 failures in 6
+consecutive solo runs — and **3 in 6 on a stashed clean tree as well**, so the rate is unchanged by
+this build. The "passes solo" heuristic sent this session chasing a phantom regression; the reliable
+test is stash-and-compare, not run-it-alone.

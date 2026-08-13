@@ -61,9 +61,14 @@ export function routes(r: Router): void {
     const status = rq.query.get('status') || 'active';
     const source = rq.query.get('source') || '';
     const filter = rq.query.get('filter') || '';
+    // Property pages link into this inbox scoped to their own leads; without
+    // the filter those links land on the whole portfolio and quietly answer a
+    // different question than the tile that was clicked.
+    const propId = rq.query.get('property') || '';
     const pf = propFilter(ctx, 'l.property_id');
     const params: unknown[] = [ctx.orgId, ...pf.params];
     let where = `l.org_id=?${pf.sql}`;
+    if (propId) { where += ' AND l.property_id=?'; params.push(propId); }
     if (status === 'active') where += ` AND l.status IN ('new','contacted','touring','toured')`;
     else if (status) { where += ' AND l.status=?'; params.push(status); }
     if (source) { where += ' AND l.source=?'; params.push(source); }
@@ -100,9 +105,13 @@ export function routes(r: Router): void {
       subtitle: `Leads arrive from the ILS feed, website, phone and walk-ins — duplicates merge into one guest card.${heatBy.size && heatMode === 'shadow' ? ' · scoring: shadow (chips inform, behavior unchanged)' : ''}`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
+          ${when(propId, () => html`<input type="hidden" name="property" value="${propId}" />`)}
           ${field('Status', select('status', [['active', 'Active pipeline'], ...LEAD_STATUSES.map((s): [string, string] => [s, s])], status))}
           ${field('Source', select('source', LEAD_SOURCES.map((s): [string, string] => [s, s.replaceAll('_', ' ')]), source, { blank: 'All sources' }))}
           ${field('Filter', select('filter', [['overdue', 'Overdue follow-ups']], filter, { blank: '—' }))}
+          ${when(propId, () => html`<div class="grow"></div><div class="field"><label>Property</label>
+            <a class="btn btn-ghost btn-sm" href="/leads">${q1<{ name: string }>('SELECT name FROM properties WHERE id=? AND org_id=?', propId, ctx.orgId)?.name || 'This property'} · clear ✕</a>
+          </div>`)}
         </form>
         ${card(null, html`${tbl(
           [{ label: 'Lead' }, { label: 'Property' }, { label: 'Looking for' }, { label: 'Source' }, { label: 'Status' }, { label: 'Next follow-up' }, { label: 'Agent' }],

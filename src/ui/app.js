@@ -194,28 +194,54 @@
         return;
       }
       debounce = setTimeout(function () {
+        // A result label is operator-entered text (a resident's name, a work
+        // order summary). It is going into innerHTML, so escape it here.
+        function esc(s) {
+          return String(s == null ? '' : s)
+            .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+        }
         fetch('/search.json?q=' + encodeURIComponent(q))
           .then(function (r) { return r.json(); })
           .then(function (data) {
-            sel = -1;
             if (!data.results || !data.results.length) {
-              pResults.innerHTML = '<div class="hintbar">No matches for “' + q.replace(/[<>&]/g, '') + '”</div>';
+              sel = -1;
+              pResults.innerHTML = '<div class="hintbar">No matches for “' + esc(q) + '”</div>';
               return;
             }
             pResults.innerHTML = data.results
               .map(function (r) {
-                return '<a href="' + r.href + '"><span class="kind">' + r.kind + '</span><span><b>' + r.label + '</b>' + (r.sub ? ' <span class="muted">· ' + r.sub + '</span>' : '') + '</span></a>';
+                return '<a href="' + esc(r.href) + '"><span class="kind">' + esc(r.kind) + '</span><span><b>' + esc(r.label) + '</b>' + (r.sub ? ' <span class="muted">· ' + esc(r.sub) + '</span>' : '') + '</span></a>';
               })
               .join('');
+            // The top hit is selected as soon as results land, so Enter goes
+            // somewhere. Typing a resident's name and pressing Enter used to
+            // do nothing at all unless you first pressed the down arrow —
+            // which reads as a search box that does not work.
+            sel = 0;
+            var first = pResults.querySelector('a');
+            if (first) first.classList.add('sel');
           });
       }, 160);
     });
     pInput.addEventListener('keydown', function (e) {
       var links = pResults.querySelectorAll('a');
+      if (e.key === 'Enter') {
+        // Results may still be in flight when Enter is pressed — go as soon as
+        // they arrive rather than swallowing the keystroke.
+        if (links.length) { e.preventDefault(); window.location.href = links[sel >= 0 ? sel : 0].href; return; }
+        e.preventDefault();
+        var pending = pInput.value.trim();
+        if (pending.length < 2) return;
+        setTimeout(function () {
+          var later = pResults.querySelectorAll('a');
+          if (later.length) window.location.href = later[0].href;
+        }, 320);
+        return;
+      }
       if (!links.length) return;
       if (e.key === 'ArrowDown') { sel = Math.min(sel + 1, links.length - 1); }
       else if (e.key === 'ArrowUp') { sel = Math.max(sel - 1, 0); }
-      else if (e.key === 'Enter' && sel >= 0) { window.location.href = links[sel].href; return; }
       else return;
       e.preventDefault();
       links.forEach(function (l, i) { l.classList.toggle('sel', i === sel); });
@@ -345,9 +371,17 @@
   // The brandbar button opens a slide-over on ANY page instead of navigating.
   // Content is tailored server-side (/ask/panel.json): greeting grounded in
   // the current property's live figures + suggested questions for this page.
+  //
+  // The panel is a companion, not a modal. There is no scrim and no blur: the
+  // page behind it stays readable and clickable, because the questions people
+  // ask are about what is on the screen and checking the screen should not
+  // require dismissing the answer. Pinning docks it beside the content and
+  // carries it — with the conversation — across navigations.
   (function () {
-    var dock = null, thread = null, chipsEl = null, form = null, inp = null, sendBtn = null;
-    var history = [], busy = false, loaded = false;
+    var dock = null, thread = null, chipsEl = null, form = null, inp = null, sendBtn = null, pinBtn = null;
+    var history = [], busy = false, loaded = false, pinned = false;
+    var PIN_KEY = 'sl_ask_pinned', HIST_KEY = 'sl_ask_history';
+    var PIN_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l2.5 3.2H6.5z"/></svg>';
 
     function el(tag, cls, text) {
       var n = document.createElement(tag);
@@ -372,10 +406,11 @@
 
     function build() {
       dock = el('div', 'askdock');
-      dock.setAttribute('role', 'dialog');
+      // Not a modal: the panel is a companion to the page, not a gate in front
+      // of it. role=complementary, so assistive tech does not announce it as a
+      // dialog that has trapped the user.
+      dock.setAttribute('role', 'complementary');
       dock.setAttribute('aria-label', 'Ask StayLeased');
-      var back = el('div', 'askdock-back');
-      back.addEventListener('click', close);
       var panel = el('aside', 'askdock-panel');
       var head = el('div', 'askdock-head');
       var orb = el('span', 'aichat-orb');
@@ -386,12 +421,19 @@
       ttl.appendChild(scope);
       var full = el('a', 'askdock-full', 'Full page');
       full.href = '/ask';
+      // Pinning docks the panel beside the page instead of over it, and keeps
+      // it open across navigations — so you can walk the app with the answer
+      // still on screen and keep asking about what you are looking at.
+      pinBtn = el('button', 'askdock-pin');
+      pinBtn.type = 'button';
+      pinBtn.innerHTML = PIN_SVG;
+      pinBtn.addEventListener('click', function () { setPinned(!pinned); });
       var x = el('button', 'askdock-close');
       x.type = 'button';
       x.setAttribute('aria-label', 'Close');
       x.innerHTML = '&times;';
       x.addEventListener('click', close);
-      head.appendChild(orb); head.appendChild(ttl); head.appendChild(full); head.appendChild(x);
+      head.appendChild(orb); head.appendChild(ttl); head.appendChild(full); head.appendChild(pinBtn); head.appendChild(x);
       thread = el('div', 'aichat-thread');
       thread.setAttribute('aria-live', 'polite');
       chipsEl = el('div', 'aichat-chips');
@@ -406,7 +448,7 @@
       sendBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
       form.appendChild(inp); form.appendChild(sendBtn);
       panel.appendChild(head); panel.appendChild(thread); panel.appendChild(chipsEl); panel.appendChild(form);
-      dock.appendChild(back); dock.appendChild(panel);
+      dock.appendChild(panel);
       document.body.appendChild(dock);
 
       form.addEventListener('submit', function (e) {
@@ -420,25 +462,70 @@
         if (c && !busy) ask(c.textContent);
       });
       document.addEventListener('keydown', function (e) {
-        if (e.key === 'Escape' && dock.classList.contains('open')) close();
+        // Escape closes a floating panel. A pinned one is part of the layout,
+        // and yanking it away on a stray Escape would be a surprise.
+        if (e.key === 'Escape' && !pinned && dock.classList.contains('open')) close();
       });
+      // With no scrim to catch it, clicking away is what dismisses the panel —
+      // but only while it is floating, and never on the button that opened it.
+      document.addEventListener('mousedown', function (e) {
+        if (pinned || !dock.classList.contains('open')) return;
+        if (dock.contains(e.target) || (e.target.closest && e.target.closest('[data-ask-open]'))) return;
+        close();
+      });
+    }
+
+    function setPinned(on) {
+      pinned = !!on;
+      if (dock) dock.classList.toggle('pinned', pinned);
+      document.body.classList.toggle('ask-pinned', pinned && dock && dock.classList.contains('open'));
+      if (pinBtn) {
+        pinBtn.classList.toggle('on', pinned);
+        pinBtn.setAttribute('aria-pressed', pinned ? 'true' : 'false');
+        pinBtn.title = pinned ? 'Unpin — let the panel float over the page' : 'Pin open — dock beside the page and keep it open as you navigate';
+        pinBtn.setAttribute('aria-label', pinBtn.title);
+      }
+      try { sessionStorage.setItem(PIN_KEY, pinned ? '1' : '0'); } catch (err) { /* private mode */ }
+    }
+
+    /** The conversation follows the pin across page loads. Without this,
+     * "keep it open while I visit other pages" would hand you an open panel
+     * that had forgotten everything you just asked it. */
+    function saveHistory() {
+      if (!pinned) return;
+      try { sessionStorage.setItem(HIST_KEY, JSON.stringify(history.slice(-12))); } catch (err) { /* quota */ }
+    }
+    function restoreHistory() {
+      var saved = [];
+      try { saved = JSON.parse(sessionStorage.getItem(HIST_KEY) || '[]'); } catch (err) { saved = []; }
+      if (!saved.length || !Array.isArray(saved)) return false;
+      saved.forEach(function (m) {
+        history.push(m);
+        bubble(m.role === 'you' ? 'you' : 'agent').textContent = m.text || '';
+      });
+      return true;
     }
 
     function hydrate() {
       if (loaded) return;
       loaded = true;
+      var resumed = restoreHistory();
+      // The scope line and the suggested questions are about the page you are
+      // on NOW, so they refresh on every navigation even when the panel and
+      // its conversation carried over.
       fetch('/ask/panel.json?path=' + encodeURIComponent(location.pathname), { headers: { 'Accept': 'application/json' } })
         .then(function (r) { return r.json(); })
         .then(function (d) {
           dock.querySelector('.askdock-scope').textContent = d.scope ? 'Scoped to ' + d.scope : 'Portfolio-wide';
-          bubble('agent').textContent = d.greeting || 'Ask me about your portfolio.';
+          if (!resumed) bubble('agent').textContent = d.greeting || 'Ask me about your portfolio.';
+          chipsEl.innerHTML = '';
           (d.chips || []).forEach(function (c) {
             var b = el('button', 'aichat-chip', c);
             b.type = 'button';
             chipsEl.appendChild(b);
           });
         })
-        .catch(function () { bubble('agent').textContent = 'Ask me about your portfolio.'; });
+        .catch(function () { if (!resumed) bubble('agent').textContent = 'Ask me about your portfolio.'; });
     }
 
     function ask(q) {
@@ -466,21 +553,32 @@
           wait.appendChild(ex);
         }
         history.push({ role: 'agent', text: d.summary || '' });
+        saveHistory();
         setBusy(false);
         scrollDown();
       }).catch(function () {
         wait.textContent = 'Something went wrong — try again.';
         setBusy(false);
       });
+      saveHistory();
     }
 
-    function open() {
+    function open(opts) {
       if (!dock) build();
       dock.classList.add('open');
+      setPinned(pinned);
       hydrate();
-      setTimeout(function () { inp.focus(); }, 180);
+      if (!(opts && opts.quiet)) setTimeout(function () { if (inp) inp.focus(); }, 180);
     }
-    function close() { if (dock) dock.classList.remove('open'); }
+    function close() {
+      if (!dock) return;
+      dock.classList.remove('open');
+      document.body.classList.remove('ask-pinned');
+      // Closing is a decision to stop; it should not come back on the next
+      // page. Unpinning here is what makes the close button mean "close".
+      if (pinned) setPinned(false);
+      try { sessionStorage.removeItem(HIST_KEY); } catch (err) { /* private mode */ }
+    }
 
     document.addEventListener('click', function (e) {
       var b = e.target.closest('[data-ask-open]');
@@ -488,15 +586,35 @@
       if (e.metaKey || e.ctrlKey || e.shiftKey) return; // let new-tab clicks through
       if (location.pathname === '/ask') return; // already on the full page
       e.preventDefault();
+      if (dock && dock.classList.contains('open') && !pinned) { close(); return; }
       open();
     });
+
+    // A pinned panel reopens itself on the next page, without stealing focus —
+    // the operator navigated to read the page, not to type in the panel.
+    try {
+      if (sessionStorage.getItem(PIN_KEY) === '1' && document.querySelector('[data-ask-open]')) {
+        pinned = true;
+        open({ quiet: true });
+      }
+    } catch (err) { /* private mode: pinning simply does not persist */ }
   })();
 
-  // drag & drop lanes (dispatch board / turns)
+  // drag & drop lanes (dispatch board / unit board / turns)
   document.querySelectorAll('[data-dnd-lane]').forEach(function (lane) {
-    lane.addEventListener('dragover', function (e) { e.preventDefault(); });
+    lane.addEventListener('dragover', function (e) {
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+      lane.classList.add('dnd-over');
+    });
+    // dragleave fires when the pointer crosses into a CHILD element too, so
+    // the lane un-highlights mid-drag unless the child is checked for.
+    lane.addEventListener('dragleave', function (e) {
+      if (!e.relatedTarget || !lane.contains(e.relatedTarget)) lane.classList.remove('dnd-over');
+    });
     lane.addEventListener('drop', function (e) {
       e.preventDefault();
+      lane.classList.remove('dnd-over');
       var id = e.dataTransfer.getData('text/plain');
       var form = document.getElementById('dnd-form');
       if (form && id) {
@@ -510,6 +628,16 @@
     item.setAttribute('draggable', 'true');
     item.addEventListener('dragstart', function (e) {
       e.dataTransfer.setData('text/plain', item.getAttribute('data-dnd-item'));
+      if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+      item.classList.add('dnd-dragging');
+      // marks the whole board as "a card is in flight" so lanes that cannot
+      // accept it can recede while the drag is happening, and only then
+      document.body.classList.add('dnd-active');
+    });
+    item.addEventListener('dragend', function () {
+      item.classList.remove('dnd-dragging');
+      document.body.classList.remove('dnd-active');
+      document.querySelectorAll('.dnd-over').forEach(function (l) { l.classList.remove('dnd-over'); });
     });
   });
 
