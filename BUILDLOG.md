@@ -941,7 +941,8 @@ either side of one insert. Lose that race and the query matches nothing: the voi
 the reissue cuts a new check anyway, and the cash leaves twice.
 
 This branch is cut from main before that fix, so it still has the bug; PR #7 carries the correction
-and this branch should rebase onto main once it lands. Recorded here because the standing advice in
+(its DECISION 51) and this branch should rebase onto main once it lands — its entries are numbered
+52–57 for exactly that reason, since #7 claimed 50 and 51 first. Recorded here because the standing advice in
 `CLAUDE.md` — "a red there = re-run before investigating" — is what let a real defect in the books sit
 behind the word "flake", and re-running is exactly the instinct that kept it hidden. The reliable
 technique when a suite reddens is stash-and-compare against a clean tree, which localises the blame
