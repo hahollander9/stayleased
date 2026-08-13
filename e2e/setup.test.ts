@@ -1,6 +1,11 @@
 import { test, before, after } from 'node:test';
 import assert from 'node:assert/strict';
+import { writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
 import { boot, login, newPage } from './lib.ts';
+import { ROOT } from '../src/lib/db.ts';
+import { writeXlsx } from '../src/lib/xlsx.ts';
+import { YARDI_BLOCK_ROLL, YARDI_EXPECTED } from '../tests/fixtures/yardi_block_roll.ts';
 import type { Browser } from 'playwright';
 
 /** Phase 2 / M2.5 gate: the top module bar renders, the Setup hub loads, the
@@ -10,14 +15,19 @@ import type { Browser } from 'playwright';
 let base: string;
 let browser: Browser;
 let close: () => Promise<void>;
+const YARDI_PATH = join(ROOT, 'data', 'e2e-yardi-block-roll.xlsx');
 
 before(async () => {
   const b = await boot();
   base = b.base;
   browser = b.browser;
   close = b.close;
+  writeFileSync(YARDI_PATH, writeXlsx([{ name: 'Report1', rows: YARDI_BLOCK_ROLL }]));
 });
-after(async () => close());
+after(async () => {
+  rmSync(YARDI_PATH, { force: true });
+  await close();
+});
 
 test('top module bar renders the module tabs', async () => {
   const page = await newPage(browser);
@@ -71,5 +81,43 @@ test('gate: Migration Center previews then imports units from CSV (legacy templa
   assert.match(preview, /Ready/);
   await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Import 2 units")')]);
   assert.match(await page.content(), /Imported 2 of 2 units/);
+  await page.close();
+});
+
+
+test('gate: a Yardi block-format rent roll uploads, ties out to its own summary, and applies', async () => {
+  const page = await newPage(browser);
+  await login(page, base, 'admin@summitridge.demo');
+  await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
+
+  // "detect" is the rent-roll default: the property comes off the title banner
+  await page.setInputFiles('input[name=file]', YARDI_PATH);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  assert.match(page.url(), /\/setup\/import\/b\/imp/, 'should land on the review page');
+  const review = await page.content();
+
+  // the stacked header merged and the columns landed on the right fields
+  assert.equal(await page.locator('select[name=map_0]').inputValue(), 'unit');
+  assert.equal(await page.locator('select[name=map_4]').inputValue(), 'tenant', 'Name is the household, not the resident t-code');
+  assert.equal(await page.locator('select[name=map_7]').inputValue(), 'rent', 'the Amount beside the charge code is the rent');
+  assert.equal(await page.locator('select[name=map_8]').inputValue(), 'deposit', 'Resident Deposit, not Other Deposit');
+
+  // the report's own summary block is read back and every line ties
+  assert.match(review, /ties to the summary block of the uploaded report/i);
+  assert.doesNotMatch(review, /do(es)? not tie to the summary block/i);
+  assert.match(review, /Rent \(rntnt\)/, 'the tie-out names the rent charge code');
+  assert.match(review, /\$1,839\.00/, 'rent ties to the rntnt line');
+  assert.match(review, /\$2,183\.00/, 'other charges tie to the rnsvchr line');
+  assert.match(review, new RegExp(`${YARDI_EXPECTED.futureApplicants} future applicants set aside`), 'future applicants are their own line, not errors');
+  assert.doesNotMatch(review, /probably wrong/, 'genuinely-$0 deposits and balances raise no mis-mapping alarm');
+  // 3 clean + 1 warned (the fully-subsidised unit), and nothing skipped
+  assert.match(review, /3 ready/);
+  assert.doesNotMatch(review, /\d+ skipped/, 'a clean report must review with no skipped rows');
+
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Apply")')]);
+  assert.match(page.url(), /\/properties\/prp/, 'apply lands on the property it detected');
+  const prop = await page.content();
+  assert.match(prop, new RegExp(YARDI_EXPECTED.property));
+  assert.match(prop, /Imported .*3 leases/i, 'the vacant unit and the future applicants get no lease');
   await page.close();
 });

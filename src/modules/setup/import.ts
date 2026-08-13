@@ -12,7 +12,8 @@ import { parseSpreadsheet, writeXlsx } from '../../lib/xlsx.ts';
 import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
 import { shell, card, tbl, field, input, select, statusBadge } from '../../ui/ui.ts';
 import {
-  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges, detectDocumentProperty, norm, PRESETS,
+  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges, detectDocumentProperty,
+  scanRosterSections, parseSourceSummary, norm, PRESETS,
   type ImportKind, type Mapping,
 } from './mapping.ts';
 import {
@@ -186,6 +187,8 @@ export function routes(r: Router): void {
     let dataRows: string[][];
     let mapping: Mapping;
     let docProp: string | null = null; // property named by the document itself
+    let aiRentCode = ''; // the charge code the model read as rent
+    let sourceSummary: ReturnType<typeof parseSourceSummary> = null;
 
     const isPdf = /\.pdf$/i.test(up.filename || '') || (up.data.length > 4 && up.data.subarray(0, 4).toString('latin1') === '%PDF');
     if (isPdf) {
@@ -232,6 +235,11 @@ export function routes(r: Router): void {
       }
 
       docProp = plan?.document_property || detectDocumentProperty(sheet.rows, headerIdx);
+      aiRentCode = plan?.rent_code || '';
+      // read the report's own summary block off the RAW sheet, before any
+      // reader has had a chance to drop it — it is the only independent check
+      // on everything the reader concluded
+      if (kind === 'rent_roll') sourceSummary = parseSourceSummary(sheet.rows);
 
       const aiRead = plan ? applyReadingPlan(sheet.rows.slice(0, MAX_ROWS + 40), plan, kind) : null;
       if (aiRead && aiRead.dataRows.length && mappingScore(aiRead.mapping.cols, kind) >= mappingScore(hMapping.cols, kind)) {
@@ -257,12 +265,44 @@ export function routes(r: Router): void {
         if (f && mapping.cols[n] === undefined && !claimed.has(f)) { mapping.cols[n] = f; claimed.add(f); }
       }
     }
-    // block-format rent rolls: fold charge sub-rows into the unit above and
-    // drop total lines — nothing the file billed monthly is lost
+    // block-format rent rolls: split the roster by the sections the report
+    // declares (current leases · future applicants · the report's own summary
+    // trailer), fold charge sub-rows into the unit above, and drop total lines
+    // — nothing the file billed monthly is lost
     if (kind === 'rent_roll' && !isPdf) {
-      const h = harvestSubRowCharges(dataRows, mapping);
+      const scan = scanRosterSections(dataRows, mapping);
+      if (scan.sectioned && (scan.futureRows.length || scan.summaryRows)) {
+        dataRows = scan.rows;
+        mapping.excluded = {
+          futureApplicants: scan.futureUnits.length,
+          futureUnits: scan.futureUnits.slice(0, 40),
+          summaryRows: scan.summaryRows,
+        };
+        if (scan.futureUnits.length) {
+          (mapping.notes ||= []).push(
+            `Set aside ${scan.futureUnits.length} future resident/applicant row${scan.futureUnits.length === 1 ? '' : 's'} ` +
+            `(unit${scan.futureUnits.length === 1 ? '' : 's'} ${scan.futureUnits.slice(0, 8).join(', ')}${scan.futureUnits.length > 8 ? `, +${scan.futureUnits.length - 8} more` : ''}) — ` +
+            `those are leases that have not started, and their units are already in the roster above. Only current leases import.`,
+          );
+        }
+        if (scan.summaryRows) (mapping.notes ||= []).push(`Read the report's own summary block (${scan.summaryRows} rows) as totals to tie out against, not as units.`);
+      }
+      const h = harvestSubRowCharges(dataRows, mapping, headers, aiRentCode);
       dataRows = h.rows;
-      if (h.harvestedRows > 0) {
+      if (h.rentCode) {
+        mapping.rentCode = {
+          code: h.rentCode,
+          from: aiRentCode && aiRentCode === h.rentCode ? 'ai' : 'frequency',
+          extras: [...h.codes],
+        };
+      }
+      if (h.demotedRows > 0) {
+        (mapping.notes ||= []).push(
+          `${h.demotedRows} unit${h.demotedRows === 1 ? '' : 's'} bill a single non-rent charge (${[...h.codes].join(', ')}) rather than “${h.rentCode}” — ` +
+          `read as other monthly charges, not rent, so the split matches the report's charge-code summary.`,
+        );
+      }
+      if (h.harvestedRows > 0 || h.demotedRows > 0) {
         const extraIdx = headers.length;
         headers = [...headers, 'Other monthly charges'];
         mapping.cols[extraIdx] = 'extra_monthly';
@@ -273,8 +313,11 @@ export function routes(r: Router): void {
           return row;
         });
         const codeStr = [...h.codes].slice(0, 5).join(', ');
-        (mapping.notes ||= []).push(`Folded ${h.harvestedRows} recurring-charge sub-row${h.harvestedRows === 1 ? '' : 's'}${codeStr ? ` (${codeStr})` : ''} — $${(h.totalCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo — into an “Other monthly charges” column billed alongside rent.`);
+        if (h.harvestedRows > 0) {
+          (mapping.notes ||= []).push(`Folded ${h.harvestedRows} recurring-charge sub-row${h.harvestedRows === 1 ? '' : 's'}${codeStr ? ` (${codeStr})` : ''} — $${(h.totalCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}/mo — into an “Other monthly charges” column billed alongside rent.`);
+        }
       }
+      if (sourceSummary) mapping.source = sourceSummary;
     }
     if (!dataRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found in that file.', 'err');
 
@@ -457,13 +500,31 @@ function reconStrip(recon: ImportRecon, applied: boolean): Raw {
     `${money(recon.depositCents)} deposits held`,
     `${money(recon.balanceCents)} balances owed`,
     ...(recon.moveOuts ? [`${recon.moveOuts} move-out${recon.moveOuts === 1 ? '' : 's'}`] : []),
+    ...(recon.futureApplicants ? [`${recon.futureApplicants} future applicant${recon.futureApplicants === 1 ? '' : 's'} set aside`] : []),
   ];
+  const ties = recon.tieOuts || [];
+  const off = ties.filter((t) => !t.ok).length;
   return html`
     <div class="callout ${recon.columnWarnings.length ? 'bad' : 'info'}">
       <b>${applied ? 'What this file added up to:' : 'What this file adds up to:'}</b> ${bits.join(' · ')}.
-      ${applied
-        ? html`<span class="muted">These totals should match the summary block of the report that was uploaded.</span>`
-        : html`<span>Compare these to the summary (usually the last page) of the report you exported — <b>if a number is off, fix the mapping above before applying.</b></span>`}
+      ${ties.length
+        ? html`<span>${off
+            ? html`<b>${off} line${off === 1 ? '' : 's'} below do${off === 1 ? 'es' : ''} not match the report's own summary — fix the mapping before applying.</b>`
+            : html`Every line ties to the summary block of the uploaded report.`}</span>`
+        : applied
+          ? html`<span class="muted">These totals should match the summary block of the report that was uploaded.</span>`
+          : html`<span>Compare these to the summary (usually the last page) of the report you exported — <b>if a number is off, fix the mapping above before applying.</b></span>`}
+      ${when(ties.length, () => html`
+        <table class="tbl" style="margin:10px 0 0;max-width:560px">
+          <thead><tr><th>Line</th><th>Report says</th><th>Read as</th><th></th></tr></thead>
+          <tbody>${hjoin(ties.map((t) => html`
+            <tr>
+              <td>${t.label}</td>
+              <td class="num">${t.source}</td>
+              <td class="num">${t.computed}</td>
+              <td>${t.ok ? statusBadge('ok', 'ties') : statusBadge('error', 'off')}</td>
+            </tr>`), '')}</tbody>
+        </table>`)}
       ${when(recon.columnWarnings.length, () => html`<ul style="margin:8px 0 0;padding-left:18px">${hjoin(recon.columnWarnings.map((w) => html`<li>${w}</li>`), '')}</ul>`)}
     </div>`;
 }

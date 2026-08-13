@@ -5,10 +5,15 @@ import { id } from '../src/lib/ids.ts';
 import { nowIso } from '../src/lib/dates.ts';
 import { hashPassword, sysCtx } from '../src/lib/auth.ts';
 import { ensureCoa } from '../src/modules/m9_accounting/coa.ts';
-import { applyReadingPlan, type ReadingPlan } from '../src/modules/setup/ai_reader.ts';
+import { applyReadingPlan, renderSheetForAi, validatePlan, type ReadingPlan } from '../src/modules/setup/ai_reader.ts';
 import {
   validateRentRoll, applyRentRoll, validateResidents, applyResidents, type BatchRow,
 } from '../src/modules/setup/import_apply.ts';
+import {
+  autoMap, findHeaderRow, mergeStackedHeader, harvestSubRowCharges,
+  scanRosterSections, parseSourceSummary, detectDocumentProperty, type Mapping,
+} from '../src/modules/setup/mapping.ts';
+import { YARDI_BLOCK_ROLL } from './fixtures/yardi_block_roll.ts';
 
 /** Import integrity gate (2026-08-12) — the guardrails born from the first
  * real-data run: (1) the AI reading plan can no longer suppress the stacked-
@@ -199,4 +204,189 @@ test('a directory that matches the rent roll by name merges without tripping the
   const s = applyResidents(ctx, dir);
   assert.equal(s.contactUpdates, 12, 'all 12 merged as contact updates');
   assert.equal(s.residents, 0, 'nobody duplicated');
+});
+
+// ---------- 4 · the block-format Yardi rent roll, read end to end ----------
+
+const YARDI_ROWS = YARDI_BLOCK_ROLL;
+
+/** The upload path's spreadsheet transform, in the order routes.ts runs it. */
+function readYardi(rows: string[][]): { headers: string[]; dataRows: string[][]; mapping: Mapping; property: string } {
+  const kind = 'rent_roll' as const;
+  const headerIdx = findHeaderRow(rows, kind);
+  let headers = (rows[headerIdx] || []).map(String);
+  let dataRows = rows.slice(headerIdx + 1).filter((r) => r.some((c) => String(c).trim() !== ''));
+  let mapping = autoMap(headers, kind, dataRows.slice(0, 8));
+  const stacked = mergeStackedHeader(headers, rows[headerIdx + 1]);
+  const mapped = (m: Mapping): number => Object.values(m.cols).filter(Boolean).length;
+  if (stacked.merged) {
+    const merged = autoMap(stacked.headers, kind, dataRows.slice(1, 9));
+    if (mapped(merged) > mapped(mapping)) { headers = stacked.headers; dataRows = dataRows.slice(1); mapping = merged; }
+  }
+  const source = parseSourceSummary(rows);
+  const scan = scanRosterSections(dataRows, mapping);
+  if (scan.sectioned && (scan.futureRows.length || scan.summaryRows)) {
+    dataRows = scan.rows;
+    mapping.excluded = { futureApplicants: scan.futureUnits.length, futureUnits: scan.futureUnits, summaryRows: scan.summaryRows };
+  }
+  const h = harvestSubRowCharges(dataRows, mapping, headers);
+  dataRows = h.rows;
+  if (h.rentCode) mapping.rentCode = { code: h.rentCode, from: 'frequency', extras: [...h.codes] };
+  if (h.harvestedRows > 0 || h.demotedRows > 0) {
+    const extraIdx = headers.length;
+    headers = [...headers, 'Other monthly charges'];
+    mapping.cols[extraIdx] = 'extra_monthly';
+    dataRows = dataRows.map((r, i) => {
+      const e = h.extraByRow.get(i);
+      const row = Array.from({ length: extraIdx }, (_, ci) => String(r[ci] ?? ''));
+      row.push(e ? (e.cents / 100).toFixed(2) : '');
+      return row;
+    });
+  }
+  if (source) mapping.source = source;
+  return { headers, dataRows, mapping, property: detectDocumentProperty(rows, headerIdx) || '' };
+}
+
+test('yardi block roll: the header merges, the preset lands, and the property comes off the banner', () => {
+  const { headers, mapping, property } = readYardi(YARDI_ROWS);
+  assert.equal(property, 'Ridgeline Court at Fairview');
+  assert.deepEqual(headers.slice(0, 8), ['Unit', 'Unit Type', 'Unit Sq Ft', 'Resident', 'Name', 'Market Rent', 'Charge Code', 'Amount']);
+  assert.equal(mapping.preset, 'yardi');
+  const by = Object.fromEntries(Object.entries(mapping.cols).filter(([, f]) => f).map(([c, f]) => [f, Number(c)]));
+  assert.equal(by.unit, 0, 'unit column');
+  assert.equal(by.tenant, 4, 'Name is the household — NOT the "Resident" t-code column');
+  assert.equal(by.rent, 7, 'Amount beside the charge code is the rent');
+  assert.equal(by.deposit, 8, 'Resident Deposit, not Other Deposit');
+  assert.equal(by.sqft, 2, 'the stacked "Unit / Sq Ft" pair');
+  assert.equal(mapping.cols[3], undefined, 'the resident t-code column stays unmapped');
+});
+
+test('yardi block roll: roster sections split current leases from future applicants and the trailer', () => {
+  const { mapping, dataRows } = readYardi(YARDI_ROWS);
+  assert.equal(dataRows.length, 4, 'only the four current units survive');
+  assert.deepEqual(dataRows.map((r) => r[0]), ['201', '205', '245', '523']);
+  assert.equal(mapping.excluded?.futureApplicants, 2);
+  assert.deepEqual(mapping.excluded?.futureUnits, ['523', '601']);
+  assert.ok((mapping.excluded?.summaryRows ?? 0) >= 10, 'the report trailer is set aside, not read as units');
+});
+
+test('yardi block roll: a lone non-rent charge code is not rent', () => {
+  const { dataRows, mapping } = readYardi(YARDI_ROWS);
+  assert.equal(mapping.rentCode?.code, 'rntnt');
+  const rentCol = Number(Object.entries(mapping.cols).find(([, f]) => f === 'rent')![0]);
+  const extraCol = Number(Object.entries(mapping.cols).find(([, f]) => f === 'extra_monthly')![0]);
+  const unit245 = dataRows.find((r) => r[0] === '245')!;
+  assert.equal(unit245[rentCol], '0.00', 'the subsidy-coded amount must not stand in as rent');
+  assert.equal(unit245[extraCol], '1417.00', 'it is a recurring non-rent charge');
+  const unit205 = dataRows.find((r) => r[0] === '205')!;
+  assert.equal(unit205[rentCol], '348.00', 'the rent-coded amount stays the rent');
+  assert.equal(unit205[extraCol], '766.00', 'the subsidy sub-row folds into other charges');
+});
+
+test('yardi block roll: the report summary is parsed and every recon line ties to it', () => {
+  const ctx = sysCtx(orgId, '2026-08-11');
+  const { headers, dataRows, mapping, property } = readYardi(YARDI_ROWS);
+  const src = mapping.source!;
+  assert.equal(src.units, 4);
+  assert.equal(src.occupiedUnits, 3);
+  assert.equal(src.vacantUnits, 1);
+  assert.equal(src.futureUnits, 2);
+  assert.equal(src.marketRentCents, 548000);
+  assert.equal(src.leaseChargesCents, 402200);
+  assert.deepEqual(src.chargeCodes, { rntnt: 183900, rnsvchr: 218300 });
+
+  const batch = mkBatch({
+    new_property_name: property, as_of: '2026-08-11',
+    headers: js(headers), mapping: js(mapping), rows: js(dataRows),
+  });
+  const v = validateRentRoll(ctx, batch);
+  assert.equal(v.error, 0, `a clean report must review clean: ${v.rows.flatMap((r) => r.notes).join(' | ')}`);
+  assert.equal(v.recon!.units, 4);
+  assert.equal(v.recon!.occupied, 3);
+  assert.equal(v.recon!.rentCents, 183900, 'rent ties to the rntnt line of the charge-code summary');
+  assert.equal(v.recon!.extraMonthlyCents, 218300, 'other charges tie to rnsvchr');
+  assert.equal(v.recon!.futureApplicants, 2);
+  const ties = v.recon!.tieOuts!;
+  assert.ok(ties.length >= 8, 'the tie-out covers units, occupancy, rent, the split, deposits and balances');
+  assert.deepEqual(ties.filter((t) => !t.ok), [], 'every line ties to the report');
+  assert.deepEqual(v.recon!.columnWarnings, [], 'genuinely-$0 deposits and balances are not mis-mapping warnings');
+});
+
+test('yardi block roll: applying it bills rent and the subsidy as separate monthly charges', () => {
+  const ctx = sysCtx(orgId, '2026-08-11');
+  const { headers, dataRows, mapping } = readYardi(YARDI_ROWS);
+  const batch = mkBatch({
+    new_property_name: 'Ridgeline Apply Test', as_of: '2026-08-11',
+    headers: js(headers), mapping: js(mapping), rows: js(dataRows),
+  });
+  const s = applyRentRoll(ctx, batch);
+  assert.equal(s.units, 4);
+  assert.equal(s.leases, 3, 'the vacant unit gets no lease; the future applicants never reached apply');
+  const pid = q1<{ id: string }>('SELECT id FROM properties WHERE org_id=? AND name=?', orgId, 'Ridgeline Apply Test')!.id;
+  const sum = (kind: string): number => q1<{ t: number }>(
+    `SELECT COALESCE(SUM(lc.amount_cents),0) t FROM lease_charges lc JOIN leases l ON l.id=lc.lease_id WHERE l.property_id=? AND lc.kind=?`, pid, kind,
+  )!.t;
+  assert.equal(sum('rent'), 183900, 'rent posts the rntnt total');
+  assert.equal(sum('other'), 218300, 'the subsidy posts as its own recurring line, never merged into rent');
+  const u245 = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', pid, '245')!;
+  const lease245 = q1<{ id: string; rent_cents: number }>('SELECT id, rent_cents FROM leases WHERE unit_id=?', u245.id)!;
+  assert.equal(lease245.rent_cents, 0, 'a fully-subsidised unit carries no tenant rent');
+  const other245 = q1<{ amount_cents: number }>(`SELECT amount_cents FROM lease_charges WHERE lease_id=? AND kind='other'`, lease245.id)!;
+  assert.equal(other245.amount_cents, 141700, 'it still bills $1,417/mo — the money is not lost');
+});
+
+test('recon warns loudly when a mapping does not tie to the report summary', () => {
+  const ctx = sysCtx(orgId, '2026-08-11');
+  const { headers, dataRows, mapping, property } = readYardi(YARDI_ROWS);
+  // the operator re-maps rent onto the market-rent column, as on the live run
+  const rentCol = Number(Object.entries(mapping.cols).find(([, f]) => f === 'rent')![0]);
+  const broken = { ...mapping, cols: { ...mapping.cols, [rentCol]: '', 5: 'rent' } };
+  const batch = mkBatch({
+    new_property_name: property, as_of: '2026-08-11',
+    headers: js(headers), mapping: js(broken), rows: js(dataRows),
+  });
+  const v = validateRentRoll(ctx, batch);
+  const off = v.recon!.tieOuts!.filter((t) => !t.ok);
+  assert.ok(off.length, 'a mis-mapped rent column has to break a tie-out line');
+  assert.ok(off.some((t) => /^Rent/.test(t.label)), 'and it is the rent line that breaks');
+  assert.ok(v.recon!.columnWarnings.some((w) => /do(es)? not tie to the summary block/.test(w)), 'and it is said out loud');
+});
+
+// ---------- 5 · what the AI is shown, and what it is not trusted with ----------
+
+test('the sheet the AI reads keeps the headings buried in the middle of a long file', () => {
+  const rows: string[][] = [['Unit', 'Name', 'Amount']];
+  for (let i = 0; i < 200; i++) rows.push([`${100 + i}`, `Resident ${i}`, '1450']);
+  rows.splice(150, 0, ['Future Residents/Applicants', '', '']);
+  for (let i = 0; i < 40; i++) rows.push([`${400 + i}`, `Applicant ${i}`, '0']);
+  const rendered = renderSheetForAi(rows);
+  assert.ok(rendered.includes('Future Residents/Applicants'), 'a section heading past the head window must still reach the model');
+  assert.ok(/\d+ more data rows omitted/.test(rendered), 'the uniform runs between headings still collapse');
+  assert.ok(rendered.split('\n').length < rows.length, 'and the rendering stays smaller than the sheet');
+});
+
+test('a reading plan may not turn a roster heading into a property', () => {
+  const plan = validatePlan({
+    header_row: 0,
+    cols: { 0: 'unit', 1: 'tenant', 2: 'rent' },
+    sections: [{ row: 3, property: 'Future Residents/Applicants' }, { row: 6, property: 'Maple Court' }],
+    skip_rows: [],
+  }, 10, 3, 'rent_roll')!;
+  assert.deepEqual(plan.sections, [{ row: 6, property: 'Maple Court' }], 'only a real building stays a section');
+  assert.ok(plan.skip_rows.includes(3), 'the roster heading is skipped instead');
+});
+
+test('a reading plan may name the rent charge code, but only one the file contains', () => {
+  const plan = validatePlan({ header_row: 0, cols: { 0: 'unit', 3: 'rent' }, rent_code: 'rntnt' }, 10, 5, 'rent_roll')!;
+  assert.equal(plan.rent_code, 'rntnt');
+  const mapping = { cols: { 0: 'unit', 2: 'rent' } as Record<number, string>, preset: null, aiAssisted: [] };
+  const rows = [
+    ['211', 'Allan Rodriguez', '1413', 'rntnt'],
+    ['', '', '60', 'tsprkg'],
+    ['', '', '1473', 'Total'],
+  ];
+  const invented = harvestSubRowCharges(rows, mapping as Mapping, ['Unit', 'Tenant', 'Amount', 'Charge Code'], 'notacode');
+  assert.equal(invented.rentCode, 'rntnt', 'a code the file does not contain is ignored, not obeyed');
+  const honoured = harvestSubRowCharges(rows, mapping as Mapping, ['Unit', 'Tenant', 'Amount', 'Charge Code'], 'tsprkg');
+  assert.equal(honoured.rentCode, 'tsprkg', 'a code the file does contain wins over frequency');
 });

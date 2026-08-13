@@ -1106,3 +1106,92 @@ this branch now carries it — the two tests pass. This build's decisions are nu
 re-run before investigating" — is what let a real defect in the books sit behind the word "flake", and
 re-running is exactly the instinct that kept it hidden. The reliable technique when a suite reddens is
 stash-and-compare against a clean tree, which localises blame without pronouncing the failure harmless.
+
+## 2026-08-12 — The rent roll reads itself: charge-code semantics, roster sections, and a tie-out to the report's own summary
+
+A second real Yardi "Rent Roll with Lease Charges" (542 rows, 152 units, Livingston Place at Southern
+Avenue) went through the Migration Center. The monthly total tied. Almost nothing else about the read
+was right, and none of it was visible on the review screen.
+
+**What the file did to us.** 32 error rows on a clean report; two mis-mapping warnings that were both
+wrong; and a rent/other split that was off by $1,417 while the total it rolled up to was exact.
+
+**Rent is the rent CODE's amount — including when there is only one charge.** `harvestSubRowCharges`
+learned block-and-code awareness in the last build, but blocks only form for units that HAVE charge
+sub-rows. Unit 245 bills a single charge and its code is `rnsvchr` (housing subsidy), not `rntnt`
+(tenant rent) — with no sub-row there was no block, so $1,417 of subsidy rode through as rent. Pass 3
+now sweeps every unit row: a lone charge whose code is not the rent code moves to other-monthly and
+the rent cell becomes an explicit `0.00` (not blank — blank falls back to market rent and would have
+double-counted it). The code column is also found by name now (`Charge Code`) rather than only by
+voting on sub-rows, so a file where every unit has exactly one charge can still be read. Rent-code
+election counts UNITS, so single-charge units get a vote. (#52)
+
+**A lease can bill $0 rent and still bill real money.** Demoting unit 245's charge exposed the
+validator's `effRent <= 0 → error` rule, which would have dropped a fully-subsidised household
+entirely. It now fails only when nothing at all is billed, and warns — naming the amount — when the
+rent is zero but other recurring charges are not.
+
+**Roster headings are semantics, not decoration.** `scanRosterSections` reads the headings the report
+puts in the unit column and splits the file three ways: current leases (the import's subject), future
+residents/applicants (signed but not started — their units are already listed above, which is why 16
+of them produced 16 "duplicate unit" plus 16 "needs a rent amount" errors), and the report's own
+summary trailer. Future applicants become a counted, named line on the recon strip instead of 32
+errors. A heading may never become a property: `validatePlan` demotes any AI-proposed section whose
+name is roster vocabulary into a skip row, for the same reason the stacked-header merge is
+unconditional — deterministic vocabulary beats a model's row label. (#53)
+
+**The strip now ties to the report's own summary block, which is the doctrine item that was still
+unimplemented.** `parseSourceSummary` reads the "Summary Groups" table and the "Summary of Charges by
+Charge Code" table off the raw sheet before any reader touches it, and the review screen renders a
+report-says / read-as table, line by line. On the Livingston file all nine lines tie exactly: 152
+units · 124 occupied · 16 future · $207,488.00 market · $177,893.00 monthly · $166,337.00 rntnt ·
+$11,556.00 rnsvchr · $0.00 deposits · $0.00 balances. The $1,417 split error is exactly the kind of
+defect this catches that a total never would — rent and other-monthly post to different accounts, so
+a total that ties over a split that doesn't is still wrong money in the books. (#58)
+
+**Two warnings that were crying wolf.** Deposits and balances are genuinely $0 across this portfolio,
+and the all-zero-column guard called both mis-mappings. It now stands down when the report's own
+summary reports zero — a false alarm on a correct import teaches operators to click past the alarm
+that matters.
+
+**The AI can now see the whole document, and is asked something only it can answer.** `renderSheetForAi`
+showed the first 140 rows and the last 12; on a 542-row file that hid rows 140–529 — including the
+"Future Residents/Applicants" heading at row 474. It now keeps every structural row (headings and
+sub-headers: short word-ish cells, no money) with its neighbours and collapses only the uniform runs
+between them: 542 rows render in 162 lines, ~3.2k tokens, with every heading present. And the plan
+gained `rent_code`: which charge code means rent is a semantic question — `rntnt` is tenant rent,
+`rnsvchr` a subsidy, `tsprkg` parking — that no amount of header-word matching can answer. The model
+proposes; the harvest uses the code only if the file actually contains it, and computes the split
+itself either way.
+
+**Result on the real file:** 0 errors (was 32), 0 false warnings (was 2), all nine tie-out lines
+exact, and the applied books carry $166,337.00 of rent and $11,556.00 of other recurring charges
+against a report that says exactly that.
+
+**Decisions:** #64, #65, #66.
+
+**Verified:** tsc strict clean · unit suite 360/360 (9 new in `tests/import_recon.test.ts`) · scoped
+e2e batch for import (setup · clientready · workingmodel · goldenpath · smoke) 27/27, including a new
+e2e that uploads a Yardi block-format xlsx through the real route and asserts the review screen's
+tie-out.
+
+**On the accounting red seen during this build, corrected:** `AP void/reissue` and `bank feed
+reconcile` reddened on 3 of 5 full-suite runs here. Causation was checked rather than assumed — those
+tests run FIRST alphabetically, in their own child process against a freshly deleted database, so
+nothing in this diff can reach them, and the suite was run four more times on a stashed tree where it
+also reddened. That established it was not caused here, and this entry originally called it the
+documented flake. It is not: the parallel build on `claude/getting-familiar-ud01td` root-caused it the
+same afternoon as a **money bug** — `voidApPayment` selected the entries to reverse against a
+millisecond race, so a lost race reversed nothing and reissued anyway, and the books showed the cash
+leaving twice. The $500 cash discrepancy observed here is the same defect, and this build's
+observation corroborates rather than excuses it. Recorded so the engineering memory does not keep a
+"known flake" that has been disproved.
+
+**Numbering:** this build first claimed #52–#58 against the then-current tail of `main` (#49). The
+CI/AP build was already in flight and holds #52–#53, so these entries were renumbered — and renumbered again as #57, #58–#63 landed, to #64–#66
+before merge — the parallel-session rule working as written.
+
+**Fixture note:** the shape lives in `tests/fixtures/yardi_block_roll.ts` — structurally identical to
+the real report (banner, stacked header, both roster sections, per-unit charge blocks, the lone
+subsidy-coded unit, both summary tables) with synthetic names and numbers. The real file carries
+resident names and is not in the repo.

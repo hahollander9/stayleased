@@ -147,6 +147,12 @@ export interface Mapping {
   reader?: 'ai' | 'heuristic';
   /** human-readable notes from the reader (sections found, rows skipped) */
   notes?: string[];
+  /** what the report says about itself (its own summary block), for tie-out */
+  source?: SourceSummary;
+  /** rows the reader set aside before review, by reason */
+  excluded?: { futureApplicants: number; futureUnits: string[]; summaryRows: number };
+  /** the charge code the reader concluded is rent, and where that came from */
+  rentCode?: { code: string; from: 'ai' | 'frequency'; extras: string[] };
 }
 
 /** Score a header against a field. exact synonym 3 · contains 2 · fuzzy 1. */
@@ -281,6 +287,10 @@ export interface SubRowHarvest {
   droppedTotals: number;
   totalCents: number;
   codes: Set<string>;
+  /** unit rows whose ONE charge carried a non-rent code and moved to extras */
+  demotedRows: number;
+  /** the code concluded to be rent ('' when the file has no charge codes) */
+  rentCode: string;
 }
 
 /** Yardi "Rent Roll with Lease Charges" prints each unit as a block: a unit
@@ -290,8 +300,8 @@ export interface SubRowHarvest {
  * a sub-row). So the harvest is block- and code-aware: gather each block's
  * charges, find the portfolio's rent code (the code most units share, ties
  * broken toward rnt*/
-export function harvestSubRowCharges(rows: string[][], mapping: Mapping): SubRowHarvest {
-  const out: SubRowHarvest = { rows: [], extraByRow: new Map(), harvestedRows: 0, droppedTotals: 0, totalCents: 0, codes: new Set() };
+export function harvestSubRowCharges(rows: string[][], mapping: Mapping, headers?: string[], rentCodeHint?: string): SubRowHarvest {
+  const out: SubRowHarvest = { rows: [], extraByRow: new Map(), harvestedRows: 0, droppedTotals: 0, totalCents: 0, codes: new Set(), demotedRows: 0, rentCode: '' };
   let unitCol = -1;
   let rentCol = -1;
   let tenantCol = -1;
@@ -332,19 +342,25 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping): SubRow
     out.rows.push(row); // unknown blank-unit row: keep — the validator reports it
     lastUnitIdx = -1; // …and close the attribution window (summary blocks, stray headers)
   }
-  if (!pending.length) return out;
-
-  // ---- code column: the unmapped column charge sub-rows consistently fill
-  const codeColVotes = new Map<number, number>();
-  for (const r of chargeRowCells) {
-    r.forEach((c, ci) => {
-      const v = String(c ?? '').trim();
-      if (!v || ci === rentCol || mappedCols.has(ci)) return;
-      if (/^[a-zA-Z][a-zA-Z0-9]{1,11}$/.test(v) && moneyToCents(v) === null) codeColVotes.set(ci, (codeColVotes.get(ci) || 0) + 1);
-    });
+  // ---- code column: named outright by a "Charge Code" header when the file
+  //      has one (deterministic, and it survives a file whose every unit
+  //      carries exactly one charge — where there are no sub-rows to vote
+  //      with); otherwise the unmapped column charge sub-rows consistently fill
+  const named = headers ? headers.findIndex((h) => norm(String(h ?? '')) === 'charge code') : -1;
+  let codeCol = named >= 0 && named !== rentCol && !mappedCols.has(named) ? named : -1;
+  if (codeCol < 0) {
+    const codeColVotes = new Map<number, number>();
+    for (const r of chargeRowCells) {
+      r.forEach((c, ci) => {
+        const v = String(c ?? '').trim();
+        if (!v || ci === rentCol || mappedCols.has(ci)) return;
+        if (/^[a-zA-Z][a-zA-Z0-9]{1,11}$/.test(v) && moneyToCents(v) === null) codeColVotes.set(ci, (codeColVotes.get(ci) || 0) + 1);
+      });
+    }
+    codeCol = [...codeColVotes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1;
   }
-  const codeCol = [...codeColVotes.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] ?? -1;
   const codeAt = (row: string[]): string => (codeCol >= 0 ? String(row[codeCol] ?? '').trim() : '');
+  if (!pending.length && codeCol < 0) return out;
 
   // build blocks: the unit row's own amount counts as a charge when a code
   // column exists (Yardi puts SOME charge — not always rent — on the unit row)
@@ -359,13 +375,26 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping): SubRow
     blocks.set(idx, list);
   }
 
-  // ---- the rent code: shared by the most blocks; ties break toward rnt*/rent*
-  const codeBlocks = new Map<string, number>();
-  for (const list of blocks.values()) {
-    for (const code of new Set(list.map((c) => c.code).filter(Boolean))) codeBlocks.set(code, (codeBlocks.get(code) || 0) + 1);
-  }
-  const rentCode = [...codeBlocks.entries()]
+  // ---- the rent code: carried by the most UNITS — single-charge unit rows
+  //      vote alongside multi-charge blocks, so a portfolio where most units
+  //      have exactly one charge still names its rent code. Ties break toward
+  //      rnt*/rent*. An AI-read rent code wins outright, but only if the file
+  //      actually contains it (the model never gets to invent a code).
+  const codeUnits = new Map<string, number>();
+  out.rows.forEach((row, idx) => {
+    const codes = new Set<string>();
+    const list = blocks.get(idx);
+    if (list) for (const c of list) { if (c.code) codes.add(c.code); }
+    else {
+      const own = codeAt(row);
+      if (own && (moneyToCents(String(row[rentCol] ?? '')) ?? 0) > 0) codes.add(own);
+    }
+    for (const c of codes) codeUnits.set(c, (codeUnits.get(c) || 0) + 1);
+  });
+  const byFrequency = [...codeUnits.entries()]
     .sort((a, b) => b[1] - a[1] || Number(/^re?nt/i.test(b[0])) - Number(/^re?nt/i.test(a[0])) || a[0].localeCompare(b[0]))[0]?.[0] ?? '';
+  const rentCode = rentCodeHint && codeUnits.has(rentCodeHint) ? rentCodeHint : byFrequency;
+  out.rentCode = rentCode;
 
   // ---- pass 2: per block, rent = the rent-code charge; everything else = extras
   for (const [idx, list] of blocks) {
@@ -386,7 +415,210 @@ export function harvestSubRowCharges(rows: string[][], mapping: Mapping): SubRow
     }
     out.harvestedRows += list.filter((c) => !c.fromUnitRow).length;
   }
+
+  // ---- pass 3: a unit row whose ONLY charge carries a non-rent code is not
+  // rent either. Blocks catch this for multi-charge units; a unit billed a
+  // single non-rent charge has no sub-row to form a block, so without this it
+  // rides through as rent. (Livingston Place, 2026-08-12: unit 245's one
+  // charge was the subsidy code `rnsvchr` $1,417 — the monthly total still
+  // tied to the report, but the rent/extras SPLIT was $1,417 off the report's
+  // own charge-code summary, which is the number the books are kept in.)
+  if (rentCode) {
+    out.rows.forEach((row, idx) => {
+      if (blocks.has(idx)) return;
+      if (!String(row[unitCol] ?? '').trim()) return; // unit rows only
+      const code = codeAt(row);
+      if (!code || code === rentCode) return;
+      const cents = moneyToCents(String(row[rentCol] ?? ''));
+      if (cents === null || cents <= 0) return;
+      const demoted = [...row];
+      demoted[rentCol] = '0.00'; // explicit zero: never fall back to market rent
+      out.rows[idx] = demoted;
+      out.extraByRow.set(idx, { cents, codes: [code] });
+      out.totalCents += cents;
+      out.codes.add(code);
+      out.demotedRows++;
+    });
+  }
   return out;
+}
+
+// ---------- roster sections (block-format rent rolls) ----------
+
+/** Yardi-style rent rolls group the roster under headings that sit in the unit
+ * column: "Current/Notice/Vacant Residents", then "Future Residents/
+ * Applicants", then a "Summary Groups" / "Summary of Charges" trailer. Those
+ * headings are semantics, not decoration:
+ *
+ * - the CURRENT block is the import's subject — leases that exist today;
+ * - the FUTURE block is signed-but-not-started applicants. Their units are
+ *   already listed above (vacant or on notice), so importing them as current
+ *   leases produced 16 "duplicate unit" + 16 "needs a rent amount" errors on
+ *   the 2026-08-12 Livingston file — a clean report reading as a broken one;
+ * - the TRAILER is the report's own arithmetic, not units at all.
+ *
+ * Splitting them out is what lets the review screen show a real file with no
+ * errors, and what lets the recon strip report future applicants as their own
+ * line instead of burying them in a skip count. */
+export interface RosterScan {
+  /** current/notice/vacant rows — what the import is about */
+  rows: string[][];
+  /** rows under a future-residents heading (pending leases, not current ones) */
+  futureRows: string[][];
+  /** unit numbers those rows name, for the operator-facing note */
+  futureUnits: string[];
+  /** rows belonging to the report's own summary trailer */
+  summaryRows: number;
+  /** true when the file actually declared these sections */
+  sectioned: boolean;
+}
+
+type RosterKind = 'current' | 'future' | 'trailer';
+
+const ROSTER_HEADINGS: [RegExp, RosterKind][] = [
+  [/^future\s+(residents?|applicants?)|^applicants?\b|^pending\s+(residents?|leases?)/i, 'future'],
+  [/^summary\b/i, 'trailer'],
+  [/^(current|occupied|notice|vacant)\b/i, 'current'],
+];
+
+/** Classify the rows of a block-format rent roll by the headings it declares.
+ * A heading is a row that names a section and carries no money — the money
+ * guard is what keeps the trailer's own "Current/Notice/Vacant Residents"
+ * TOTALS line (same words, real numbers) from reading as a second heading. */
+export function scanRosterSections(rows: string[][], mapping: Mapping): RosterScan {
+  const out: RosterScan = { rows: [], futureRows: [], futureUnits: [], summaryRows: 0, sectioned: false };
+  let unitCol = -1;
+  for (const [c, f] of Object.entries(mapping.cols)) if (f === 'unit') unitCol = Number(c);
+  if (unitCol < 0) { out.rows = rows; return out; }
+
+  let state: RosterKind = 'current';
+  for (const row of rows) {
+    const label = String(row[unitCol] ?? '').trim();
+    const hasMoney = row.some((c) => (moneyToCents(String(c ?? '')) ?? 0) > 0);
+    const heading = label && !/\d/.test(label) && !hasMoney
+      ? ROSTER_HEADINGS.find(([re]) => re.test(label))?.[1]
+      : undefined;
+    if (heading) {
+      // the trailer is terminal — everything past it is the report's own math
+      state = state === 'trailer' ? 'trailer' : heading;
+      out.sectioned = true;
+      if (state === 'current') continue; // heading row itself is never data
+      out.summaryRows += state === 'trailer' ? 1 : 0;
+      continue;
+    }
+    if (state === 'trailer') { out.summaryRows++; continue; }
+    if (state === 'future') {
+      out.futureRows.push(row);
+      if (label) out.futureUnits.push(label);
+      continue;
+    }
+    out.rows.push(row);
+  }
+  if (!out.sectioned) { out.rows = rows; out.futureRows = []; out.futureUnits = []; out.summaryRows = 0; }
+  return out;
+}
+
+// ---------- the report's own summary block ----------
+
+/** What the report says about itself. The reconciliation strip ties the
+ * computed numbers to THESE, so a mis-read column is caught by the document
+ * rather than by the operator's memory of what Yardi printed. */
+export interface SourceSummary {
+  units: number | null;
+  occupiedUnits: number | null;
+  vacantUnits: number | null;
+  futureUnits: number | null;
+  marketRentCents: number | null;
+  leaseChargesCents: number | null;
+  depositCents: number | null;
+  balanceCents: number | null;
+  /** charge code → monthly total, from a "Summary of Charges by Charge Code" block */
+  chargeCodes: Record<string, number>;
+}
+
+function firstCell(row: string[]): string {
+  return String(row.find((c) => String(c ?? '').trim()) ?? '').trim();
+}
+
+/** Read the summary block a rent-roll export prints at the end. Returns null
+ * when the file has none — plenty of hand-kept sheets don't, and their absence
+ * is not an error, only a missing cross-check. */
+export function parseSourceSummary(rows: string[][]): SourceSummary | null {
+  const out: SourceSummary = {
+    units: null, occupiedUnits: null, vacantUnits: null, futureUnits: null,
+    marketRentCents: null, leaseChargesCents: null, depositCents: null, balanceCents: null, chargeCodes: {},
+  };
+  let found = false;
+
+  // ---- "Summary Groups": a label column plus a (usually stacked) mini-header
+  for (let i = 0; i < rows.length; i++) {
+    if (!/^summary\s+group/i.test(firstCell(rows[i] || []))) continue;
+    const merged = mergeStackedHeader((rows[i] || []).map((c) => String(c ?? '')), rows[i + 1]);
+    const cols = new Map<string, number>();
+    merged.headers.forEach((h, ci) => {
+      const n = norm(h);
+      if (n && !/^summary group/.test(n) && !cols.has(n)) cols.set(n, ci);
+    });
+    const cell = (row: string[], ...keys: string[]): string => {
+      for (const k of keys) {
+        const ci = cols.get(k);
+        const v = ci === undefined ? '' : String(row[ci] ?? '').trim();
+        if (v) return v;
+      }
+      return '';
+    };
+    const count = (row: string[]): number | null => {
+      const v = cell(row, 'of units', 'units', 'unit count').replace(/[^0-9]/g, '');
+      return v ? parseInt(v, 10) : null;
+    };
+    for (let r = i + (merged.merged ? 2 : 1); r < Math.min(rows.length, i + 16); r++) {
+      const row = rows[r] || [];
+      const label = norm(firstCell(row));
+      if (!label) continue;
+      if (/^summary of charges/.test(label)) break;
+      const units = count(row);
+      const market = moneyToCents(cell(row, 'market rent', 'market'));
+      const charges = moneyToCents(cell(row, 'lease charges', 'charges'));
+      const deposit = moneyToCents(cell(row, 'security deposit', 'deposit'));
+      const other = moneyToCents(cell(row, 'other deposits', 'other deposit'));
+      const balance = moneyToCents(cell(row, 'balance'));
+      if (units === null && market === null && charges === null) continue;
+      found = true;
+      if (/^total vacant/.test(label)) { out.vacantUnits = units; continue; }
+      if (/^occupied units?$/.test(label)) { out.occupiedUnits = units; continue; }
+      if (/^total non rev/.test(label)) continue;
+      if (/^future/.test(label)) { out.futureUnits = units; continue; }
+      // the roster line and the grand total carry the money; last one wins,
+      // and "Totals:" is printed last
+      if (units !== null) out.units = units;
+      if (market !== null) out.marketRentCents = market;
+      if (charges !== null) out.leaseChargesCents = charges;
+      if (deposit !== null || other !== null) out.depositCents = (deposit ?? 0) + (other ?? 0);
+      if (balance !== null) out.balanceCents = balance;
+    }
+    break;
+  }
+
+  // ---- "Summary of Charges by Charge Code": code → monthly total
+  for (let i = 0; i < rows.length; i++) {
+    const head = rows[i] || [];
+    if (norm(firstCell(head)) !== 'charge code') continue;
+    const amtCol = head.findIndex((h) => norm(String(h ?? '')) === 'amount');
+    if (amtCol < 0) continue;
+    for (let r = i + 1; r < rows.length; r++) {
+      const row = rows[r] || [];
+      const code = firstCell(row);
+      if (!code) continue;
+      if (/^totals?:?$/i.test(code)) break;
+      const cents = moneyToCents(String(row[amtCol] ?? ''));
+      if (cents === null) break;
+      out.chargeCodes[code] = (out.chargeCodes[code] || 0) + cents;
+      found = true;
+    }
+    break;
+  }
+
+  return found ? out : null;
 }
 
 /** Which required/important fields are still unmapped (for warnings + AI assist). */

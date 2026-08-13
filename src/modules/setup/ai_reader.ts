@@ -23,6 +23,12 @@ export interface ReadingPlan {
   sections: { row: number; property: string }[]; // property section headers
   /** the property the whole document is about, when its title names one */
   document_property?: string;
+  /** in a block-format roll with a charge-code column, which code IS the rent.
+   * The model reads this semantically — "rntnt" is the tenant's rent,
+   * "rnsvchr" is a housing subsidy, "tsprkg" is parking — where header-word
+   * matching has nothing to match on. Deterministic code still verifies the
+   * code exists in the file before using it, and still computes the split. */
+  rent_code?: string;
 }
 
 export interface ReadResult {
@@ -39,6 +45,22 @@ const RENDER_TAIL_ROWS = 12;
 const RENDER_MAX_COLS = 40;
 const CELL_CLIP = 28;
 
+/** A row worth showing the model even when it falls in the elided middle:
+ * anything that looks like a heading or a subtotal — a short run of words with
+ * no money in it. Those rows are exactly where a document changes meaning
+ * ("Future Residents/Applicants" at row 474 of a 542-row file), and a
+ * head+tail window silently hides them: the model plans a read of a document
+ * whose middle it never saw, and then its plan is wrong in the one place
+ * accuracy costs money. */
+function isStructuralRow(row: string[]): boolean {
+  const filled = row.map((c) => String(c ?? '').trim()).filter(Boolean);
+  if (!filled.length || filled.length > 14) return false;
+  // every filled cell is a short word-ish label and none is a number: that is
+  // a heading or a sub-header, never a unit of data (a rent-roll data row
+  // always carries an amount, and a vacant one carries a zero)
+  return filled.every((c) => c.length <= 48 && /[a-zA-Z]/.test(c) && !/^\$?[\d,]+\.?\d*$/.test(c));
+}
+
 export function renderSheetForAi(rows: string[][]): string {
   const clip = (c: string): string => {
     const s = String(c ?? '').replace(/[\t\n\r]+/g, ' ').trim();
@@ -48,9 +70,23 @@ export function renderSheetForAi(rows: string[][]): string {
   if (rows.length <= RENDER_HEAD_ROWS + RENDER_TAIL_ROWS) {
     return rows.map(line).join('\n');
   }
-  const head = rows.slice(0, RENDER_HEAD_ROWS).map(line);
-  const tail = rows.slice(rows.length - RENDER_TAIL_ROWS).map((r, k) => line(r, rows.length - RENDER_TAIL_ROWS + k));
-  return [...head, `… (${rows.length - RENDER_HEAD_ROWS - RENDER_TAIL_ROWS} more data rows omitted; same shape) …`, ...tail].join('\n');
+  const headEnd = RENDER_HEAD_ROWS;
+  const tailStart = rows.length - RENDER_TAIL_ROWS;
+  const out: string[] = rows.slice(0, headEnd).map(line);
+  // walk the middle, keeping every structural row (with one row of context on
+  // each side) and collapsing the uniform data runs between them
+  let elided = 0;
+  const flush = (): void => {
+    if (elided) out.push(`… (${elided} more data rows omitted; same shape as above) …`);
+    elided = 0;
+  };
+  for (let i = headEnd; i < tailStart; i++) {
+    const near = isStructuralRow(rows[i]!) || isStructuralRow(rows[i - 1] || []) || isStructuralRow(rows[i + 1] || []);
+    if (near) { flush(); out.push(line(rows[i]!, i)); } else elided++;
+  }
+  flush();
+  out.push(...rows.slice(tailStart).map((r, k) => line(r, tailStart + k)));
+  return out.join('\n');
 }
 
 // ---------- plan validation (never trust model output blindly) ----------
@@ -88,13 +124,33 @@ export function validatePlan(raw: unknown, rowCount: number, colCount: number, k
       if (!s || typeof s !== 'object') continue;
       const row = (s as any).row;
       const property = String((s as any).property || '').trim();
-      if (inRow(row) && property && row !== header) sections.push({ row, property: property.slice(0, 80) });
+      if (!inRow(row) || !property || row === header) continue;
+      // A ROSTER heading is not a property. "Current/Notice/Vacant Residents"
+      // and "Future Residents/Applicants" head sections of ONE property's rent
+      // roll; letting either through as a section name would inject a synthetic
+      // Property column and create a property literally named after the
+      // heading. Deterministic vocabulary beats a model's row label here, for
+      // the same reason the stacked-header merge is unconditional.
+      if (ROSTER_LABEL.test(property)) { skip.push(row); continue; }
+      sections.push({ row, property: property.slice(0, 80) });
     }
   }
   sections.sort((a, b) => a.row - b.row);
   const docProp = typeof p.document_property === 'string' ? p.document_property.trim().slice(0, 80) : '';
-  return { header_row: header, cols, skip_rows: skip.filter((r) => r !== header), sections, ...(docProp ? { document_property: docProp } : {}) };
+  const rentCode = typeof p.rent_code === 'string' ? p.rent_code.trim().slice(0, 24) : '';
+  return {
+    header_row: header,
+    cols,
+    skip_rows: [...new Set(skip)].filter((r) => r !== header),
+    sections,
+    ...(docProp ? { document_property: docProp } : {}),
+    ...(rentCode ? { rent_code: rentCode } : {}),
+  };
 }
+
+/** Section headings that describe a slice of ONE property's roster (or the
+ * report's own arithmetic) rather than naming a building. */
+const ROSTER_LABEL = /^\s*(current|future|occupied|vacant|notice|pending|applicants?|summary|totals?|non\s*rev)\b|residents?\s*\/\s*applicants?|^\s*(sub)?total/i;
 
 /** Which of the fields that matter most did a mapping find? Used to pick
  * between the AI plan and the heuristic when both produce something. */
@@ -190,14 +246,15 @@ function fieldList(kind: ImportKind): string {
 }
 
 const PLAN_SYSTEM = `You analyze property-management spreadsheet exports (rent rolls, vendor lists, balance reports). Given a numbered grid, reply with ONLY JSON:
-{"header_row": <int, -1 if none>, "cols": {"<colIndex>": "<fieldKey>"}, "skip_rows": [<ints>], "sections": [{"row": <int>, "property": "<name>"}], "document_property": "<name or empty>"}
+{"header_row": <int, -1 if none>, "cols": {"<colIndex>": "<fieldKey>"}, "skip_rows": [<ints>], "sections": [{"row": <int>, "property": "<name>"}], "document_property": "<name or empty>", "rent_code": "<code or empty>"}
 Rules:
 - header_row: the row containing column titles. When titles span two stacked rows (sub-labels like "Sq Ft" / "Deposit" directly under the titles), header_row is the FIRST of them.
-- cols: map ONLY columns that clearly match a canonical field. Never guess.
+- cols: map ONLY columns that clearly match a canonical field. Judge by what the VALUES are, not only by what the title says: a "Resident" column holding codes like "t0002302" is not the tenant name, and the column holding "Amount" next to a charge code is the rent.
 - skip_rows: report titles, blank spacers, TOTAL/SUBTOTAL/summary rows, footers — anything that is not one unit/record of data.
 - Rows that continue the unit above with an additional recurring charge line (blank unit cell, a short charge code plus an amount — parking, pet, storage) ARE data rows: do NOT list them in skip_rows.
-- sections: rows that label a property/building whose name applies to the data rows BELOW them (common in multi-property rent rolls). Do not list them in skip_rows too.
+- sections: rows that label a PROPERTY/BUILDING whose name applies to the data rows BELOW them (common in multi-property rent rolls). A heading that slices ONE property's roster — "Current/Notice/Vacant Residents", "Future Residents/Applicants", "Summary Groups" — is NOT a property: put those in skip_rows instead. Never list a row in both.
 - document_property: when the title banner names the ONE property the whole document covers ("Station U & O (1022)"), its name without any trailing code; empty when the file spans several properties or no name appears.
+- rent_code: when the file has a charge-code column, the code that means base rent — read the codes' meaning, e.g. "rntnt" (tenant rent) is rent while "rnsvchr" (housing subsidy/voucher), "tsprkg" (parking), "petfee" are not. Empty when the file has no charge codes or none of them is rent.
 - Everything not listed is treated as a data row.`;
 
 /** Ask the model to read the whole sheet. Returns null when the AI is off,
