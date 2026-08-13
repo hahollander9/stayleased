@@ -911,3 +911,56 @@ suite is real.
 
 **Verified:** tsc strict clean · unit suite · full e2e (all 31 files) · the two new tests red against
 the old query, green against the new one.
+
+
+## 2026-08-13 — The reduced-motion promise was never kept, and the test browser never asked
+
+CI's e2e job hit its 40-minute cap on the second run. It was not hung — the log showed test 137 of
+175, working — and inside it one real failure: `reports.test.ts:43`, `page.click` timing out after
+30s waiting for an element to be "visible, enabled and **stable**", on a table Playwright said
+"resolved to 362 elements".
+
+**Stable is the word that matters.** Playwright refuses to click something still moving.
+`src/ui/theme.css` gives `.content` a `pagein` entrance on **every page in the app**, and the
+`@media (prefers-reduced-motion: reduce)` block below it never mentioned `.content`. So the one
+element wrapping every screen animated for everyone, including the users who had asked their
+operating system for stillness — a plain violation of the motion doctrine's "reduced-motion =
+visible + still", live on the site, missed by 31 e2e files.
+
+Missed because **the test browser never asked.** Playwright launches with no motion preference, so
+every suite exercised the animated path only; the reduced-motion half of the doctrine had no test
+anywhere. Both halves are fixed together: `.content { animation: none }` under reduced motion, and
+`newPage()` in `e2e/lib.ts` now opens contexts with `reducedMotion: 'reduce'`, which makes the
+promise enforced by default rather than by inspection. The suite got faster as a side effect —
+9m58s against about 12 — because the wait-for-stable was being paid on every navigation. (#52)
+
+**Then it turned one test red, and the test was right to complain.** `ai.test.ts`'s Ask-chat gate
+clicked send and waited up to 5s for `.aichat-panel.busy` to appear. Without the typewriter the
+reply lands instantly, so the busy window collapsed to the length of an in-process round trip and
+the assertion arrived after it had closed. Bisected to be sure: the CSS change alone passes 7/7, the
+reduced-motion context alone fails 3/3. Nothing was broken — the test had been asserting on a
+window whose duration was an animation artifact.
+
+Rewriting it found a real hole. The gate is named "busy state guards double-sends", and the guard it
+checked was the send button's `disabled` attribute. But `ask()`'s own `if (busy) return` sits
+*after* the submit handler has already done `input.value = ''` — so any submit that reached the
+handler mid-answer wiped the operator's half-typed follow-up and sent nothing. Not reachable by
+clicking (the button is disabled) or by Enter (implicit submission clicks that same disabled
+button), which is why it has sat there unseen; reachable by `requestSubmit()`, and one line from
+being reachable for real. The handler now checks `busy` before it clears the box, and the test holds
+`/ask.json` in flight with a route so the busy window is a fact instead of a race, then asserts the
+guard behaviorally: send disabled, a mid-flight submit adds no second bubble, and the question typed
+during the answer is still in the input afterwards. (#53)
+
+**Verified by breaking it first**, as is now the habit: with the handler guard removed the new
+assertion fails on exactly the right line (`mid-flight question survives — expected 'and
+occupancy?', actual ''`), and passes with it restored, three runs for three.
+
+The CI e2e cap goes 40 → 60 minutes in the same commit. 40 was set from a local 12-minute run and a
+hosted runner is slower than that by more than the margin allowed; a cap that cancels a working job
+teaches everyone to ignore the red.
+
+**Decisions:** #52, #53.
+
+**Verified:** tsc strict clean · unit suite 353/353 · full e2e (all 31 files) · `ai.test.ts` 3×
+green, and red against the un-guarded handler.
