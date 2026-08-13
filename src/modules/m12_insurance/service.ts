@@ -184,9 +184,11 @@ export function complianceSweep(ctx: Ctx, date: string): { lapsed: number; remin
     run('UPDATE insurance_policies SET reminder_stage=? WHERE id=?', stage, policy.id);
   }
 
-  // auto-enroll: active leases with no valid coverage at all (set-based)
-  const autoEnroll = getSetting<boolean>(ctx, 'auto_enroll_on_lapse');
-  if (autoEnroll) {
+  // auto-enroll: active leases with no valid coverage at all (set-based).
+  // The decision is the PROPERTY's — force-placing a master policy on a
+  // resident is a billed charge, and a property that turned it off must not
+  // have it applied because the organization leaves it on.
+  {
     const uncovered = q<any>(
       `SELECT l.id, l.property_id FROM leases l
        WHERE l.org_id=? AND l.status IN ('active','notice','month_to_month')
@@ -195,6 +197,7 @@ export function complianceSweep(ctx: Ctx, date: string): { lapsed: number; remin
       ctx.orgId, date,
     );
     for (const lease of uncovered) {
+      if (getSetting<boolean>(ctx, 'auto_enroll_on_lapse', lease.property_id) === false) continue;
       enrollMaster({ ...ctx, businessDate: date } as Ctx, lease.id, 'auto_enroll');
       enrolled++;
       const contact = primaryContact(ctx.orgId, lease.id);

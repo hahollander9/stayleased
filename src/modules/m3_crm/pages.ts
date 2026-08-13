@@ -6,7 +6,7 @@ import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, addDays, diffDays, fmtTs } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { scorerMode } from '../../lib/settings.ts';
 import { audit } from '../../lib/audit.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea, moneyInput,
@@ -86,7 +86,7 @@ export function routes(r: Router): void {
     const exposureByProp = new Map<string, Set<number>>();
     // M19 lead-heat chips: latest assessment per lead; the tooltip carries the
     // scorer's deterministic reason. Shadow mode: chips inform, nothing else.
-    const heatMode = getSetting<{ mode: string }>(ctx, 'lead_scoring')?.mode;
+    const heatMode = scorerMode(ctx, 'lead_scoring');
     const heatRows = q<any>(
       `SELECT la.lead_id, la.bucket, la.reason FROM lead_assessments la
         WHERE la.org_id=? AND la.as_of_date=(SELECT MAX(a2.as_of_date) FROM lead_assessments a2 WHERE a2.lead_id=la.lead_id AND a2.as_of_date<=?)`,
@@ -447,7 +447,7 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     // M19 lead heat: chips always; hot-first ordering only in active mode
     // (shadow must not change behavior, and ordering IS behavior).
-    const heatMode = getSetting<{ mode: string }>(ctx, 'lead_scoring')?.mode;
+    const heatMode = scorerMode(ctx, 'lead_scoring');
     const heatOrder = heatMode === 'active'
       ? `CASE COALESCE(heat.bucket,'') WHEN 'hot' THEN 0 WHEN 'warm' THEN 1 WHEN 'cold' THEN 3 ELSE 2 END, `
       : '';
