@@ -473,6 +473,8 @@ export interface ApplySummary {
   portalInvites?: number;
   /** existing residents whose email/phone were filled in by a directory import */
   contactUpdates?: number;
+  /** signed-but-not-started leases created from a future-residents section */
+  futureLeases?: number;
   /** exactly what each merge wrote onto an existing resident, so removing the
    * upload can put those fields back — but only where the value is still the
    * one the import wrote (anything edited since belongs to the operator now) */
@@ -481,6 +483,11 @@ export interface ApplySummary {
   /** what the applied file added up to (rent rolls) — kept on the record so
    * the batch page can show it without re-validating post-apply */
   recon?: ImportRecon;
+}
+
+/** One display name may carry a couple: "Sasha Kim & Ben Kim". */
+export function splitHousehold(name: string): { first: string; last: string; display: string }[] {
+  return name.split(/\s*(?:&| and )\s*/i).filter(Boolean).slice(0, 4).map((p) => splitName(p));
 }
 
 /** "Beltran, Angel" and "Angel Beltran" are the same person. */
@@ -671,6 +678,65 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           { account: '2100', credit: cents, memo: 'Security deposits held' },
         ],
       });
+    }
+
+    // ---- signed-but-not-started leases (the report's own future-residents
+    // section). These were being dropped: 16 rows, every one a lease someone
+    // has already signed, and their 16 units then read as "ready to lease" so
+    // the dashboard offered availability that does not exist. They import as
+    // fully-executed leases dated from their move-in, which the portfolio
+    // stats already understand as a PRE-LEASE — so exposure falls, occupancy
+    // does not move, and nothing bills until the lease actually starts.
+    for (const raw of j<string[][]>(batch.staged, [])) {
+      const rec = extractRecord(raw, mapping);
+      const unit = (rec.unit || '').trim();
+      const tenantName = (rec.tenant || '').trim();
+      if (!unit || !tenantName || /^vacant$/i.test(tenantName)) continue;
+      const pid = propIds.get(rec.property ? rec.property.trim() : (batch.property_id || `new:${batch.new_property_name}`));
+      if (!pid) continue;
+      const unitRow = q1<{ id: string; market_rent_cents: number }>(
+        'SELECT id, market_rent_cents FROM units WHERE property_id=? AND unit_number=?', pid, unit,
+      );
+      if (!unitRow) { summary.skipped++; continue; }
+      const start = toIsoDate(rec.move_in) || toIsoDate(rec.lease_start);
+      const end = toIsoDate(rec.lease_end);
+      if (!start) { summary.skipped++; continue; }
+      // a future lease already on the books is not imported twice
+      if (q1(`SELECT id FROM leases WHERE unit_id=? AND status='fully_executed' AND start_date=?`, unitRow.id, start)) continue;
+      const rentCents = moneyToCents(rec.rent) || moneyToCents(rec.market_rent) || unitRow.market_rent_cents || 0;
+      const leaseId = id('lse');
+      insert('leases', {
+        id: leaseId, org_id: ctx.orgId, property_id: pid, unit_id: unitRow.id, import_batch_id: batch.id,
+        household_name: tenantName, status: 'fully_executed',
+        start_date: start, end_date: end || addMonths(start, 12), move_in_date: start,
+        move_out_date: null, notice_date: null, mtm_since: null,
+        rent_cents: rentCents, subsidy_cents: 0, deposit_cents: moneyToCents(rec.deposit) ?? 0, deposit_alternative: 0,
+        term_months: 12, application_id: null, renewal_of_lease_id: null, template_id: null,
+        packet_file_id: null, esign_request_id: null, bed_label: null,
+        // nothing bills before the lease starts
+        billing_start_date: start, created_at: nowIso(),
+      });
+      insert('lease_charges', {
+        id: id('lch'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent', label: 'Rent', import_batch_id: batch.id,
+        amount_cents: rentCents, gl_account_code: null, rentable_item_id: null, source_code: null,
+        start_date: start, end_date: null, created_at: nowIso(),
+      });
+      for (const [ti, t] of splitHousehold(tenantName).entries()) {
+        const rid = id('res');
+        insert('residents', {
+          id: rid, org_id: ctx.orgId, property_id: pid, user_id: null, import_batch_id: batch.id,
+          first_name: t.first || t.display, last_name: t.last, email: ti === 0 ? (rec.email || null) : null,
+          phone: ti === 0 ? (rec.phone || null) : null, kind: 'adult', employer: null,
+          source_ref: ti === 0 ? (rec.source_ref || null) : null,
+          monthly_income_cents: null, ssn_last4: null, created_at: nowIso(),
+        });
+        insert('household_members', {
+          id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid, import_batch_id: batch.id,
+          role: ti === 0 ? 'primary' : 'co', created_at: nowIso(),
+        });
+        summary.residents++;
+      }
+      summary.futureLeases = (summary.futureLeases || 0) + 1;
     }
 
     ensureBankAccounts(ctx.orgId); // every property gets an operating account row

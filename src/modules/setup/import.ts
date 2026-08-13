@@ -189,6 +189,7 @@ export function routes(r: Router): void {
     let mapping: Mapping;
     let docProp: string | null = null; // property named by the document itself
     let docPropCode: string | null = null; // …and the source system's code for it
+    let futureRows: string[][] = []; // signed-but-not-started leases (their own section)
     let aiRentCode = ''; // the charge code the model read as rent
     let sourceSummary: ReturnType<typeof parseSourceSummary> = null;
 
@@ -285,6 +286,7 @@ export function routes(r: Router): void {
     // — nothing the file billed monthly is lost
     if (kind === 'rent_roll' && !isPdf) {
       const scan = scanRosterSections(dataRows, mapping);
+      futureRows = scan.futureRows;
       if (scan.sectioned && (scan.futureRows.length || scan.summaryRows)) {
         dataRows = scan.rows;
         mapping.excluded = {
@@ -294,9 +296,10 @@ export function routes(r: Router): void {
         };
         if (scan.futureUnits.length) {
           (mapping.notes ||= []).push(
-            `Set aside ${scan.futureUnits.length} future resident/applicant row${scan.futureUnits.length === 1 ? '' : 's'} ` +
-            `(unit${scan.futureUnits.length === 1 ? '' : 's'} ${scan.futureUnits.slice(0, 8).join(', ')}${scan.futureUnits.length > 8 ? `, +${scan.futureUnits.length - 8} more` : ''}) — ` +
-            `those are leases that have not started, and their units are already in the roster above. Only current leases import.`,
+            `${scan.futureUnits.length} future resident/applicant row${scan.futureUnits.length === 1 ? '' : 's'} ` +
+            `(unit${scan.futureUnits.length === 1 ? '' : 's'} ${scan.futureUnits.slice(0, 8).join(', ')}${scan.futureUnits.length > 8 ? `, +${scan.futureUnits.length - 8} more` : ''}) ` +
+            `import as signed future leases on those units — they have not started, so they bill nothing and do not count as occupied, ` +
+            `but the units read as pre-leased rather than available.`,
           );
         }
         if (scan.summaryRows) (mapping.notes ||= []).push(`Read the report's own summary block (${scan.summaryRows} rows) as totals to tie out against, not as units.`);
@@ -383,7 +386,7 @@ export function routes(r: Router): void {
       id: batchId, org_id: ctx.orgId, kind, filename: up.filename || null,
       property_id: propertyId, new_property_name: newPropertyName,
       preset: mapping.preset, headers: js(headers), mapping: js(mapping), rows: js(dataRows),
-      staged: '[]', as_of: String(rq.body.as_of || '') || ctx.businessDate,
+      staged: js(futureRows), as_of: String(rq.body.as_of || '') || ctx.businessDate,
       status: 'staged', summary: null, created_by: ctx.userId, created_at: nowIso(), applied_at: null,
     });
     audit(ctx, 'import_batch', batchId, 'upload', null, { kind, filename: up.filename, rows: dataRows.length, preset: mapping.preset });

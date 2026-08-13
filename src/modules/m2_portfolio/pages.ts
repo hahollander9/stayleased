@@ -213,7 +213,7 @@ export function routes(r: Router): void {
           { label: 'Units', value: stats.total, href: `/units?property=${p.id}` },
           { label: 'Occupancy', value: `${stats.occupancyPct}%`, tone: stats.occupancyPct >= 93 ? 'ok' : stats.occupancyPct >= 88 ? 'warn' : 'bad', sub: `${stats.occupied} of ${stats.rentable} rentable` },
           { label: 'Exposure', value: `${stats.exposurePct}%`, sub: `${stats.exposureCount} units`, tone: stats.exposurePct <= 8 ? 'ok' : 'warn', href: `/units?property=${p.id}&status=vacant_ready` },
-          { label: 'Vacant ready', value: stats.vacantReady, href: `/units?property=${p.id}&status=vacant_ready` },
+          { label: 'Available', value: stats.available, sub: stats.preleased ? `${stats.preleased} more pre-leased` : undefined, href: `/units?property=${p.id}&status=vacant_ready` },
           { label: 'On notice', value: stats.notice, href: `/units?property=${p.id}&status=notice` },
           { label: 'Avg market rent', value: usd(stats.avgMarketRentCents) },
         ])}
@@ -566,7 +566,7 @@ function propertyDashboard(rq: Rq, propertyId: string) {
       ${kpiBands([
         { label: 'Occupancy', value: `${stats.occupancyPct}%`, sub: `${stats.occupied}/${stats.rentable} rentable`, tone: stats.occupancyPct >= 93 ? 'ok' : stats.occupancyPct >= 88 ? 'warn' : 'bad', href: `/units?property=${p.id}` },
         { label: 'Exposure', value: `${stats.exposurePct}%`, sub: `${stats.exposureCount} units vacant or leaving`, tone: stats.exposurePct <= 8 ? 'ok' : 'warn', href: `/units?property=${p.id}&status=vacant_ready` },
-        { label: 'Vacant ready', value: stats.vacantReady, href: `/units?property=${p.id}&status=vacant_ready` },
+        { label: 'Available', value: stats.available, sub: stats.preleased ? `${stats.preleased} more pre-leased` : undefined, href: `/units?property=${p.id}&status=vacant_ready` },
         { label: 'On notice', value: stats.notice, href: `/units?property=${p.id}&status=notice` },
         ...extra.kpis,
       ])}
@@ -837,7 +837,8 @@ function portfolioDashboard(rq: Rq) {
       ${dashHero(ctx, {
         kicker: `${orgName} · ${fmtDate(ctx.businessDate)}`,
         title: 'Portfolio',
-        sub: `${org.total} units across ${sums.length} propert${sums.length === 1 ? 'y' : 'ies'} · ${org.occupied} occupied · ${org.vacantReady} ready to lease`,
+        sub: `${org.total} units across ${sums.length} propert${sums.length === 1 ? 'y' : 'ies'} · ${org.occupied} occupied · ${org.available} available to lease`
+          + (org.preleased ? ` · ${org.preleased} pre-leased` : ''),
         occupancyPct: org.occupancyPct,
         actions: html`<a class="btn btn-sm" href="/map">${raw('<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 20 3 17V4l6 3m0 13 6-3m-6 3V7m6 10 6 3V7l-6-3m0 13V4M9 7l6-3"/></svg>')} Map view</a><a class="btn btn-sm btn-ghost" href="/leads">Log a lead</a><a class="btn btn-sm btn-ghost" href="/workorders">New work order</a><a class="btn btn-sm btn-ghost" href="/reports">Reports</a>`,
       })}
@@ -851,7 +852,7 @@ function portfolioDashboard(rq: Rq) {
         { label: 'Units', value: org.total },
         { label: 'Occupancy', value: `${org.occupancyPct}%`, tone: org.occupancyPct >= 93 ? 'ok' : 'warn', sub: `${org.occupied} occupied` },
         { label: 'Exposure', value: `${org.exposurePct}%`, sub: `${org.exposureCount} units` },
-        { label: 'Vacant ready', value: org.vacantReady, href: '/units?status=vacant_ready' },
+        { label: 'Available', value: org.available, sub: org.preleased ? `${org.preleased} more pre-leased` : undefined, href: '/units?status=vacant_ready' },
         { label: 'Avg market rent', value: usd(org.avgMarketRentCents) },
         ...extra.kpis,
       ], trends))}
