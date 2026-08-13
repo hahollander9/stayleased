@@ -3,6 +3,10 @@ data/*.db
 data/*.db-*
 data/files/
 data/test*
+# fixtures the e2e suites write in before() and remove in after() — present
+# only while a run is in flight, never source (e2e-rentroll.xlsx, e2e-lease.pdf,
+# e2e-yardi-block-roll.xlsx, and the per-file e2e-run-* database copies)
+data/e2e-*
 *.log
 .DS_Store
 tmp/
