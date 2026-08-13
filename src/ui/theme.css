@@ -676,6 +676,26 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 .dl dt { color: var(--muted); }
 .dl dd { margin: 0; font-weight: 500; }
 
+/* ---- property profile: identity first, settings second ---- */
+.prop-profile { display: flex; flex-direction: column; gap: 14px; }
+.pp-ident { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.pp-street { font-family: var(--display); font-size: 16px; font-weight: 650; color: var(--ink); line-height: 1.3; }
+.pp-csz { font-size: 13px; color: var(--ink-2); margin-top: 2px; }
+.pp-contact { display: flex; flex-wrap: wrap; gap: 6px 8px; font-size: 12.5px; }
+.pp-contact a {
+  display: inline-flex; align-items: center; padding: 3px 10px; border-radius: 99px;
+  border: 1px solid var(--line-2); background: var(--surface-2, rgba(255, 255, 255, .03));
+  color: var(--ink-2); text-decoration: none; transition: border-color .15s ease, color .15s ease;
+}
+.pp-contact a:hover { border-color: var(--accent); color: var(--accent-ink); }
+.pp-contact .pp-none { padding: 3px 10px; color: var(--muted); font-style: italic; }
+.pp-facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(128px, 1fr)); gap: 10px 14px; margin: 0; padding-top: 12px; border-top: 1px solid var(--line-2); }
+.pp-fact dt { font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+.pp-fact dd { margin: 2px 0 0; font-size: 13.5px; font-weight: 600; color: var(--ink); }
+.pp-fact .pp-sub { display: block; font-size: 11px; font-weight: 400; color: var(--muted); margin-top: 1px; }
+.pp-chart-title { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { .pp-contact a { transition: none; } }
+
 /* ---------- empty & error states ---------- */
 .empty { text-align: center; padding: 34px 16px; color: var(--muted); }
 .empty .e-title { font-weight: 650; color: var(--ink-2); font-size: 14px; margin-bottom: 3px; }
@@ -702,6 +722,16 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 .chart svg { display: block; width: 100%; height: auto; }
 .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin-top: 6px; }
 .legend .sw { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
+/* donut legend: share sits in its own right-aligned column so the percentages
+   line up as a readable column instead of ragging off the end of each label */
+.legend .lg-row { display: flex; align-items: center; gap: 6px; min-width: 172px; }
+.legend .lg-row .sw { margin-right: 0; flex: none; }
+.legend .lg-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.legend .lg-pct { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 600; color: var(--ink-2); flex: none; }
+.donut-arc { transition: opacity .16s ease; }
+.donut-chart:hover .donut-arc { opacity: .45; }
+.donut-chart .donut-arc:hover { opacity: 1; }
+@media (prefers-reduced-motion: reduce) { .donut-arc { transition: none; } }
 
 /* ---------- board (kanban) ---------- */
 .board { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(210px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 8px; }
@@ -710,6 +740,50 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 .board .col-body { padding: 8px; display: flex; flex-direction: column; gap: 7px; }
 .board .bcard { background: var(--surface); border: 1px solid var(--line); border-radius: 9px; padding: 8px 10px; font-size: 12.5px; box-shadow: var(--shadow); display: block; color: inherit; transition: border-color .15s ease, transform .15s ease; }
 .board .bcard:hover { border-color: rgba(96, 165, 250, .45); text-decoration: none; transform: translateY(-1px); }
+/* ---- dispatch card identity line: number, age, dates ---- */
+.board .bc-id { display: flex; align-items: baseline; flex-wrap: wrap; gap: 5px; margin-bottom: 3px; font-size: 10.5px; color: var(--muted); }
+.board .bc-id .mono { font-size: 10.5px; color: var(--ink-2); }
+.board .bc-age { font-weight: 700; font-variant-numeric: tabular-nums; color: var(--ink-2); border: 1px solid var(--line-2); border-radius: 99px; padding: 0 5px; }
+.board .bc-age.warn { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 45%, transparent); }
+.board .bc-age.bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.board .bc-dates { display: flex; flex-wrap: wrap; gap: 4px; }
+.board .bc-dates i { font-style: normal; white-space: nowrap; }
+
+/* ---- contractor bid comparison ---- */
+.bid-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(276px, 1fr)); gap: 12px; }
+.bid-card { background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.bid-card.awarded { border-color: var(--ok); box-shadow: 0 0 0 1px color-mix(in srgb, var(--ok) 35%, transparent); }
+.bid-card.declined { opacity: .62; }
+.bid-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; }
+.bid-vendor { font-family: var(--display); font-weight: 650; font-size: 14.5px; color: var(--ink); text-decoration: none; }
+.bid-vendor:hover { color: var(--accent-ink); }
+.bid-cat { display: block; font-size: 11px; color: var(--muted); }
+.bid-amount { font-family: var(--display); font-size: 24px; font-weight: 700; color: var(--ink); display: flex; align-items: baseline; flex-wrap: wrap; gap: 7px; }
+.bid-amount.none { font-size: 13px; font-weight: 500; color: var(--muted); font-family: inherit; }
+.bid-delta { font-size: 11px; font-weight: 500; color: var(--muted); font-family: inherit; }
+.bid-facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 10px; margin: 0; }
+.bid-facts dt { font-size: 9.5px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+.bid-facts dd { margin: 1px 0 0; font-size: 12.5px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.bid-track { font-size: 11.5px; color: var(--muted); padding-top: 9px; border-top: 1px solid var(--line-2); }
+.bid-scope { margin: 0; font-size: 12.5px; color: var(--ink-2); line-height: 1.45; }
+.bid-form summary { cursor: pointer; font-size: 12px; color: var(--accent-ink); }
+.bid-form .form-grid { margin-top: 10px; }
+.bid-award { margin: 0; align-items: flex-end; }
+
+/* ---- drag-and-drop board affordances ---- */
+.board .col-head { align-items: center; gap: 6px; }
+.board .col-lock { font-size: 9.5px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); border: 1px solid var(--line-2); border-radius: 99px; padding: 1px 6px; }
+.board .bcard[data-dnd-item] { cursor: grab; }
+.board .bcard[data-dnd-item]:active { cursor: grabbing; }
+.board .bcard.dnd-dragging { opacity: .45; }
+/* only lanes that accept the drop light up, and they light up only while a
+   card is actually in flight — a board that glows at every pointer move is
+   telling you nothing */
+.board .col.dnd-over { border-color: var(--accent); background: rgba(96, 165, 250, .07); }
+.board .col.dnd-over .col-head { color: var(--accent-ink); }
+body.dnd-active .board .col.dnd-locked { opacity: .5; }
+.board .col { transition: border-color .15s ease, background .15s ease, opacity .15s ease; }
+@media (prefers-reduced-motion: reduce) { .board .col, .board .bcard { transition: none; } }
 
 /* ---------- timeline ---------- */
 .timeline { list-style: none; margin: 0; padding: 0; }
@@ -946,11 +1020,19 @@ input[type="file"]::file-selector-button:hover { background: rgba(255, 255, 255,
 }
 .slpin.approx .slpin-dot { border-style: dashed; opacity: .9; }
 .slpin-tag {
-  position: absolute; top: -26px; left: 50%; transform: translateX(-50%);
+  position: absolute; top: -28px; left: 50%; transform: translateX(-50%);
   background: rgba(10, 15, 27, .92); border: 1px solid rgba(96, 165, 250, .4); color: #dbe7ff;
-  font: 700 11px var(--display); padding: 2px 8px; border-radius: 99px; white-space: nowrap;
+  font: 700 11px var(--display); padding: 2.5px 9px; border-radius: 99px; white-space: nowrap;
   box-shadow: 0 6px 16px rgba(0, 0, 0, .5);
+  display: flex; align-items: baseline; gap: 7px; max-width: 190px;
 }
+/* the name is the label; occupancy is the annotation next to it */
+.slpin-name { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slpin-occ { font-style: normal; font-weight: 600; font-size: 10px; color: #9fc3ff; flex: none; }
+[data-theme="light"] .slpin-occ { color: #3b6fd4; }
+/* names overlap at low zoom; the pin under the cursor is lifted clear of its
+   neighbours so an obscured label can always be read by pointing at it */
+.leaflet-marker-icon:hover { z-index: 1000 !important; }
 @keyframes slpin-pulse { 0% { box-shadow: 0 0 0 5px rgba(16, 185, 129, .22), 0 0 22px rgba(16, 185, 129, .8); } 55% { box-shadow: 0 0 0 11px rgba(59, 130, 246, 0), 0 0 22px rgba(59, 130, 246, .55); } 100% { box-shadow: 0 0 0 5px rgba(16, 185, 129, .22), 0 0 22px rgba(16, 185, 129, .8); } }
 /* leaflet chrome, restyled dark */
 .leaflet-popup-content-wrapper { background: rgba(13, 19, 34, .97) !important; color: var(--ink) !important; border: 1px solid var(--line); border-radius: 14px !important; box-shadow: 0 24px 60px rgba(0, 0, 0, .6) !important; }
@@ -1441,23 +1523,45 @@ svg.chart g.ct:hover .ctdot { r: 4.6px; }
 [data-theme="light"] .aiflow .afs.done i { background: var(--grad, linear-gradient(135deg, #10b981, #047857)); }
 
 /* ---------- Ask StayLeased — the everywhere panel ---------- */
+/* No scrim and no backdrop blur, in either state: the page behind the panel
+   stays legible and clickable, so an answer can be checked against the screen
+   it is about without dismissing it first. The root is pointer-transparent and
+   only the panel itself takes events. */
 .askdock { position: fixed; inset: 0; z-index: 90; pointer-events: none; }
-.askdock-back {
-  position: absolute; inset: 0; background: rgba(4, 8, 16, .45);
-  backdrop-filter: blur(2px); opacity: 0; transition: opacity .22s ease;
-}
-[data-theme="light"] .askdock-back { background: rgba(16, 24, 40, .28); }
 .askdock-panel {
   position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 94vw);
-  display: flex; flex-direction: column;
+  display: flex; flex-direction: column; pointer-events: auto;
   background: var(--bg-2, var(--surface)); border-left: 1px solid var(--line);
   box-shadow: -24px 0 64px rgba(0, 0, 0, .45);
   transform: translateX(102%); transition: transform .26s cubic-bezier(.16, 1, .3, 1);
 }
 [data-theme="light"] .askdock-panel { box-shadow: -20px 0 48px rgba(16, 24, 40, .18); background: #fff; }
-.askdock.open { pointer-events: auto; }
-.askdock.open .askdock-back { opacity: 1; }
 .askdock.open .askdock-panel { transform: none; }
+
+/* Pinned: the panel stops floating over the page and becomes part of it. The
+   layout gives up the width rather than hiding content underneath, which is
+   what makes "keep working with it open" true instead of nearly true. */
+.askdock-pin {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line);
+  background: none; color: var(--muted); cursor: pointer; flex: none;
+  display: grid; place-items: center; transition: color .15s ease, border-color .15s ease, background .15s ease;
+}
+.askdock-pin:hover { color: var(--ink); border-color: rgba(96, 165, 250, .45); }
+.askdock-pin.on { color: var(--accent-ink); border-color: var(--accent); background: rgba(96, 165, 250, .12); }
+.askdock-pin.on svg { transform: rotate(-35deg); }
+.askdock.pinned .askdock-panel { box-shadow: none; }
+/* .app wraps both the sticky chrome and the content column, so reserving the
+   width there keeps the header aligned with the page under it. Below this
+   breakpoint there is no room to dock and the panel floats, as it does
+   unpinned — still without a scrim. */
+@media (min-width: 980px) {
+  body.ask-pinned .app { padding-right: min(460px, 94vw); }
+  body.ask-pinned { overflow-x: hidden; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .askdock-panel { transition: none; }
+  .askdock-pin { transition: none; }
+}
 .askdock-head {
   display: flex; align-items: center; gap: 10px; padding: 14px 16px;
   border-bottom: 1px solid var(--line-2); flex: none;

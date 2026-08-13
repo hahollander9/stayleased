@@ -255,6 +255,37 @@ const searchProviders: SearchProvider[] = [];
 export function registerSearch(fn: SearchProvider): void {
   searchProviders.push(fn);
 }
+/** Every registered nav destination this user may open, matched by name. The
+ * record providers answer "who is Maya Torres"; this answers "where is the
+ * dispatch board" — which is the other half of what people type into a search
+ * box, and previously returned nothing at all. Pages rank below records: a
+ * resident named Parker outranks the parking page. */
+function navHits(ctx: Ctx, query: string): SearchHit[] {
+  const needle = query.toLowerCase();
+  const hits: SearchHit[] = [];
+  const seen = new Set<string>();
+  for (const [section, items] of navSections) {
+    for (const item of items) {
+      if (seen.has(item.href)) continue;
+      if (item.perm && !ctx.perms.has(item.perm)) continue;
+      if (item.demoOnly && ctx.orgKind !== 'demo') continue;
+      try {
+        if (item.show && !item.show(ctx)) continue;
+      } catch {
+        continue; /* an adaptive-nav predicate must never break search */
+      }
+      const label = item.label.toLowerCase();
+      // Prefix and word-start matches only. Substring matching turns every
+      // two-letter query into a wall of pages.
+      const words = label.split(/[^a-z0-9]+/).filter(Boolean);
+      if (!label.startsWith(needle) && !words.some((w) => w.startsWith(needle))) continue;
+      seen.add(item.href);
+      hits.push({ kind: 'page', label: item.label, sub: section || 'Dashboard', href: item.href });
+    }
+  }
+  return hits.sort((a, b) => a.label.length - b.label.length).slice(0, 6);
+}
+
 export function runSearch(ctx: Ctx, query: string): SearchHit[] {
   const out: SearchHit[] = [];
   for (const fn of searchProviders) {
@@ -265,7 +296,8 @@ export function runSearch(ctx: Ctx, query: string): SearchHit[] {
     }
     if (out.length > 40) break;
   }
-  return out.slice(0, 40);
+  const records = out.slice(0, 34);
+  return [...records, ...navHits(ctx, query)].slice(0, 40);
 }
 
 // ---------- shells ----------

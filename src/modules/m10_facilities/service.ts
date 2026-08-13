@@ -435,3 +435,202 @@ export function facilitiesStats(ctx: Ctx, propertyId?: string | null): Facilitie
   };
 }
 
+
+// ---------- tech notifications ----------
+
+/** Everyone who works the boards: in-house techs and their supervisors. The
+ * dispatch board and the notification fan-out must agree on who that is, so
+ * both read this. */
+export function techRoster(ctx: Ctx): { id: string; name: string; phone: string | null; email: string }[] {
+  return q<any>(
+    `SELECT DISTINCT u.id, u.name, u.phone, u.email FROM users u JOIN role_assignments ra ON ra.user_id=u.id
+     WHERE u.org_id=? AND u.active=1 AND ra.role IN ('MAINTENANCE_TECH','MAINTENANCE_SUPERVISOR') ORDER BY u.name`,
+    ctx.orgId,
+  );
+}
+
+/** Tell one tech a job is theirs. Assignment used to be silent — the work
+ * order changed hands in the database and the person holding it found out the
+ * next time they opened the app, which on a Saturday is not a plan. */
+export function notifyAssignedTech(ctx: Ctx, woId: string, userId: string): void {
+  const person = q1<any>('SELECT id, name, phone FROM users WHERE id=? AND org_id=? AND active=1', userId, ctx.orgId);
+  if (!person) return;
+  const wo = q1<any>(
+    `SELECT w.*, u.unit_number, p.name AS prop_name FROM work_orders w
+     LEFT JOIN units u ON u.id=w.unit_id JOIN properties p ON p.id=w.property_id WHERE w.id=? AND w.org_id=?`,
+    woId, ctx.orgId,
+  );
+  if (!wo) return;
+  const where = wo.unit_number ? `${wo.prop_name} · Unit ${wo.unit_number}` : wo.prop_name;
+  const urgency = wo.priority === 'emergency' ? '🚨 EMERGENCY · ' : wo.priority === 'high' ? '⚠ High priority · ' : '';
+  sendSms(ctx, {
+    to: person.phone || 'tech', toUserId: person.id, toName: person.name,
+    body: `${urgency}Assigned to you: "${wo.summary}" at ${where}${wo.sla_due ? ` · due ${fmtDate(wo.sla_due)}` : ''} — /workorders/${wo.id}`,
+    propertyId: wo.property_id, entity: 'work_order', entityId: wo.id,
+  });
+}
+
+/** Broadcast the state of the board to the whole maintenance team. This is the
+ * morning huddle in one message: what is unassigned, what is on fire, what is
+ * already late. It is a deliberate fan-out — a tech who is not assigned to any
+ * of it still needs to know an emergency is open at their property. */
+export function notifyTechsOfBoard(ctx: Ctx, propertyId?: string | null): { sent: number; recipients: string[] } {
+  const roster = techRoster(ctx);
+  if (!roster.length) return { sent: 0, recipients: [] };
+  const propSql = propertyId ? ' AND w.property_id=?' : '';
+  const p = propertyId ? [propertyId] : [];
+  const open = q<any>(
+    `SELECT w.*, u.unit_number, pr.name AS prop_name FROM work_orders w
+     LEFT JOIN units u ON u.id=w.unit_id JOIN properties pr ON pr.id=w.property_id
+     WHERE w.org_id=? AND w.status NOT IN ('completed','canceled') AND w.vendor_id IS NULL${propSql}`,
+    ctx.orgId, ...p,
+  );
+  const unassigned = open.filter((w) => !w.assigned_to_user_id);
+  const emergencies = open.filter((w) => w.priority === 'emergency');
+  const late = open.filter((w) => w.sla_due && w.sla_due < ctx.businessDate);
+  const headline = emergencies.length
+    ? `🚨 ${emergencies.length} EMERGENCY open`
+    : late.length ? `⚠ ${late.length} past SLA` : 'No emergencies open';
+  for (const person of roster) {
+    const mine = open.filter((w) => w.assigned_to_user_id === person.id);
+    const oldest = mine.slice().sort((a, b) => String(a.created_date).localeCompare(String(b.created_date)))[0];
+    sendSms(ctx, {
+      to: person.phone || 'tech', toUserId: person.id, toName: person.name,
+      body: `Dispatch ${fmtDate(ctx.businessDate)}: ${headline}. ${unassigned.length} unassigned, ${mine.length} on you`
+        + (oldest ? ` (oldest: "${String(oldest.summary).slice(0, 40)}", ${Math.max(0, diffDays(ctx.businessDate, oldest.created_date))}d old)` : '')
+        + ` — /dispatch`,
+      propertyId: propertyId || null, entity: 'dispatch', entityId: ctx.businessDate,
+    });
+  }
+  emit(ctx, 'dispatch.broadcast', 'dispatch', ctx.businessDate, { recipients: roster.length, unassigned: unassigned.length, emergencies: emergencies.length });
+  return { sent: roster.length, recipients: roster.map((r) => r.name) };
+}
+
+// ---------- competitive bids from outside contractors ----------
+
+export interface BidInput {
+  amountCents: number;
+  laborCents?: number | null;
+  materialsCents?: number | null;
+  canStartDate?: string | null;
+  daysToComplete?: number | null;
+  warrantyMonths?: number | null;
+  scope?: string | null;
+  notes?: string | null;
+}
+
+export function inviteBid(ctx: Ctx, woId: string, vendorId: string): string {
+  const wo = q1<any>('SELECT * FROM work_orders WHERE id=? AND org_id=?', woId, ctx.orgId);
+  if (!wo) throw new Error('work order not found');
+  const vendor = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=? AND active=1', vendorId, ctx.orgId);
+  if (!vendor) throw new Error('vendor not found');
+  const existing = q1<any>('SELECT id FROM wo_bids WHERE work_order_id=? AND vendor_id=?', woId, vendorId);
+  if (existing) throw new Error(`${vendor.name} has already been invited to bid on this job`);
+  const bid = id('bid');
+  insert('wo_bids', {
+    id: bid, org_id: ctx.orgId, property_id: wo.property_id, work_order_id: woId, vendor_id: vendorId,
+    status: 'invited', invited_at: nowIso(), created_at: nowIso(),
+  });
+  woEvent(ctx, woId, 'note', `Bid requested from ${vendor.name}`);
+  audit(ctx, 'wo_bid', bid, 'invite', null, { vendor: vendor.name });
+  return bid;
+}
+
+export function recordBid(ctx: Ctx, bidId: string, input: BidInput): void {
+  const bid = q1<any>('SELECT * FROM wo_bids WHERE id=? AND org_id=?', bidId, ctx.orgId);
+  if (!bid) throw new Error('bid not found');
+  if (bid.status === 'awarded') throw new Error('that bid has already been awarded — it cannot be re-priced');
+  update('wo_bids', bidId, {
+    status: 'quoted',
+    amount_cents: input.amountCents,
+    labor_cents: input.laborCents ?? null,
+    materials_cents: input.materialsCents ?? null,
+    can_start_date: input.canStartDate || null,
+    days_to_complete: input.daysToComplete ?? null,
+    warranty_months: input.warrantyMonths ?? null,
+    scope: input.scope || null,
+    notes: input.notes || null,
+    quoted_at: nowIso(),
+  });
+  const vendorName = val<string>('SELECT name FROM vendors WHERE id=?', bid.vendor_id);
+  woEvent(ctx, bid.work_order_id, 'note', `Bid received from ${vendorName}: ${(input.amountCents / 100).toFixed(2)}`);
+  audit(ctx, 'wo_bid', bidId, 'quote', { status: bid.status }, { amount_cents: input.amountCents });
+}
+
+export function declineBid(ctx: Ctx, bidId: string, reason: string): void {
+  const bid = q1<any>('SELECT * FROM wo_bids WHERE id=? AND org_id=?', bidId, ctx.orgId);
+  if (!bid) throw new Error('bid not found');
+  if (bid.status === 'awarded') throw new Error('that bid has already been awarded');
+  update('wo_bids', bidId, { status: 'declined', decline_reason: reason || null, decided_at: nowIso() });
+  const vendorName = val<string>('SELECT name FROM vendors WHERE id=?', bid.vendor_id);
+  woEvent(ctx, bid.work_order_id, 'note', `${vendorName} declined to bid${reason ? `: ${reason}` : ''}`);
+}
+
+/** Award the job. The award IS the dispatch — a vendor who won the bid but was
+ * never assigned would be a decision recorded and not acted on. The COI gate
+ * inside assignWo still applies, and it must run BEFORE anything is marked
+ * awarded so an expired certificate leaves the comparison untouched rather
+ * than half-applied. */
+export function awardBid(ctx: Ctx, bidId: string, scheduledDate?: string): void {
+  const bid = q1<any>('SELECT * FROM wo_bids WHERE id=? AND org_id=?', bidId, ctx.orgId);
+  if (!bid) throw new Error('bid not found');
+  if (bid.status === 'declined') throw new Error('that vendor declined to bid');
+  if (bid.amount_cents === null || bid.amount_cents === undefined) throw new Error('record the vendor’s price before awarding the job');
+  const vendorName = val<string>('SELECT name FROM vendors WHERE id=?', bid.vendor_id) || 'vendor';
+  tx(() => {
+    // throws on expired COI, before any bid row changes
+    assignWo(ctx, bid.work_order_id, { vendorId: bid.vendor_id, scheduledDate: scheduledDate || bid.can_start_date || undefined });
+    run(
+      `UPDATE wo_bids SET status='not_awarded', decided_at=?, decided_by=? WHERE work_order_id=? AND id!=? AND status NOT IN ('declined')`,
+      nowIso(), ctx.userId, bid.work_order_id, bidId,
+    );
+    update('wo_bids', bidId, { status: 'awarded', decided_at: nowIso(), decided_by: ctx.userId });
+  });
+  woEvent(ctx, bid.work_order_id, 'assign', `Awarded to ${vendorName} at ${(bid.amount_cents / 100).toFixed(2)}`);
+  audit(ctx, 'wo_bid', bidId, 'award', null, { vendor: vendorName, amount_cents: bid.amount_cents });
+  emit(ctx, 'workorder.bid_awarded', 'work_order', bid.work_order_id, { bidId, vendorId: bid.vendor_id, amountCents: bid.amount_cents });
+}
+
+export interface BidRow {
+  id: string;
+  vendor_id: string;
+  vendor_name: string;
+  category: string;
+  phone: string | null;
+  email: string | null;
+  coi_expiry: string | null;
+  status: string;
+  amount_cents: number | null;
+  labor_cents: number | null;
+  materials_cents: number | null;
+  can_start_date: string | null;
+  days_to_complete: number | null;
+  warranty_months: number | null;
+  scope: string | null;
+  notes: string | null;
+  decline_reason: string | null;
+  invited_at: string;
+  quoted_at: string | null;
+  jobs_done: number;
+  avg_rating: number | null;
+  avg_days: number | null;
+}
+
+/** The comparison set for one work order, with each vendor's own track record
+ * alongside their price. Price without history is half the decision: the
+ * cheapest bid from the contractor who takes three weeks and gets two stars is
+ * not the cheapest bid. */
+export function bidsFor(ctx: Ctx, woId: string): BidRow[] {
+  return q<BidRow>(
+    `SELECT b.*, vd.name AS vendor_name, vd.category, vd.phone, vd.email, vd.coi_expiry,
+      (SELECT COUNT(*) FROM work_orders w2 WHERE w2.vendor_id=b.vendor_id AND w2.status='completed') AS jobs_done,
+      (SELECT AVG(w3.rating) FROM work_orders w3 WHERE w3.vendor_id=b.vendor_id AND w3.rating IS NOT NULL) AS avg_rating,
+      (SELECT AVG(julianday(w4.completed_date) - julianday(w4.created_date)) FROM work_orders w4
+        WHERE w4.vendor_id=b.vendor_id AND w4.status='completed' AND w4.completed_date IS NOT NULL) AS avg_days
+     FROM wo_bids b JOIN vendors vd ON vd.id=b.vendor_id
+     WHERE b.work_order_id=? AND b.org_id=?
+     ORDER BY CASE b.status WHEN 'awarded' THEN 0 WHEN 'quoted' THEN 1 WHEN 'invited' THEN 2 ELSE 3 END,
+       CASE WHEN b.amount_cents IS NULL THEN 1 ELSE 0 END, b.amount_cents`,
+    woId, ctx.orgId,
+  );
+}

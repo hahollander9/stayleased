@@ -119,3 +119,43 @@ export function fmtTs(iso: string | null | undefined, tz = 'America/Denver'): st
 export function dowIdx(d: DateStr): number {
   return toUtc(d).getUTCDay();
 }
+
+/** The four continental United States time zones, named the way an operator
+ * says them out loud. A property picker asking for an IANA string ("America/
+ * Denver") makes the person answer a question about database identifiers; a
+ * picker asking for "Mountain" asks the question they actually know the answer
+ * to. The IANA id is still what gets stored — it is the only stable identifier
+ * across daylight-saving rule changes — it just stops being the label. */
+export const US_TIMEZONES: [string, string][] = [
+  ['America/New_York', 'Eastern — New York, Atlanta, Miami'],
+  ['America/Chicago', 'Central — Chicago, Dallas, Houston'],
+  ['America/Denver', 'Mountain — Denver, Salt Lake City'],
+  ['America/Los_Angeles', 'Pacific — Los Angeles, Seattle, Phoenix'],
+];
+
+const TZ_SHORT: Record<string, string> = {
+  'America/New_York': 'Eastern',
+  'America/Chicago': 'Central',
+  'America/Denver': 'Mountain',
+  'America/Los_Angeles': 'Pacific',
+};
+
+/** Short zone name for display ("Mountain"), falling back to the IANA id for
+ * anything outside the four — Alaska, Hawaii, Arizona, or a zone that arrived
+ * through an import. Displaying the raw id is honest: the product knows the
+ * zone is set and does not know a friendly name for it. */
+export function timezoneLabel(tz: string | null | undefined): string {
+  if (!tz) return '—';
+  return TZ_SHORT[tz] || tz;
+}
+
+/** Options for a time-zone `select`, given whatever the record currently
+ * holds. The four continental zones are the list; a stored zone outside them
+ * is appended rather than dropped, because a select that silently omits the
+ * saved value posts back a DIFFERENT value on the next save — an Arizona or
+ * Alaska property would quietly relocate itself the first time someone edited
+ * an unrelated field on the form. */
+export function timezoneOptions(current?: string | null): [string, string][] {
+  if (!current || TZ_SHORT[current]) return US_TIMEZONES;
+  return [...US_TIMEZONES, [current, `${current} — current setting`]];
+}
