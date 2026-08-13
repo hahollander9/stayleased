@@ -1,7 +1,7 @@
 import { q1, insert } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, diffDays } from '../../lib/dates.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, settingIsExplicit } from '../../lib/settings.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { postBothBases } from '../m9_accounting/service.ts';
 import { depositHeld } from './payments.ts';
@@ -85,9 +85,12 @@ export function depositRule(state: string | null | undefined): DepositRule {
  * else the state preset. */
 export function depositDeadline(ctx: Ctx, propertyId: string, state: string | null | undefined, moveOut: string | null | undefined): { rule: DepositRule; days: number; due: string | null; daysLeft: number | null } {
   const rule = depositRule(state);
+  // "has someone chosen a number here?" is a question about the settings table,
+  // not about the number: comparing against the code default silently discarded
+  // the override of any property that deliberately chose 30 days.
+  const chosen = settingIsExplicit(ctx, 'deposit_disposition_days', propertyId);
   const override = Number(getSetting(ctx, 'deposit_disposition_days', propertyId) || 0);
-  // the org-level default is 30; treat a property-scoped value ≠ default as an explicit override
-  const days = override && override !== 30 ? override : rule.days;
+  const days = chosen && override ? override : rule.days;
   const due = moveOut ? addDays(moveOut, days) : null;
   const daysLeft = due ? diffDays(due, ctx.businessDate) : null;
   return { rule, days, due, daysLeft };

@@ -850,64 +850,46 @@ pre-existing patterns at lines this diff does not touch).
 of codes but not their amounts, and extending the hard-won Yardi harvest to carry them was not worth
 the risk in this build — shipping a tested but unreachable function would have been worse. It is the
 obvious next source: what a portfolio actually bills is stronger evidence than what a lease permits.
+## 2026-08-13 — The settings page was right and the product was not listening
 
-## 2026-08-12 — CI restored: the gates run by a machine instead of by whoever remembered
+**Twenty places where a per-property override reached nothing.** The hierarchy, the editor, the
+narrowing save (#47) and the permission fences were all correct; the consumers were not. Seven reads
+passed no property id while one sat in scope (`business_hours` and `pet_policy` in the leasing agent —
+two lines above `tourSlots(ctx, lead.property_id, …)`; `ai_plan_bounds`; `auto_enroll_on_lapse`, read
+once before the loop that force-places a billed master policy; `writeoff_approval_threshold_cents`,
+the only approval threshold in the codebase that was not property-scoped; `academic_calendar`, where
+two student properties can sit next to two different universities). Thirteen more read an
+object-valued setting with `getSetting`, which replaces wholesale while overrides are stored as
+partial diffs.
 
-**Built.** `.github/workflows/ci.yml` was lost to a web-UI upload months ago (dot-directories do not
-survive them) and CLAUDE.md has carried "restore on the next local push" ever since. Six pull requests
-merged today with zero automated checks — every gate was a human running suites by hand in a session
-that restarted mid-afternoon. This restores it, from a git push, so the dot-directory survives.
+**Three of those throw.** `late_fee_policy` overridden at one property → `policy.graceDays` undefined
+→ `addDays(due, undefined)` → `RangeError: Invalid time value` out of `lateFeeCandidates`, taking the
+nightly late-fee run down for the whole organization. `tour_hours` → `hours.days.includes(...)` on
+undefined, on the **public** property site's booking page. `quiet_hours` → `quiet.end.slice(...)` on
+the comms send path. Two more compute wrong money (`convenience_fee` → `NaN` on the charge;
+`partial_payments` → every underpayment refused), and `screening_criteria` silently disables the
+income test and the eviction lookback on the adverse-action path.
 
-Two jobs, matching the gates CLAUDE.md already requires: **typecheck + unit** (`tsc --noEmit`, which
-IS the lint gate here per #10, then `scripts/test.sh`) and **end-to-end** (Chromium only,
-`scripts/e2e.sh` against a freshly seeded database, artifacts uploaded on failure). Triggers on pull
-requests and pushes to main; a new push cancels the run it supersedes; both jobs time-boxed so a hung
-suite cannot burn an hour.
+**The gate, not the list.** `tests/settings_scope.test.ts` scans `src/` for every settings read with a
+literal key and fails on either violation; five behavioural tests then drive a *partial* override
+through the real consumer, because the lint proves the call shape and only a run proves the value.
+Settings that genuinely have no property dimension declare `orgOnly` and are held to it in both
+directions.
 
-**The judgment call is the flake.** The documented accounting date-ordering flake would have made CI
-red about a third of the time on day one, and a gate nobody trusts is worse than no gate. The unit
-step therefore re-runs once on failure — the same rule CLAUDE.md gives a human — and emits a GitHub
-warning annotation when it does, so a flake that turns constant is visible in the run history rather
-than absorbed. Two failures in a row still fails the job. (#50)
+**The level switcher.** Rebuilt as a scope bar: colour-railed by level, the level named in the
+eyebrow, each property carrying its override count, a one-click way back to the organization, a
+"show only what is set here" filter, sticky under the top chrome (`--chrome-h`), and every Save
+button naming the level it saves to. Settings the product reads org-wide render at the property level
+as facts with the reason, not as controls.
 
-**Verified against a real run, not asserted.** The full e2e suite (all 31 files, which
-`scripts/e2e.sh` runs and which no session today had run end to end) was executed locally exactly as
-the workflow will run it, before the workflow was pushed. Shipping CI that is born red would have
-taught everyone to ignore it in its first hour.
-
-**Decisions:** #50.
-
-## 2026-08-12 — CI's first run found the money bug that had been filed as a flake
-
-**What happened.** The CI restored an hour earlier ran for the first time and its unit job went red on
-exactly the two tests CLAUDE.md documented as a known date-ordering flake — and it failed them TWICE,
-because the step was written to re-run once before believing a red. Two consecutive failures on a
-machine that had never run this suite is what separated a real bug from randomness, so instead of
-widening the retry the failure got a root cause.
-
-**The bug.** `voidApPayment` picked the journal entries to reverse with
-`posted_at >= (SELECT created_at FROM ap_payments WHERE id=?)`. Payment entries carry the INVOICE as
-their source_id, so an invoice paid more than once has several generations of them and the timestamp
-was there to select the live one. But those are two `nowIso()` calls taken either side of a single
-insert: whether they land in the same millisecond is a race. Lose it and the query matches nothing —
-**the void reverses nothing, the reissue cuts a new check anyway, and the books show the cash leaving
-twice.** In the CI logs it read as a $500 cash discrepancy on the void test and the same $500 arriving
-as a surplus in the bank-feed test two tests later.
-
-**The fix** takes the clock out of the decision: the live generation is the one nothing has reversed
-yet. Exact, deterministic, and what the code always meant. (#51)
-
-**Verified by breaking it first.** Both regression tests — one forcing the inverted timestamp, one
-voiding a reissued payment to prove only the live generation is reversed — were run against the OLD
-query and confirmed red before being trusted. Today has produced enough tests that passed while
-proving nothing.
-
-**The retry is deleted, not kept.** The CI unit step shipped with a re-run-once whose entire
-justification was this flake. Keeping it now "just in case" is how a suite learns to hide the next
-real failure, so it is gone and CLAUDE.md's Known-flake section is replaced with a note saying a red
-suite is real.
-
-**Decisions:** #51.
-
-**Verified:** tsc strict clean · unit suite · full e2e (all 31 files) · the two new tests red against
-the old query, green against the new one.
+**Verified:** tsc strict clean · unit **349/349** (+9; the accounting flake reproduced on a pristine
+worktree 1 run in 5 and is unrelated — it does NOT always pass solo, contrary to the note in
+`CLAUDE.md`) · seeded e2e **89/89** across smoke, clientready, goldenpath, workingmodel, crm,
+payments, ai, pricing, comms, portal, applications, verticals, utilities, hubs, navmenus · the page
+eyeballed at 1440 and 390, org and property levels, scrolled — which is how three defects invisible to
+every test were found: a quoted attribute escaped by the tagged template so the current level stopped
+looking current, a sticky offset left applied to a `position: relative` box on phones (a 54px gap above
+and the first card's heading covered below), and a level rail escaping the card because the phone rule
+said `static`. Rebased onto the parallel session's settings reorganization (#48/#49) — the scope bar sits above its
+proposals card and folded sections, and the "only what is set here" filter applies to all of them.
+Plan: `docs/superpowers/plans/2026-08-13-property-scoped-settings.md`. (#50, #51)

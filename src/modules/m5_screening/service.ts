@@ -5,7 +5,7 @@ import { usd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { sysCtx } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { audit } from '../../lib/audit.ts';
 import { sendEmail } from '../../lib/sim/messaging.ts';
@@ -30,8 +30,12 @@ export interface Criteria {
 
 /** snapshot criteria into a version row when contents change (M5.5) */
 export function currentCriteriaVersion(ctx: Ctx, propertyId: string): { version: number; criteria: Criteria } {
-  const criteria = getSetting<Criteria>(ctx, 'screening_criteria', propertyId);
-  const pid = '';
+  const criteria = getSettingMerged<Criteria>(ctx, 'screening_criteria', propertyId);
+  // the version row belongs to the property whose criteria it snapshots: two
+  // properties with different criteria were alternating one org-wide row,
+  // bumping the version on every application and printing an unstable number on
+  // the adverse-action notice that claims to be applied consistently
+  const pid = propertyId;
   const latest = q1<any>(
     `SELECT * FROM criteria_versions WHERE org_id=? AND property_id=? ORDER BY version DESC LIMIT 1`,
     ctx.orgId, pid,
@@ -211,7 +215,7 @@ export interface Scorecard {
 /** household scorecard vs versioned criteria (M5.2-3) */
 export function computeScorecard(ctx: Ctx, applicationId: string): Scorecard {
   const app = q1<any>('SELECT * FROM applications WHERE id=? AND org_id=?', applicationId, ctx.orgId);
-  const criteria = getSetting<Criteria>(ctx, 'screening_criteria', app.property_id);
+  const criteria = getSettingMerged<Criteria>(ctx, 'screening_criteria', app.property_id);
   const adults = q<any>(`SELECT a.*, s.credit_score, s.credit_band, s.criminal_flag, s.eviction_flag, s.eviction_years_ago, s.thin_file, s.fraud_flags FROM applicants a LEFT JOIN screening_reports s ON s.applicant_id=a.id WHERE a.application_id=? AND a.kind IN ('primary','co')`, applicationId);
   const guarantors = q<any>(`SELECT a.*, s.credit_score FROM applicants a LEFT JOIN screening_reports s ON s.applicant_id=a.id WHERE a.application_id=? AND a.kind='guarantor'`, applicationId);
   const reasons: string[] = [];

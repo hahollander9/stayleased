@@ -8,7 +8,7 @@ import { usd, splitCents } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
 import { audit } from '../../lib/audit.ts';
 import { emit } from '../../lib/events.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { notify } from '../../lib/templates.ts';
 import { putFile } from '../../lib/files.ts';
 import { portalShell, card, tbl, dl, statusBadge, field, input, select, textarea, checkbox, moneyInput, emptyState } from '../../ui/ui.ts';
@@ -156,7 +156,7 @@ export function routes(r: Router): void {
       lease.id,
     ) || 1;
     const share = adults > 1 && balance > 0 ? splitCents(balance, adults)[0]! : null;
-    const feeCfg = getSetting<{ achCents: number; cardPct: number }>(ctx, 'convenience_fee', lease.prop_id);
+    const feeCfg = getSettingMerged<{ achCents: number; cardPct: number }>(ctx, 'convenience_fee', lease.prop_id);
     const autopay = q1<any>('SELECT * FROM autopay_enrollments WHERE lease_id=? AND active=1 AND user_id=?', lease.id, ctx.userId);
     return portalShell(rq, {
       title: 'Payments',

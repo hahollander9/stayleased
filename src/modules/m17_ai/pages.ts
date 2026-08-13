@@ -3,7 +3,7 @@ import { redirect, notFound, type Router , jsonRes } from '../../lib/http.ts';
 import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j, js } from '../../lib/db.ts';
 import { fmtDate } from '../../lib/dates.ts';
-import { setSetting, getSetting } from '../../lib/settings.ts';
+import { setSetting, getSettingMerged } from '../../lib/settings.ts';
 import { audit } from '../../lib/audit.ts';
 import {
   shell, card, tbl, dl, statusBadge, field, select, input, textarea, registerNav, kpis, tabs, emptyState,
@@ -206,7 +206,9 @@ export function routes(r: Router): void {
     if (!AGENTS.some((a) => a.key === agent && a.dial) || !['draft', 'approve', 'auto'].includes(level)) {
       return redirect('/ai?view=dials', 'Bad dial', 'err');
     }
-    const conf = { ...getSetting<Record<string, Autonomy>>(ctx, 'ai_autonomy', propertyId) };
+    // merged, so a property that already overrides one dial keeps tracking the
+    // organization on the rest; the narrowing below keeps it that way on save
+    const conf = { ...getSettingMerged<Record<string, Autonomy>>(ctx, 'ai_autonomy', propertyId) };
     conf[agent] = level;
     setSetting(ctx, 'ai_autonomy', conf, propertyId);
     audit(ctx, 'settings', `ai_autonomy${propertyId ? ':' + propertyId : ''}`, 'ai_dial_change', null, { agent, level });

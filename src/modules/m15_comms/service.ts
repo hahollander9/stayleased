@@ -5,7 +5,7 @@ import type { Ctx } from '../../lib/auth.ts';
 import { sysCtx } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
-import { getSetting } from '../../lib/settings.ts';
+import { getSettingMerged } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { registerSendHook, sendEmail, sendSms, type OutboundMessage } from '../../lib/sim/messaging.ts';
 import { getDials } from '../../lib/sim/dials.ts';
@@ -143,7 +143,7 @@ export function setOptout(ctx: Ctx, personKind: string, personId: string, channe
 }
 
 export function inQuietHours(ctx: Ctx, propertyId?: string | null): boolean {
-  const quiet = getSetting<{ start: string; end: string }>(ctx, 'quiet_hours', propertyId);
+  const quiet = getSettingMerged<{ start: string; end: string }>(ctx, 'quiet_hours', propertyId);
   const hour = getDials(ctx.orgId).clockHour;
   const start = parseInt(quiet.start.slice(0, 2), 10);
   const end = parseInt(quiet.end.slice(0, 2), 10);
