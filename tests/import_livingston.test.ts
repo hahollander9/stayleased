@@ -11,6 +11,7 @@ import {
 } from '../src/modules/setup/mapping.ts';
 import { validateRentRoll, applyRentRoll, floorFromUnit, type BatchRow } from '../src/modules/setup/import_apply.ts';
 import { unitStats } from '../src/modules/m2_portfolio/service.ts';
+import { receivablesStats } from '../src/modules/m8_receivables/payments.ts';
 import { LIVINGSTON_RENT_ROLL as ROWS, LIVINGSTON_EXPECTED as E } from './fixtures/livingston_rent_roll.ts';
 
 /** The Test LLC audit, as a gate.
@@ -280,4 +281,58 @@ test('the lease layer the audit found perfect stays perfect', () => {
   const units = q1<{ n: number; sqft: number }>('SELECT COUNT(*) n, COALESCE(SUM(sqft),0) sqft FROM units WHERE property_id=?', pid)!;
   assert.equal(units.n, E.units);
   assert.equal(units.sqft, E.sqft, 'square footage ties to the report');
+});
+
+// ---------- Bug 6: the books before the first billing cycle ----------
+
+test('a portfolio that has not been billed yet reports when billing starts, not 0% collected', () => {
+  const { pid, ctx } = portfolio();
+  const stats = receivablesStats(ctx, ctx.businessDate.slice(0, 7), pid);
+  assert.equal(stats.billed, 0, 'a mid-month migration bills nothing in the month it lands');
+  assert.ok(stats.billingStartsOn, 'so the screen has a date to show instead of a rate');
+  assert.ok(
+    stats.billingStartsOn! > ctx.businessDate,
+    `billing starts after the switch date (got ${stats.billingStartsOn})`,
+  );
+  // the conversion balance covers everything before that date, which is why
+  // 0 collected of 0 billed is not a collection failure
+  assert.equal(stats.collected, 0);
+});
+
+// ---------- Bug 9: what the source did not say is not asserted ----------
+
+test('a floorplan whose layout the file never stated says so', () => {
+  const { pid } = portfolio();
+  // this rent roll HAS a Unit Type column, so its plans are named from the
+  // source and carry no caveat — the guard is that a guessed layout is labelled
+  const named = q<{ name: string; description: string | null }>(
+    'SELECT name, description FROM floorplans WHERE property_id=?', pid,
+  );
+  assert.ok(named.length, 'the import created floorplans');
+  for (const f of named) {
+    if (f.description) {
+      assert.match(f.description, /not stated in the imported rent roll/, 'a placeholder layout says it is one');
+    }
+  }
+  // and a file with neither beds/baths nor a layout-bearing plan name gets the caveat
+  const ctx = sysCtx(orgId, AS_OF);
+  const headers = ['Unit', 'Name', 'Rent', 'Sq Ft'];
+  const rows = [['901', 'Nobody Stated', '1200.00', '640'], ['902', 'Also Nobody', '1250.00', '780']];
+  const batch = {
+    id: id('imp'), org_id: orgId, kind: 'rent_roll', filename: 'nolayout.csv',
+    property_id: null, new_property_name: 'No Layout Court', preset: null,
+    headers: js(headers), mapping: js({ cols: { 0: 'unit', 1: 'tenant', 2: 'rent', 3: 'sqft' }, preset: null, aiAssisted: [] }),
+    rows: js(rows), staged: '[]', as_of: AS_OF, status: 'staged', created_by: 'gate',
+  } as BatchRow;
+  insert('import_batches', { ...batch, summary: null, created_at: nowIso(), applied_at: null } as unknown as Record<string, unknown>);
+  applyRentRoll(ctx, batch);
+  const fps = q<{ name: string; description: string | null }>(
+    `SELECT f.name, f.description FROM floorplans f JOIN properties p ON p.id=f.property_id
+      WHERE p.org_id=? AND p.name='No Layout Court'`, orgId,
+  );
+  assert.ok(fps.length, 'the plan exists');
+  for (const f of fps) {
+    assert.ok(f.description, `"${f.name}" must admit its bed/bath is a placeholder`);
+    assert.doesNotMatch(f.name, /bed \/ \d+ bath/, 'and must not be NAMED after the guess');
+  }
 });

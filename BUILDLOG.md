@@ -1253,3 +1253,28 @@ all nine recon lines tying to the report's own summary, $177,893 rent, $166,337 
 classifying identically, 16 future leases with 12 available, zero delinquent and zero charged at
 import, the full property name with its Yardi code, and the 124 lease names/dates the audit found
 perfect still perfect.
+
+## 2026-08-13 — The two audit items the first pass left half-done
+
+Finishing what the Test LLC build shipped incomplete, rather than leaving them marked fixed.
+
+**Bug 6 was only half addressed.** Removing the invented insurance charge emptied the books, which was
+the loud half — but the audit also asked that the pre-billing state "read as 'billing starts Sep 1'
+rather than a 0% collection rate on a portfolio that looks dead", and that was never done.
+`receivablesStats` computed `collected / billed` and fell back to `0` when nothing had been billed, so
+a portfolio whose first cycle has not run yet reported **0% collected** — indistinguishable on screen
+from one nobody is paying. It now returns `billingStartsOn` when nothing is billed and every lease's
+billing starts later, and the two places that render the rate show an em dash with "billing starts
+<date>" instead of a number that is arithmetically true and practically a lie.
+
+**Bug 9's bed/bath was half done too.** The last build stopped NAMING a floorplan after a defaulted
+layout, which removed the loudest symptom, but `beds` and `baths` still quietly became 1/1. They are
+`NOT NULL` and `beds = 0` already means Studio, so "unknown" has no representation — the placeholder
+has to stay. What was missing was saying so: a floorplan built from a file that stated no layout now
+carries "Beds and baths were not stated in the imported rent roll — these are placeholders. Correct
+them here." The audit's own second option, taken.
+
+**Verified:** tsc strict clean · unit suite 394/394, with two new cases in
+`tests/import_livingston.test.ts` — a migrated portfolio reporting when billing starts rather than 0%
+collected, and a file stating no layout producing a floorplan that admits its bed/bath is a
+placeholder and is not named after one.

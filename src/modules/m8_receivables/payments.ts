@@ -1,6 +1,6 @@
 import { q, q1, insert, val, tx, run } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
-import { nowIso, addDays, monthKey, diffDays, fmtDate, firstOfMonth, fmtMonth } from '../../lib/dates.ts';
+import { nowIso, addDays, monthKey, diffDays, fmtDate, firstOfMonth, lastOfMonth, fmtMonth } from '../../lib/dates.ts';
 import { usd, splitCents } from '../../lib/money.ts';
 import { assertPerm, type Ctx } from '../../lib/auth.ts';
 import { emit, on } from '../../lib/events.ts';
@@ -761,6 +761,12 @@ export interface ReceivablesStats {
   autopayAdoption: number;
   delinquentHouseholds: number;
   delinquentTotal: number;
+  /** Set when NOTHING has been billed yet because recurring billing has not
+   * started — a migrated portfolio's conversion balance covers everything
+   * before this date. Without it, collected/billed = 0/0 renders as "0%
+   * collected", which reads as a book nobody is paying rather than a book that
+   * has not been invoiced yet. Callers show the date instead of the rate. */
+  billingStartsOn: string | null;
 }
 
 export function receivablesStats(ctx: Ctx, mk: string, propertyId?: string | null): ReceivablesStats {
@@ -813,8 +819,17 @@ export function receivablesStats(ctx: Ctx, mk: string, propertyId?: string | nul
      WHERE ae.org_id=? AND ae.active=1 AND l.status IN ('active','month_to_month','notice')${propertyId ? ' AND l.property_id=?' : ''}`,
     ctx.orgId, ...(propertyId ? [propertyId] : []),
   ) || 0;
+  // nothing billed this month AND every lease's billing starts later: this is
+  // a portfolio waiting for its first cycle, not one failing to collect
+  const billingStartsOn = billed === 0
+    ? (val<string>(
+        `SELECT MIN(billing_start_date) FROM leases WHERE org_id=? AND status IN ('active','month_to_month','notice')
+           AND billing_start_date IS NOT NULL AND billing_start_date > ?${propSql}`,
+        ctx.orgId, lastOfMonth(mk + '-01'), ...propParams,
+      ) || null)
+    : null;
   return {
-    billed, collected,
+    billed, collected, billingStartsOn,
     collectionRate: billed ? Math.round((collected / billed) * 1000) / 10 : 0,
     onTimePct: rentRows.length ? Math.round((onTime / rentRows.length) * 1000) / 10 : 0,
     nsfCount,
