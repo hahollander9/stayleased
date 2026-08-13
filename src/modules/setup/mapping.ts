@@ -153,6 +153,8 @@ export interface Mapping {
   excluded?: { futureApplicants: number; futureUnits: string[]; summaryRows: number };
   /** the charge code the reader concluded is rent, and where that came from */
   rentCode?: { code: string; from: 'ai' | 'frequency'; extras: string[] };
+  /** the property the document names, and the source system's code for it */
+  sourceProperty?: PropertyBanner;
 }
 
 /** Score a header against a field. exact synonym 3 · contains 2 · fuzzy 1. */
@@ -233,7 +235,26 @@ export function autoMap(headers: string[], kind: ImportKind, samples?: string[][
  * above the header ("Station U & O (1022)"). Find it deterministically:
  * among the pre-header rows, skip report/date/page lines, take the first
  * remaining short mostly-alone text cell; strip a trailing "(code)". */
-export function detectDocumentProperty(rows: string[][], headerIdx: number): string | null {
+/** A banner cell names the property and usually carries the source system's own
+ * code for it — "Livingston Place at Southern Avenue (1009)". Split them: the
+ * name is what the operator sees, the code is the key back to the system the
+ * data came from, and without it the next reconciliation has nothing to join on. */
+export interface PropertyBanner {
+  name: string;
+  /** the source system's property code, when the banner carries one */
+  code: string | null;
+}
+
+export function splitPropertyBanner(cellRaw: string): PropertyBanner | null {
+  const cell = String(cellRaw ?? '').trim();
+  if (cell.length < 3) return null;
+  const m = cell.match(/^(.*?)\s*\(([^)]{1,12})\)\s*$/);
+  const name = (m ? m[1]! : cell).trim();
+  if (name.length < 3) return null;
+  return { name, code: m ? m[2]!.trim() || null : null };
+}
+
+export function detectDocumentPropertyBanner(rows: string[][], headerIdx: number): PropertyBanner | null {
   for (let i = 0; i < Math.min(headerIdx, 6); i++) {
     const row = rows[i] || [];
     const filled = row.filter((c) => String(c ?? '').trim());
@@ -241,10 +262,14 @@ export function detectDocumentProperty(rows: string[][], headerIdx: number): str
     const cell = String(row.find((c) => String(c ?? '').trim()) ?? '').trim();
     if (/rent roll|as of|month year|report|page \d|prepared|run date|=/i.test(cell)) continue;
     if (cell.length < 3 || cell.length > 60) continue;
-    const name = cell.replace(/\s*\([^)]{1,12}\)\s*$/, '').trim();
-    if (name.length >= 3) return name;
+    const banner = splitPropertyBanner(cell);
+    if (banner) return banner;
   }
   return null;
+}
+
+export function detectDocumentProperty(rows: string[][], headerIdx: number): string | null {
+  return detectDocumentPropertyBanner(rows, headerIdx)?.name ?? null;
 }
 
 // ---------- stacked (two-row) headers ----------

@@ -149,6 +149,20 @@ function uniquePropertySlug(base: string): string {
   return `${slug}-${Date.now() % 100000}`;
 }
 
+/** A rent roll carries no address, so an imported property has no location to
+ * derive a timezone from — and the old hardcoded 'America/Denver' put a
+ * Washington DC building on Mountain time, which moves business-date rollover,
+ * rent-due timing and every late-fee window by two hours. Inherit what the org
+ * already operates in; only fall back to a constant for the very first property,
+ * where there is genuinely nothing to go on. */
+export function importTimezone(ctx: Ctx): string {
+  const existing = q1<{ timezone: string }>(
+    `SELECT timezone, COUNT(*) n FROM properties WHERE org_id=? AND timezone IS NOT NULL AND timezone<>''
+      GROUP BY timezone ORDER BY n DESC LIMIT 1`, ctx.orgId,
+  );
+  return existing?.timezone || 'America/New_York';
+}
+
 export function ensureOpeningEquityAccount(orgId: string): void {
   if (!q1('SELECT id FROM gl_accounts WHERE org_id=? AND code=?', orgId, '3030')) {
     insert('gl_accounts', {
@@ -468,6 +482,7 @@ export function portalAccessFor(ctx: Ctx, batchId: string, residentId: string): 
 export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
   const validation = validateRentRoll(ctx, batch);
   if (validation.blockers.length) throw new Error(validation.blockers.join(' '));
+  const mapping = j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] });
   const asOf = batch.as_of || ctx.businessDate;
   const billingStart = firstOfMonth(addMonths(asOf, 1));
   const summary: ApplySummary = { properties: 0, units: 0, residents: 0, leases: 0, vendors: 0, balancesCents: 0, depositsCents: 0, skipped: validation.error, recon: validation.recon };
@@ -479,13 +494,18 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
     const propIds = new Map<string, string>(); // propertyKey → property id
     const mkProperty = (name: string): string => {
       const pid = id('prp');
+      // the source system's own code for this property, when the document
+      // named one — the key the next reconciliation joins on
+      const sourceRef = mapping.sourceProperty && mapping.sourceProperty.name === name
+        ? mapping.sourceProperty.code : null;
       insert('properties', {
         id: pid, org_id: ctx.orgId, name, slug: uniquePropertySlug(name), type: 'multifamily', import_batch_id: batch.id,
-        address1: '(address pending)', city: '—', state: '--', zip: '00000', timezone: 'America/Denver',
+        source_ref: sourceRef,
+        address1: '(address pending)', city: '—', state: '--', zip: '00000', timezone: importTimezone(ctx),
         phone: null, email: null, year_built: null, fiscal_year_start_month: 1, created_at: nowIso(),
       });
       summary.properties++;
-      audit(ctx, 'property', pid, 'import_create', null, { name, batch: batch.id });
+      audit(ctx, 'property', pid, 'import_create', null, { name, batch: batch.id, source_ref: sourceRef });
       return pid;
     };
     if (batch.property_id) propIds.set(batch.property_id, batch.property_id);

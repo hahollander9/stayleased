@@ -69,6 +69,13 @@ export function db(): DatabaseSync {
     "ALTER TABLE journal_entries ADD COLUMN import_batch_id TEXT",
     "ALTER TABLE vendors ADD COLUMN import_batch_id TEXT",
     "ALTER TABLE users ADD COLUMN import_batch_id TEXT",
+    // Source-system keys. An import that keeps no key back to the system the
+    // data came from makes the NEXT reconciliation a name-matching exercise —
+    // which is exactly how the 2026-08-13 audit had to be done by hand.
+    // `source_ref` is that system's own identifier, verbatim.
+    "ALTER TABLE properties ADD COLUMN source_ref TEXT", // Yardi property code, e.g. '1009'
+    "ALTER TABLE residents ADD COLUMN source_ref TEXT", // Yardi resident id, e.g. 't0002302'
+    "ALTER TABLE lease_charges ADD COLUMN source_code TEXT", // charge code, e.g. 'rntnt' / 'rnsvchr'
   ];
   for (const m of MIGRATIONS) {
     try {

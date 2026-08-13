@@ -61,6 +61,33 @@ function isStructuralRow(row: string[]): boolean {
   return filled.every((c) => c.length <= 48 && /[a-zA-Z]/.test(c) && !/^\$?[\d,]+\.?\d*$/.test(c));
 }
 
+/** Resolve a string the MODEL returned back to the cell it came from.
+ *
+ * The grid the model reads is clipped to CELL_CLIP characters per cell, so any
+ * string it echoes back is a PREFIX of the real value, not the value. Copying
+ * one straight into the database is how the 2026-08-12 live import stored a
+ * property called "Livingston Place at Souther" — 27 characters, cut mid-word,
+ * which then propagated to the property record, every screen, and the public
+ * marketing slug /p/livingston-place-at-souther.
+ *
+ * So a model string that will be persisted is treated as a POINTER into the
+ * sheet, never as data: find the cell it is a prefix of and use that cell's
+ * full text. Nothing matches → return the model's string unchanged (it may be
+ * a genuinely short value), and the caller's deterministic reader still gets
+ * to win on its own merits. */
+export function resolveClippedString(value: string, rows: string[][]): string {
+  const want = String(value ?? '').replace(/…+\s*$/, '').trim();
+  if (!want) return '';
+  let best = want;
+  for (const row of rows) {
+    for (const cell of row) {
+      const full = String(cell ?? '').replace(/[\t\n\r]+/g, ' ').trim();
+      if (full.length > best.length && full.startsWith(want)) best = full;
+    }
+  }
+  return best;
+}
+
 export function renderSheetForAi(rows: string[][]): string {
   const clip = (c: string): string => {
     const s = String(c ?? '').replace(/[\t\n\r]+/g, ' ').trim();
@@ -273,7 +300,14 @@ export async function aiPlanSpreadsheet(sheet: Sheet, kind: ImportKind): Promise
     cacheKey: `plan:${kind}:${sheet.name}:${rows.length}x${colCount}:${JSON.stringify(rows[0] || [])}`,
   });
   if (!res.text) return null;
-  return validatePlan(extractJson(res.text), rows.length, colCount, kind);
+  const plan = validatePlan(extractJson(res.text), rows.length, colCount, kind);
+  if (!plan) return null;
+  // Every string the model echoes back came off a CLIPPED grid, so resolve each
+  // one that can reach the database back to the cell it points at. Numbers and
+  // row indexes are the model's own analysis and stay as they are; text is not.
+  if (plan.document_property) plan.document_property = resolveClippedString(plan.document_property, rows);
+  for (const s of plan.sections) s.property = resolveClippedString(s.property, rows);
+  return plan;
 }
 
 // ---------- PDF rent rolls → records ----------

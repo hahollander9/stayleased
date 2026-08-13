@@ -12,7 +12,8 @@ import { parseSpreadsheet, writeXlsx } from '../../lib/xlsx.ts';
 import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
 import { shell, card, tbl, field, input, select, statusBadge } from '../../ui/ui.ts';
 import {
-  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges, detectDocumentProperty,
+  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges,
+  detectDocumentPropertyBanner, splitPropertyBanner,
   scanRosterSections, parseSourceSummary, norm, PRESETS,
   type ImportKind, type Mapping,
 } from './mapping.ts';
@@ -187,6 +188,7 @@ export function routes(r: Router): void {
     let dataRows: string[][];
     let mapping: Mapping;
     let docProp: string | null = null; // property named by the document itself
+    let docPropCode: string | null = null; // …and the source system's code for it
     let aiRentCode = ''; // the charge code the model read as rent
     let sourceSummary: ReturnType<typeof parseSourceSummary> = null;
 
@@ -234,7 +236,19 @@ export function routes(r: Router): void {
         }
       }
 
-      docProp = plan?.document_property || detectDocumentProperty(sheet.rows, headerIdx);
+      // The plan's document_property has already been resolved back to the cell
+      // it points at (see resolveClippedString), so it is a full banner string
+      // here — but it still carries the source system's code, and the
+      // deterministic reader wins whenever the model's answer is merely a
+      // prefix of it. A shorter name is a clipped name, never a better one.
+      const aiBanner = plan?.document_property ? splitPropertyBanner(plan.document_property) : null;
+      const detected = detectDocumentPropertyBanner(sheet.rows, headerIdx);
+      const banner = !aiBanner ? detected
+        : !detected ? aiBanner
+        : detected.name.startsWith(aiBanner.name) ? detected
+        : aiBanner;
+      docProp = banner?.name || null;
+      docPropCode = banner?.code || null;
       aiRentCode = plan?.rent_code || '';
       // read the report's own summary block off the RAW sheet, before any
       // reader has had a chance to drop it — it is the only independent check
@@ -318,6 +332,7 @@ export function routes(r: Router): void {
         }
       }
       if (sourceSummary) mapping.source = sourceSummary;
+      if (docProp) mapping.sourceProperty = { name: docProp, code: docPropCode };
     }
     if (!dataRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found in that file.', 'err');
 
