@@ -241,11 +241,28 @@ export function voidApPayment(ctx: Ctx, paymentId: string, reason: string, reiss
   let newPayId: string | null = null;
   tx(() => {
     run(`UPDATE ap_payments SET status='void', void_reason=?, voided_at=? WHERE id=?`, reason, nowIso(), paymentId);
-    // reverse the payment JEs (both bases, all properties involved)
+    // Reverse the payment JEs (both bases, all properties involved).
+    //
+    // Payment entries carry the INVOICE as their source_id, so an invoice paid
+    // more than once (void → reissue) has several generations of them and this
+    // must reverse only the live one. That used to be expressed as
+    // `posted_at >= (SELECT created_at FROM ap_payments WHERE id=?)` — a
+    // comparison between two nowIso() calls taken microseconds apart, on either
+    // side of the same insert. Whether they landed in the same millisecond was
+    // a coin flip: when the payment row's timestamp came out later than its own
+    // journal entries', this matched NOTHING, so the void reversed nothing and
+    // then reissued anyway, and the books showed the cash going out twice.
+    // (It is the "date-ordering flake" CLAUDE.md documented; it was never a
+    // test problem.)
+    //
+    // The live generation is simply the one nothing has reversed yet, which is
+    // exact and has no clock in it.
     for (const je of q<any>(
-      `SELECT * FROM journal_entries WHERE org_id=? AND source_kind IN ('ap_payment','intercompany') AND source_id=? AND reversal_of IS NULL
-         AND posted_at >= (SELECT created_at FROM ap_payments WHERE id=?)`,
-      ctx.orgId, p.invoice_id, paymentId,
+      `SELECT je.* FROM journal_entries je
+        WHERE je.org_id=? AND je.source_kind IN ('ap_payment','intercompany') AND je.source_id=?
+          AND je.reversal_of IS NULL
+          AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of = je.id)`,
+      ctx.orgId, p.invoice_id,
     )) {
       const jl = q<any>('SELECT * FROM journal_lines WHERE entry_id=?', je.id);
       postJE(ctx, {
