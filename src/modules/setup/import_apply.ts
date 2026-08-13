@@ -179,6 +179,16 @@ export function importTimezone(ctx: Ctx): string {
   return existing?.timezone || 'America/New_York';
 }
 
+/** "201" -> 2, "1102" -> 11, "A-304" -> 3. A unit number that does not encode a
+ * floor (a name, a lot number, a bare 1-2 digits) stays on floor 1 rather than
+ * being given an invented one. */
+export function floorFromUnit(unit: string): number {
+  const digits = String(unit || '').match(/\d{3,4}/);
+  if (!digits) return 1;
+  const n = parseInt(digits[0]!.slice(0, digits[0]!.length - 2), 10);
+  return Number.isFinite(n) && n >= 1 && n <= 99 ? n : 1;
+}
+
 export function ensureOpeningEquityAccount(orgId: string): void {
   if (!q1('SELECT id FROM gl_accounts WHERE org_id=? AND code=?', orgId, '3030')) {
     insert('gl_accounts', {
@@ -216,6 +226,12 @@ interface RRPlan {
   extraMonthlyCents: number;
   /** the part of rentCents a voucher/housing authority pays, not the resident */
   subsidyCents: number;
+  /** read off the unit number when the source has no floor column */
+  floor: number;
+  /** the source lists them as current but their move-out already passed */
+  alreadyMovedOut: boolean;
+  /** the source system's resident id, kept so rows can be tied back */
+  sourceRef: string | null;
   mtm: boolean;
   onNotice: boolean;
 }
@@ -331,7 +347,19 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     const moveIn = toIsoDate(rec.move_in);
     const moveOut = toIsoDate(rec.move_out);
     if (rec.move_out && !moveOut) warn(`Couldn't read move-out date “${rec.move_out}” — ignored.`);
-    if (moveOut && moveOut < asOf) warn(`Move-out ${moveOut} is before the switch date — imported on notice; end the lease after import.`);
+    // Bug 8: Yardi listed unit 242 in the CURRENT section with a move-out 3.5
+    // months before the as-of date. Stored correctly, but the household still
+    // counted as occupied and $1,491/mo of rent was scheduled to start billing
+    // after they had gone. The source is genuinely ambiguous, so this is a
+    // review flag rather than a silent correction — and, crucially, no future
+    // rent is scheduled for a tenancy that has already ended.
+    const alreadyMovedOut = !!moveOut && moveOut < asOf;
+    if (alreadyMovedOut) {
+      warn(`Move-out ${moveOut} is ${Math.round((Date.parse(asOf) - Date.parse(moveOut)) / 86400000)} days before the switch date, `
+        + `yet the source still lists this household in its current section. Imported on notice exactly as the source has it — `
+        + `but NO rent is scheduled, because billing a tenancy that already ended is the one thing that cannot be undone by a correction. `
+        + `Confirm the move-out and end the lease, or re-open it if they are still in place.`);
+    }
     let leaseStart = toIsoDate(rec.lease_start) || moveIn;
     let leaseEnd = toIsoDate(rec.lease_end);
     let mtm = false;
@@ -351,10 +379,28 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
     const baths = rec.baths ? parseFloat(rec.baths) : NaN;
     let floorplanName = (rec.floorplan || '').trim();
     const bb = floorplanName.match(/^(\d+)\s*(?:bd|br|bed)?\s*[x\/-]\s*(\d+(?:\.\d+)?)/i);
+    // Bug 9: when the source states neither beds/baths nor a floorplan that
+    // encodes them, both were silently defaulted to 1 and the floorplan was
+    // NAMED "1 bed / 1 bath" — so a 331 sq ft plan and a 536 sq ft plan both
+    // claimed the same layout on the strength of nothing. The numbers still
+    // default (columns are NOT NULL and downstream pricing needs a value), but
+    // the plan is no longer named after a guess: an unnamed plan is labelled by
+    // what the source DID give — its size — so the screen says "331 sq ft plan"
+    // rather than asserting a bedroom count nobody supplied.
+    const bedsKnown = Number.isFinite(beds) || !!bb;
     const bedsF = Number.isFinite(beds) ? beds : bb ? parseInt(bb[1]!, 10) : 1;
     const bathsF = Number.isFinite(baths) ? baths : bb ? parseFloat(bb[2]!) : 1;
-    if (!floorplanName) floorplanName = `${bedsF} bed / ${bathsF} bath`;
+    if (!floorplanName) {
+      floorplanName = bedsKnown ? `${bedsF} bed / ${bathsF} bath`
+        : rec.sqft ? `${parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 0} sq ft plan`
+        : 'Unspecified plan';
+    }
     const sqft = rec.sqft ? parseInt(String(rec.sqft).replace(/[^0-9]/g, ''), 10) || 750 : 750;
+    // Bug 9: every unit imported on floor 1 though unit numbers plainly encode
+    // the floor (201, 301, 401, 501). No floor column exists in a Yardi roll,
+    // so read it off the unit number when the number looks like one — and stay
+    // on 1 when it does not, rather than inventing a floor.
+    const floor = floorFromUnit(unit);
 
     // existing unit checks (only resolvable for a concrete target property)
     const plan: RRPlan = {
@@ -366,6 +412,7 @@ export function validateRentRoll(ctx: Ctx, batch: BatchRow): Validation {
       leaseStart: leaseStart || asOf, leaseEnd: leaseEnd || addMonths(asOf, 12), moveIn: moveIn || leaseStart || null,
       moveOut, extraMonthlyCents: extraMonthlyCents > 0 ? extraMonthlyCents : 0,
       subsidyCents: subsidyCents > 0 ? subsidyCents : 0,
+      floor, alreadyMovedOut, sourceRef: rec.source_ref || null,
       mtm, onNotice: st === 'notice' || (!!moveOut && occupied),
     };
     if (tenantName && plan.occupied) {
@@ -586,7 +633,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
         unitId = id('unt');
         insert('units', {
           id: unitId, org_id: ctx.orgId, property_id: pid, building_id: null, floorplan_id: fid, import_batch_id: batch.id,
-          unit_number: plan.unit, floor: 1, sqft: plan.sqft, status: plan.occupied ? 'occupied' : plan.unitStatus,
+          unit_number: plan.unit, floor: plan.floor, sqft: plan.sqft, status: plan.occupied ? 'occupied' : plan.unitStatus,
           market_rent_cents: plan.marketRentCents || plan.rentCents || 100000, amenities: '[]', notes: null, created_at: nowIso(),
         });
         summary.units++;
@@ -604,7 +651,8 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
           rent_cents: plan.rentCents, subsidy_cents: plan.subsidyCents, deposit_cents: plan.depositCents, deposit_alternative: 0,
           term_months: 12, application_id: null, renewal_of_lease_id: null, template_id: null,
           packet_file_id: null, esign_request_id: null, bed_label: null,
-          billing_start_date: billingStart, created_at: nowIso(),
+          // a tenancy that ended before the switch date never bills forward
+          billing_start_date: plan.alreadyMovedOut ? null : billingStart, created_at: nowIso(),
         });
         // The lease RENTS for plan.rentCents — that is the contract rent and
         // what every report, average and renewal is priced off. What the
@@ -638,6 +686,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
             id: rid, org_id: ctx.orgId, property_id: pid, user_id: null, import_batch_id: batch.id,
             first_name: t.first || t.display, last_name: t.last, email: ti === 0 ? plan.email : null,
             phone: ti === 0 ? plan.phone : null, kind: 'adult', employer: null,
+            source_ref: ti === 0 ? plan.sourceRef : null,
             monthly_income_cents: null, ssn_last4: null, created_at: nowIso(),
           });
           insert('household_members', {

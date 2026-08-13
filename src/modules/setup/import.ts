@@ -293,6 +293,9 @@ export function routes(r: Router): void {
           futureApplicants: scan.futureUnits.length,
           futureUnits: scan.futureUnits.slice(0, 40),
           summaryRows: scan.summaryRows,
+          // enumerated, never just counted: a silent "32 rows skipped" on a
+          // migration is exactly how 16 signed leases went missing
+          setAside: scan.setAside.slice(0, 200),
         };
         if (scan.futureUnits.length) {
           (mapping.notes ||= []).push(
@@ -567,6 +570,24 @@ function reconStrip(recon: ImportRecon, applied: boolean): Raw {
     </div>`;
 }
 
+/** Everything the reader set aside, named. A migration that reports "32 rows
+ * skipped" and nothing else is how 16 signed leases disappeared without anyone
+ * noticing — the count was right and the meaning was invisible. */
+function setAsideCard(mapping: Mapping): Raw {
+  const rows = mapping.excluded?.setAside || [];
+  if (!rows.length) return raw('');
+  const byReason = new Map<string, string[]>();
+  for (const r of rows) byReason.set(r.reason, [...(byReason.get(r.reason) || []), r.label]);
+  return card('Rows set aside', html`
+    <p class="muted" style="margin-top:0">Every row this reader did not import as a current lease, and why.</p>
+    ${hjoin([...byReason.entries()].map(([reason, labels]) => html`
+      <div style="margin-bottom:8px">
+        <b>${labels.length} row${labels.length === 1 ? '' : 's'}</b> — ${reason}
+        <div class="muted small" style="margin-top:2px">${labels.slice(0, 60).join(' · ')}${labels.length > 60 ? ` · +${labels.length - 60} more` : ''}</div>
+      </div>`), '')}
+  `);
+}
+
 // ---------- hub page ----------
 
 function hubPage(rq: Rq): ReturnType<typeof shell> {
@@ -819,6 +840,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
       ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}
+      ${setAsideCard(j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] }))}
       ${when(!!validation.duplicateGuard, () => html`<div class="callout bad"><b>Hold on — this looks like it would duplicate residents.</b> ${validation.duplicateGuard!.message}</div>`)}
       ${when(!!preset, () => html`<div class="callout info">Recognized a <b>${preset!.name}</b> export — its columns were pre-mapped. Adjust anything below.</div>`)}
       ${when(mapping.reader === 'ai', () => html`<div class="callout info"><b>Read by AI.</b> The model read the whole document — header, columns, section labels and summary rows. ${(mapping.notes || []).join(' ')} Everything below is already pre-filled from that read — this screen is verification, not data entry. Nothing imports until you apply.</div>`)}

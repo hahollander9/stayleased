@@ -47,6 +47,7 @@ export const RENT_ROLL_FIELDS: FieldDef[] = [
   { key: 'move_in', label: 'Move-in date', synonyms: ['move in', 'move in date', 'movein', 'moved in', 'occupancy date'], contains: ['move in'] },
   { key: 'move_out', label: 'Move-out date', synonyms: ['move out', 'move out date', 'moveout', 'notice date'], contains: ['move out'] },
   { key: 'extra_monthly', label: 'Other monthly charges', hint: 'parking, storage, pets — imported as a second recurring charge on the lease', synonyms: ['other monthly charges', 'other charges', 'additional charges', 'recurring charges', 'ancillary charges'], contains: ['other charge', 'addl charge'] },
+  { key: 'source_ref', label: 'Resident ID (source system)', hint: 'the id the old system used for this household — kept so records can be tied back to it', synonyms: ['resident id', 'tenant id', 'resident code', 'tenant code', 'tcode', 't code', 'person id'], contains: [] },
   { key: 'subsidy', label: 'Housing subsidy (of the rent)', hint: 'the part of the rent a voucher or housing authority pays — the rent stays whole, this records who pays it', synonyms: ['subsidy', 'housing subsidy', 'hap', 'hap amount', 'voucher', 'voucher amount', 'assistance', 'housing assistance', 'subsidy amount'], contains: ['subsid', 'voucher', 'hap '] },
 ];
 
@@ -108,7 +109,7 @@ export const PRESETS: Preset[] = [
     // Name carries the household. Files where Resident IS the name still map
     // through the tenant synonyms (with the value-shape tie-break preferring
     // the column whose samples look like people).
-    map: { 'unit': 'unit', 'unit type': 'floorplan', 'name': 'tenant', 'market rent': 'market_rent', 'actual rent': 'rent', 'resident deposit': 'deposit', 'other deposit': '', 'move in': 'move_in', 'lease from': 'lease_start', 'lease to': 'lease_end', 'move out': 'move_out', 'lease expiration': 'lease_end', 'sq ft': 'sqft', 'unit sq ft': 'sqft', 'charge code': '', 'balance': 'balance' },
+    map: { 'unit': 'unit', 'unit type': 'floorplan', 'name': 'tenant', 'resident': 'source_ref', 'market rent': 'market_rent', 'actual rent': 'rent', 'resident deposit': 'deposit', 'other deposit': '', 'move in': 'move_in', 'lease from': 'lease_start', 'lease to': 'lease_end', 'move out': 'move_out', 'lease expiration': 'lease_end', 'sq ft': 'sqft', 'unit sq ft': 'sqft', 'charge code': '', 'balance': 'balance' },
   },
   {
     key: 'rentmanager', name: 'Rent Manager',
@@ -151,7 +152,7 @@ export interface Mapping {
   /** what the report says about itself (its own summary block), for tie-out */
   source?: SourceSummary;
   /** rows the reader set aside before review, by reason */
-  excluded?: { futureApplicants: number; futureUnits: string[]; summaryRows: number };
+  excluded?: { futureApplicants: number; futureUnits: string[]; summaryRows: number; setAside?: { label: string; reason: string }[] };
   /** the charge code the reader concluded is rent, and where that came from */
   rentCode?: { code: string; from: 'ai' | 'frequency'; extras: string[] };
   /** the property the document names, and the source system's code for it */
@@ -571,6 +572,9 @@ export interface RosterScan {
   futureUnits: string[];
   /** rows belonging to the report's own summary trailer */
   summaryRows: number;
+  /** every row set aside, with the reason — "32 rows skipped" is how the
+   * future-residents section hid in plain sight on the 2026-08-12 import */
+  setAside: { label: string; reason: string }[];
   /** true when the file actually declared these sections */
   sectioned: boolean;
 }
@@ -588,7 +592,7 @@ const ROSTER_HEADINGS: [RegExp, RosterKind][] = [
  * guard is what keeps the trailer's own "Current/Notice/Vacant Residents"
  * TOTALS line (same words, real numbers) from reading as a second heading. */
 export function scanRosterSections(rows: string[][], mapping: Mapping): RosterScan {
-  const out: RosterScan = { rows: [], futureRows: [], futureUnits: [], summaryRows: 0, sectioned: false };
+  const out: RosterScan = { rows: [], futureRows: [], futureUnits: [], summaryRows: 0, setAside: [], sectioned: false };
   let unitCol = -1;
   for (const [c, f] of Object.entries(mapping.cols)) if (f === 'unit') unitCol = Number(c);
   if (unitCol < 0) { out.rows = rows; return out; }
@@ -605,18 +609,26 @@ export function scanRosterSections(rows: string[][], mapping: Mapping): RosterSc
       state = state === 'trailer' ? 'trailer' : heading;
       out.sectioned = true;
       if (state === 'current') continue; // heading row itself is never data
-      out.summaryRows += state === 'trailer' ? 1 : 0;
+      if (state === 'trailer') { out.summaryRows++; out.setAside.push({ label, reason: 'the report\u2019s own summary block' }); }
       continue;
     }
-    if (state === 'trailer') { out.summaryRows++; continue; }
+    if (state === 'trailer') {
+      out.summaryRows++;
+      const first = String(row.find((c) => String(c ?? '').trim()) ?? '').trim();
+      if (first) out.setAside.push({ label: first, reason: 'the report\u2019s own summary block' });
+      continue;
+    }
     if (state === 'future') {
       out.futureRows.push(row);
-      if (label) out.futureUnits.push(label);
+      if (label) {
+        out.futureUnits.push(label);
+        out.setAside.push({ label: `unit ${label}`, reason: 'future resident/applicant \u2014 imported as a signed future lease' });
+      }
       continue;
     }
     out.rows.push(row);
   }
-  if (!out.sectioned) { out.rows = rows; out.futureRows = []; out.futureUnits = []; out.summaryRows = 0; }
+  if (!out.sectioned) { out.rows = rows; out.futureRows = []; out.futureUnits = []; out.summaryRows = 0; out.setAside = []; }
   return out;
 }
 

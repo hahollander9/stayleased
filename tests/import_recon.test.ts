@@ -270,7 +270,7 @@ test('yardi block roll: the header merges, the preset lands, and the property co
   assert.equal(by.rent, 7, 'Amount beside the charge code is the rent');
   assert.equal(by.deposit, 8, 'Resident Deposit, not Other Deposit');
   assert.equal(by.sqft, 2, 'the stacked "Unit / Sq Ft" pair');
-  assert.equal(mapping.cols[3], undefined, 'the resident t-code column stays unmapped');
+  assert.equal(by.source_ref, 3, 'the Resident column is the source system\u2019s id, kept as a key back to it \u2014 not the household name');
 });
 
 test('yardi block roll: roster sections split current leases from future applicants and the trailer', () => {
