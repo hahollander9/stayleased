@@ -931,8 +931,18 @@ but not by `canAccessProperty`; it does now, before touching anything.
 facilities, askdock, crm, goldenpath, clientready, navmenus, hubs, workingmodel · drag-drop, bid
 award, COI refusal and the `/units/move` refusal paths verified in a real browser and by direct POST.
 
-**Correction to this file's own known-flake note:** `tests/accounting.test.ts` (`AP void/reissue`,
-`bank feed reconcile`) is documented as passing solo. It does not. Measured today at 3 failures in 6
-consecutive solo runs — and **3 in 6 on a stashed clean tree as well**, so the rate is unchanged by
-this build. The "passes solo" heuristic sent this session chasing a phantom regression; the reliable
-test is stash-and-compare, not run-it-alone.
+**The accounting "flake" is not a flake — and this branch still carries the bug.** `AP void/reissue`
+and `bank feed reconcile` failed 3 times in 6 solo runs here, and **3 in 6 on a stashed clean tree**,
+so nothing in this build moved the needle. That measurement was right and the label on it was wrong:
+a parallel session (PR #7) restored CI, watched it fail these same two tests twice on a machine that
+had never run the suite, and found a money bug underneath. `voidApPayment` selects the entries to
+reverse with `posted_at >= (SELECT created_at FROM ap_payments WHERE id=?)` — two `nowIso()` calls on
+either side of one insert. Lose that race and the query matches nothing: the void reverses nothing,
+the reissue cuts a new check anyway, and the cash leaves twice.
+
+This branch is cut from main before that fix, so it still has the bug; PR #7 carries the correction
+and this branch should rebase onto main once it lands. Recorded here because the standing advice in
+`CLAUDE.md` — "a red there = re-run before investigating" — is what let a real defect in the books sit
+behind the word "flake", and re-running is exactly the instinct that kept it hidden. The reliable
+technique when a suite reddens is stash-and-compare against a clean tree, which localises the blame
+without pronouncing the failure harmless.
