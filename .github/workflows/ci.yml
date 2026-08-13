@@ -1,0 +1,78 @@
+name: CI
+
+# The gates CLAUDE.md requires before any push, run by a machine instead of by
+# whoever remembered. main auto-deploys to stayleased.com, so a red run here is
+# the last thing between a mistake and production.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# a new push supersedes the run in flight for the same ref
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: typecheck + unit
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # `npm install`, not `npm ci`: the lockfile is intentionally thin (the
+      # runtime has one dependency) and `ci` would fail on any drift rather
+      # than resolve it.
+      - run: npm install --no-audit --no-fund
+
+      # tsc --strict IS the lint gate here — there is no ESLint (DECISIONS #10)
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # No retry, deliberately. This step was first written to re-run once,
+      # because a documented "date-ordering flake" reddened about one run in
+      # three. CI's very first run failed it twice in a row, which is what
+      # showed it was not random at all: voidApPayment was matching the entries
+      # to reverse against a millisecond race, so a void could reverse nothing
+      # and reissue anyway. That is fixed (see CLAUDE.md), and a retry kept
+      # "just in case" is how a suite learns to hide the next one.
+      - name: Unit suite
+        run: sh scripts/test.sh
+
+  e2e:
+    name: end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm install --no-audit --no-fund
+
+      # only chromium: e2e/lib.ts boots the app in-process and drives one browser
+      - name: Install Chromium for Playwright
+        run: npx playwright install --with-deps chromium
+
+      # seeds a fresh demo database, then runs every suite at concurrency 1
+      # against a per-file copy of it (STAYLEASED_E2E_ISOLATE)
+      - name: E2E suite
+        run: sh scripts/e2e.sh
+
+      - name: Upload failure output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-artifacts
+          path: |
+            shots/
+            data/*.db
+          retention-days: 7
+          if-no-files-found: ignore

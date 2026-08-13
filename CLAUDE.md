@@ -30,12 +30,17 @@ node --experimental-strip-types --no-warnings --test --test-concurrency=1 \
   --test-timeout=240000 e2e/<files>.test.ts
 ```
 
-## Known flake
+## Known flake — RESOLVED 2026-08-12, do not re-add a retry
 
-`tests/accounting.test.ts` has a pre-existing date-ordering flake (`AP void/reissue`,
-`bank feed reconcile`) that reddens ~1 run in 3 on the full suite and passes solo and on
-re-run. A red there = re-run before investigating. Do not "fix" it casually — it is
-documented in BUILDLOG and reproduces only under full-suite ordering.
+The `tests/accounting.test.ts` "date-ordering flake" (`AP void/reissue`, `bank feed
+reconcile`) was never a test problem. `voidApPayment` found the entries to reverse with
+`posted_at >= (SELECT created_at FROM ap_payments …)` — two `nowIso()` calls taken on either
+side of one insert. When the payment row's millisecond landed after its own journal entries',
+the query matched nothing: **the void reversed nothing and the reissue still cut a check, so
+the books showed the cash leaving twice.** A money bug, surfaced the first time CI ran the
+suite on a different machine (it failed twice in a row there, which is what proved it was not
+random). Fixed by selecting the generation nothing has reversed yet — no clock in it — with
+two regression tests that force the losing race. There is no known flake; a red suite is real.
 
 ## Architecture map
 
