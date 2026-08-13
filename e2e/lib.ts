@@ -64,6 +64,12 @@ export async function newPage(browser: Browser, opts?: { mobile?: boolean }): Pr
   const ctx = await browser.newContext({
     viewport: opts?.mobile ? { width: 390, height: 844 } : { width: 1440, height: 900 },
     deviceScaleFactor: opts?.mobile ? 2 : 1,
+    // Drive the app as a reduced-motion user gets it. Playwright will not click
+    // an element until it is "stable" — two identical frames — and the .content
+    // entrance animation on a 362-row table never settled inside 30s on a
+    // 2-core CI runner. This is not a test-only hack: reduced motion is a mode
+    // the product promises (visible + still), so the suite now exercises it.
+    reducedMotion: 'reduce',
   });
   return ctx.newPage();
 }
