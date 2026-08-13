@@ -214,6 +214,15 @@ export function routes(r: Router): void {
     else if (bucket === '61_90') aging = aging.filter((a) => a.d61_90 > 0);
     else if (bucket === '90p') aging = aging.filter((a) => a.d90p > 0);
     const total = aging.reduce((s, a) => s + a.balance, 0);
+    // Delinquent means PAST DUE, not "has an open balance". A charge sitting in
+    // the Current bucket is money billed and not yet owed, and counting it made
+    // a freshly migrated portfolio — 124 households, nothing overdue, all four
+    // aging buckets $0.00 — report "124 delinquent households · $1,798.00 open"
+    // on the client's first look at their own book.
+    const pastDueOf = (a: typeof aging[number]): number => a.d1_30 + a.d31_60 + a.d61_90 + a.d90p;
+    const pastDue = aging.filter((a) => pastDueOf(a) > 0);
+    const pastDueTotal = pastDue.reduce((s, a) => s + pastDueOf(a), 0);
+    const currentTotal = total - pastDueTotal;
     const props = q<any>(`SELECT id, name FROM properties WHERE org_id=?${propFilter(ctx, 'id').sql} ORDER BY name`, ctx.orgId, ...propFilter(ctx, 'id').params);
     const cases = q<any>(
       `SELECT cc.*, l.household_name FROM collection_cases cc JOIN leases l ON l.id=cc.lease_id WHERE cc.org_id=? AND cc.status='open' ORDER BY cc.opened_date DESC LIMIT 15`,
@@ -239,7 +248,9 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Delinquency workbench',
       active: '/delinquency',
-      subtitle: `${aging.length} delinquent households · ${usd(total)} open · as of ${fmtDate(ctx.businessDate)}${scoreBy.size && scoring?.mode === 'shadow' ? ' · scoring: shadow (chips inform, behavior unchanged)' : ''}`,
+      subtitle: `${pastDue.length} past-due household${pastDue.length === 1 ? '' : 's'} · ${usd(pastDueTotal)} past due`
+        + (currentTotal > 0 ? ` · ${usd(currentTotal)} current, not yet due` : '')
+        + ` · as of ${fmtDate(ctx.businessDate)}${scoreBy.size && scoring?.mode === 'shadow' ? ' · scoring: shadow (chips inform, behavior unchanged)' : ''}`,
       actions: html`<a class="btn btn-ghost" href="/delinquency/export">Export CSV</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>

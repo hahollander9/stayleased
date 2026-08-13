@@ -53,10 +53,14 @@ export const WIDGETS: Widget[] = [
     kind: 'kpi',
     render(ctx) {
       const aging = agingRows(ctx, { propertyId: ctx.currentPropertyId });
-      const total = aging.reduce((s, a) => s + a.balance, 0);
+      // past due, not merely billed — a Current-bucket charge is not delinquent
+      // (see the workbench: a migrated portfolio with nothing overdue read as
+      // "124 delinquent households · $1,798.00" on the operator's first look)
+      const pastDue = aging.filter((a) => a.d1_30 + a.d31_60 + a.d61_90 + a.d90p > 0);
+      const total = pastDue.reduce((s, a) => s + a.d1_30 + a.d31_60 + a.d61_90 + a.d90p, 0);
       const d60 = aging.reduce((s, a) => s + a.d61_90 + a.d90p, 0);
       return kpis([
-        { label: 'Delinquent', value: usd(total), sub: `${aging.length} households`, tone: total ? 'bad' : 'ok', href: '/delinquency' },
+        { label: 'Past due', value: usd(total), sub: `${pastDue.length} household${pastDue.length === 1 ? '' : 's'}`, tone: total ? 'bad' : 'ok', href: '/delinquency' },
         { label: '60+ days', value: usd(d60), tone: d60 ? 'warn' : 'ok', href: '/delinquency?bucket=61_90' },
         { label: 'Aged report', value: 'open →', href: '/reports/delinquency_aged' },
       ]);
