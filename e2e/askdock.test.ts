@@ -72,13 +72,13 @@ test('gate: Ask panel opens everywhere, greets with live property figures, answe
 
 test('gate: theme follows the system setting; the toggle cookie overrides it', async () => {
   // system dark, no cookie → dark
-  const dark = await browser.newPage({ colorScheme: 'dark' });
+  const dark = await newPage(browser, { colorScheme: 'dark' });
   await login(dark, base, 'admin@summitridge.demo');
   assert.equal(await dark.evaluate(() => document.documentElement.getAttribute('data-theme')), 'dark', 'system dark respected');
   await dark.close();
 
   // system light, no cookie → light
-  const light = await browser.newPage({ colorScheme: 'light' });
+  const light = await newPage(browser, { colorScheme: 'light' });
   await login(light, base, 'admin@summitridge.demo');
   assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'light', 'system light respected');
 

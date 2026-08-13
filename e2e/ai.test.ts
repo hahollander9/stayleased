@@ -187,13 +187,34 @@ test('gate: Ask chat — "hello" gets a conversational answer, chips answer with
     return (a[a.length - 1]!.textContent || '').trim();
   });
 
+  // Hold the first reply in flight. The busy window is otherwise whatever the
+  // round trip happens to take — against an in-process server under reduced
+  // motion (no typewriter) that is a few milliseconds, and asserting on it is
+  // a race the assertion loses. Pinning it makes the guard a fact to check.
+  let release = (): void => {};
+  const held = new Promise<void>((r) => { release = r; });
+  let first = true;
+  await page.route('**/ask.json', async (route) => {
+    if (first) { first = false; await held; }
+    await route.continue();
+  });
+
   // conversational path: hello → friendly intro, never the fallback card
   await page.fill('#aichat-input', 'hello');
   await page.click('.aichat-send');
   await page.waitForSelector('.aichat-panel.busy', { timeout: 5000 });
-  // while typing, chips are inert and the send button is disabled
+  // while the answer is in flight the send button is disabled, and a question
+  // typed in the meantime is neither double-sent nor silently swallowed
   assert.ok(await page.locator('.aichat-send[disabled]').count(), 'send disabled while busy');
+  await page.fill('#aichat-input', 'and occupancy?');
+  await page.locator('#aichat-form').evaluate((f) => (f as HTMLFormElement).requestSubmit());
+  assert.equal(await page.locator('.aichat-msg.you').count(), 1, 'second submit ignored while busy');
+  assert.equal(await page.inputValue('#aichat-input'), 'and occupancy?', 'mid-flight question survives');
+
+  release();
   await idle();
+  await page.unroute('**/ask.json');
+  await page.fill('#aichat-input', '');
   const hello = await lastAgent();
   assert.match(hello, /Ask StayLeased/i, 'assistant introduces itself');
   assert.doesNotMatch(hello, /could not answer that directly/i, 'no cold fallback for small talk');

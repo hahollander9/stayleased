@@ -818,14 +818,14 @@ suite cannot burn an hour.
 red about a third of the time on day one, and a gate nobody trusts is worse than no gate. The unit
 step therefore re-runs once on failure — the same rule CLAUDE.md gives a human — and emits a GitHub
 warning annotation when it does, so a flake that turns constant is visible in the run history rather
-than absorbed. Two failures in a row still fails the job. (#50)
+than absorbed. Two failures in a row still fails the job. (#52)
 
 **Verified against a real run, not asserted.** The full e2e suite (all 31 files, which
 `scripts/e2e.sh` runs and which no session today had run end to end) was executed locally exactly as
 the workflow will run it, before the workflow was pushed. Shipping CI that is born red would have
 taught everyone to ignore it in its first hour.
 
-**Decisions:** #50.
+**Decisions:** #52.
 
 ## 2026-08-12 — CI's first run found the money bug that had been filed as a flake
 **What happened.** The CI restored an hour earlier ran for the first time and its unit job went red on
@@ -844,7 +844,7 @@ twice.** In the CI logs it read as a $500 cash discrepancy on the void test and 
 as a surplus in the bank-feed test two tests later.
 
 **The fix** takes the clock out of the decision: the live generation is the one nothing has reversed
-yet. Exact, deterministic, and what the code always meant. (#51)
+yet. Exact, deterministic, and what the code always meant. (#53)
 
 **Verified by breaking it first.** Both regression tests — one forcing the inverted timestamp, one
 voiding a reissued payment to prove only the live generation is reversed — were run against the OLD
@@ -856,7 +856,7 @@ justification was this flake. Keeping it now "just in case" is how a suite learn
 real failure, so it is gone and CLAUDE.md's Known-flake section is replaced with a note saying a red
 suite is real.
 
-**Decisions:** #51.
+**Decisions:** #53.
 
 **Verified:** tsc strict clean · unit suite · full e2e (all 31 files) · the two new tests red against
 the old query, green against the new one.
@@ -903,6 +903,115 @@ and the first card's heading covered below), and a level rail escaping the card 
 said `static`. Rebased onto the parallel session's settings reorganization (#48/#49) — the scope bar sits above its
 proposals card and folded sections, and the "only what is set here" filter applies to all of them.
 Plan: `docs/superpowers/plans/2026-08-13-property-scoped-settings.md`. (#50, #51)
+
+## 2026-08-13 — The reduced-motion promise was never kept, and the test browser never asked
+CI's e2e job hit its 40-minute cap on the second run. It was not hung — the log showed test 137 of
+175, working — and inside it one real failure: `reports.test.ts:43`, `page.click` timing out after
+30s waiting for an element to be "visible, enabled and **stable**", on a table Playwright said
+"resolved to 362 elements".
+
+**Stable is the word that matters.** Playwright refuses to click something still moving.
+`src/ui/theme.css` gives `.content` a `pagein` entrance on **every page in the app**, and the
+`@media (prefers-reduced-motion: reduce)` block below it never mentioned `.content`. So the one
+element wrapping every screen animated for everyone, including the users who had asked their
+operating system for stillness — a plain violation of the motion doctrine's "reduced-motion =
+visible + still", live on the site, missed by 31 e2e files.
+
+Missed because **the test browser never asked.** Playwright launches with no motion preference, so
+every suite exercised the animated path only; the reduced-motion half of the doctrine had no test
+anywhere. Both halves are fixed together: `.content { animation: none }` under reduced motion, and
+`newPage()` in `e2e/lib.ts` now opens contexts with `reducedMotion: 'reduce'`, which makes the
+promise enforced by default rather than by inspection. The suite got faster as a side effect —
+9m58s against about 12 — because the wait-for-stable was being paid on every navigation. (#54)
+
+**Then it turned one test red, and the test was right to complain.** `ai.test.ts`'s Ask-chat gate
+clicked send and waited up to 5s for `.aichat-panel.busy` to appear. Without the typewriter the
+reply lands instantly, so the busy window collapsed to the length of an in-process round trip and
+the assertion arrived after it had closed. Bisected to be sure: the CSS change alone passes 7/7, the
+reduced-motion context alone fails 3/3. Nothing was broken — the test had been asserting on a
+window whose duration was an animation artifact.
+
+Rewriting it found a real hole. The gate is named "busy state guards double-sends", and the guard it
+checked was the send button's `disabled` attribute. But `ask()`'s own `if (busy) return` sits
+*after* the submit handler has already done `input.value = ''` — so any submit that reached the
+handler mid-answer wiped the operator's half-typed follow-up and sent nothing. Not reachable by
+clicking (the button is disabled) or by Enter (implicit submission clicks that same disabled
+button), which is why it has sat there unseen; reachable by `requestSubmit()`, and one line from
+being reachable for real. The handler now checks `busy` before it clears the box, and the test holds
+`/ask.json` in flight with a route so the busy window is a fact instead of a race, then asserts the
+guard behaviorally: send disabled, a mid-flight submit adds no second bubble, and the question typed
+during the answer is still in the input afterwards. (#55)
+
+**Verified by breaking it first**, as is now the habit: with the handler guard removed the new
+assertion fails on exactly the right line (`mid-flight question survives — expected 'and
+occupancy?', actual ''`), and passes with it restored, three runs for three.
+
+The CI e2e cap goes 40 → 60 minutes in the same commit. 40 was set from a local 12-minute run and a
+hosted runner is slower than that by more than the margin allowed; a cap that cancels a working job
+teaches everyone to ignore the red.
+
+**Decisions:** #54, #55.
+
+**Verified:** tsc strict clean · unit suite 353/353 · full e2e (all 31 files) · `ai.test.ts` 3×
+green, and red against the un-guarded handler.
+
+## 2026-08-13 — Three pages had opted out of the helper, and CI found the two that mattered
+The reduced-motion change went green locally at 175/175 and came back from CI at 174/175. The
+failure was `askdock.test.ts:86` — `page.click('[data-theme-toggle]')`, 30s timeout, element
+resolved, "waiting for element to be visible, enabled and **stable**". The same signature as the
+`reports.test.ts` failure the reduced-motion fix was written to cure, on a different element, one
+run later.
+
+**Because that test never got the fix.** `newPage()` in `e2e/lib.ts` is where the suite decides what
+kind of browser it is driving — viewport, device scale, and now reduced motion. The theme gate needs
+a `colorScheme`, the helper took no such option, so it called `browser.newPage({ colorScheme })`
+directly and inherited none of the rest. When the suite moved to reduced motion, those two pages
+stayed on the animated path. A third (`ilsemail.test.ts:76`) had done the same with a bare
+`browser.newContext()`, and was passing only by luck of what it clicks.
+
+Local machines have the cores to finish a 0.3s entrance before Playwright gives up; a 2-core hosted
+runner does not. So the bug was invisible in exactly the place it was introduced and visible only in
+the place that matters, which is the argument for the gate existing at all.
+
+**Fixed by closing the door rather than patching the two callers.** `colorScheme` is now a parameter
+on `newPage()`, all three sites go through the helper, and `tests/e2e_hygiene.test.ts` asserts no
+file under `e2e/` calls `browser.newPage`/`browser.newContext` directly — so the next test that
+needs an option adds it to the helper instead of stepping around it. Verified both directions: green
+as it stands, and red naming `ilsemail.test.ts:76` when the bypass is put back. (#56)
+
+Worth recording for its own sake: with reduced motion the hosted runner ran all 175 in **6m38s**.
+The previous two CI runs were cancelled at the 40-minute cap. The animation was not a small tax.
+
+**Decisions:** #56.
+
+**Verified:** tsc strict clean · unit suite 354/354 (the new guard included) · full e2e (all 31
+files) · `askdock` + `ilsemail` scoped green · the guard confirmed red against a reintroduced bypass.
+
+## 2026-08-13 — Three PRs, one tail: the upload that quietly overwrote two decisions
+Reviewing the three open PRs for conflicts turned up something bigger than the conflicts. Every one
+of #8, #9 and #10 was based on `1c3059a` and every one claimed decision **#52** — the collision
+`CLAUDE.md`'s parallel-session rule predicts, and mechanical to fix. Underneath it, main had already
+lost data.
+
+`6fef829` ("Add files via upload") is a real build — property-scoped settings, 24 files, two new test
+files, and a good one. It also **deleted BUILDLOG's two CI entries and DECISIONS #50 and #51**, and
+reused those two numbers for its own decisions. Not a merge, not a conflict anyone resolved wrongly:
+a web upload replaces the file with the uploader's copy, and that copy was read before #7 merged.
+
+What went missing was the AP void money bug — the day's most expensive finding, the reason CLAUDE.md
+no longer documents a "known flake". The code fix survived (`ap.ts` still selects the generation
+nothing has reversed); only the account of *why* did. **Every gate passed.** `doclog.test.ts` asserts
+contiguous numbering and unique headers, and a clean overwrite satisfies both — a file can lose two
+entries and stay green. (#57)
+
+**Resolved by keeping both sides and renumbering once.** This branch still carried the deleted text,
+so resolving the conflict *is* the restoration: main's #50/#51 stay where they are (they are
+published and may already be cited), the two clobbered decisions come back as **#52–#53**, and this
+build's three move to **#54–#56**. Citations inside the restored entries moved with them. The
+remaining two PRs get disjoint ranges below.
+
+**Verified:** no conflict markers · every BUILDLOG header from both sides present · decision bodies
+byte-identical to their originals · `doclog.test.ts` green on contiguity, citations and uniqueness.
 
 ## 2026-08-13 — Thirteen surfaces the operator actually touches, and the comment that deleted the map
 **Built (Henry, one batch across two messages plus a follow-up):** thirteen changes, all of them in
@@ -992,23 +1101,8 @@ reverse with `posted_at >= (SELECT created_at FROM ap_payments WHERE id=?)` — 
 either side of one insert. Lose that race and the query matches nothing: the void reverses nothing,
 the reissue cuts a new check anyway, and the cash leaves twice.
 
-PR #7 landed that fix (recorded here as DECISION 53) while this build was in flight, and main is merged in here, so
-this branch now carries it — the two tests pass. This build's decisions are numbered 54–59; see the recovery note below for why. Recorded because the advice that used to stand in `CLAUDE.md` — "a red there =
+PR #7 landed that fix (DECISION 53) while this build was in flight, and main is merged in here, so
+this branch now carries it — the two tests pass. This build's decisions are numbered 58–63, claimed against main's tail of 57. Recorded because the advice that used to stand in `CLAUDE.md` — "a red there =
 re-run before investigating" — is what let a real defect in the books sit behind the word "flake", and
 re-running is exactly the instinct that kept it hidden. The reliable technique when a suite reddens is
 stash-and-compare against a clean tree, which localises blame without pronouncing the failure harmless.
-
-**Recovered here: two BUILDLOG entries and two DECISIONS that a web upload removed from main.**
-Commit `6fef829` ("Add files via upload") landed the property-scoped-settings work by replacing whole
-files from a local copy taken before #7 merged. Code was unaffected — `voidApPayment`'s fix is still
-on main — but the *record* was not. Both of #7's BUILDLOG entries were gone, and its DECISIONS 50 and
-51 had been overwritten by two unrelated entries reusing the same numbers, so main carried a money-bug
-fix with no written account of why it exists. This branch still held them from its own merge of #7,
-which is the only reason they are recoverable; they are restored above and as DECISIONS 52–53, and this
-build's own entries shift to 54–59 because the upload's 50–51 are already published on main.
-
-This is the same hazard `CLAUDE.md` already records against `.github/workflows/ci.yml` ("lost to a
-web-UI upload"), and it is worse than the note suggests: a dot-directory vanishing is at least visible,
-whereas an append-only log silently reverting to an older revision looks exactly like a file that was
-never written to. `.github/` survived this time. The engineering memory did not.
-
