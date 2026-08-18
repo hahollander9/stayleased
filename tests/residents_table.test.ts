@@ -142,9 +142,16 @@ test('/residents.csv respects filter + sort: header row, right count/order, quot
   assert.match(resp.headers.get('content-disposition') || '', /attachment/);
   const body = await resp.text();
   const lines = body.split(/\r?\n/).filter((l) => l !== '');
-  assert.equal(lines[0], 'Resident,Unit,Property,Role,Lease status,Balance', 'header row');
+  // The export carries the same labels the table does, and says which rows
+  // count: a household's balance repeats for roommates, so a spreadsheet total
+  // over the raw column would double it (2026-08-18).
+  assert.equal(lines[0], 'Resident,Unit,Property,On the lease,Lease status,Household balance,Counts once', 'header row');
   assert.equal(lines.length, 1 + 4, 'filtered rows only — all pages, not 61, not the other org');
-  assert.equal(lines[1], 'Bea Zortcase,201,Sort Pines,primary,active,300.00', 'sorted desc, money as plain 2-decimal number');
+  assert.equal(lines[1], 'Bea Zortcase,201,Sort Pines,Primary,active,300.00,yes', 'sorted desc, money as plain 2-decimal number');
+  // summing only the rows flagged 'yes' gives each household exactly once
+  const counted = lines.slice(1).filter((l) => l.endsWith(',yes'));
+  assert.equal(counted.length, new Set(lines.slice(1).map((l) => l.split(',').slice(-6, -4).join('|'))).size,
+    'one counted row per unit/property — i.e. per household');
   assert.ok(body.includes('"Dee Zortcase, Jr."'), 'comma-bearing name is quoted');
   assert.ok(!body.includes('Foreign'), 'other org never leaks into the export');
 });

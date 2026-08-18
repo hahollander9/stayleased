@@ -7,7 +7,7 @@ import { nowIso, fmtDate } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
 import { putFile } from '../../lib/files.ts';
-import { doc, card, dl, statusBadge, field, input, select, textarea, emptyState, logo } from '../../ui/ui.ts';
+import { doc, shell, card, dl, statusBadge, field, input, select, textarea, emptyState, logo } from '../../ui/ui.ts';
 import { takeFlash } from '../../lib/http.ts';
 import { transitionWo, woEvent, logMaterial, logLabor } from './service.ts';
 
@@ -16,6 +16,14 @@ import { transitionWo, woEvent, logMaterial, logLabor } from './service.ts';
  * action is a single POST; drafts live in the browser until submitted). */
 
 import type { Child } from '../../lib/html.ts';
+
+/** The standalone phone shell. It belongs to the VENDOR portal — an outside
+ * contractor with no app account and no nav to speak of.
+ *
+ * Staff maintenance used to land here too, which meant clicking "My day" threw
+ * a signed-in employee out of the application into a chrome-less page with a
+ * "Full app" escape hatch. A tech is staff: their queue is a page of the app,
+ * on whatever device they are holding. */
 export function techShell(rq: Rq, title: string, content: Child, back?: string): Res {
   const flash = takeFlash(rq);
   const body = html`<div class="portal">
@@ -58,10 +66,14 @@ export function routes(r: Router): void {
       </div>
       ${statusBadge(w.status)}
     </a>`;
-    return techShell(rq, `${fmtDate(ctx.businessDate)} — ${today.length} open`, html`
-      ${when(scheduled.length, () => card('Due today', join(scheduled.map(item))))}
-      ${card(scheduled.length ? 'Everything else assigned to me' : 'My queue', rest.length || scheduled.length ? join(rest.map(item)) : emptyState('Queue is clear', 'Nice work. New assignments appear here.'))}
-      <p class="small muted center">${doneToday[0]?.n || 0} completed today</p>`);
+    return shell(rq, {
+      title: 'My day',
+      active: '/myday',
+      subtitle: `${fmtDate(ctx.businessDate)} · ${today.length} open · ${doneToday[0]?.n || 0} completed today`,
+      content: html`
+        ${when(scheduled.length, () => card('Due today', join(scheduled.map(item))))}
+        ${card(scheduled.length ? 'Everything else assigned to me' : 'My queue', rest.length || scheduled.length ? join(rest.map(item)) : emptyState('Queue is clear', 'Nice work. New assignments appear here.'))}`,
+    });
   });
 
   r.get('/myday/:id', requirePerm('workorders:work'), (rq) => {
@@ -77,7 +89,12 @@ export function routes(r: Router): void {
     const items = q<any>(`SELECT * FROM inventory_items WHERE org_id=? AND property_id=? AND on_hand>0 ORDER BY name`, ctx.orgId, w.property_id);
     const photos = q<any>(`SELECT * FROM files WHERE entity='work_order' AND entity_id=?`, w.id);
     const canStart = ['assigned', 'scheduled', 'reopened', 'on_hold'].includes(w.status);
-    return techShell(rq, w.summary, html`
+    return shell(rq, {
+      title: w.summary,
+      active: '/myday',
+      crumbs: [['My day', '/myday']],
+      subtitle: `${w.unit_number ? `Unit ${w.unit_number} · ` : ''}${w.prop_name}`,
+      content: html`
       ${card(html`${statusBadge(w.priority)} ${statusBadge(w.status)}`, dl([
         ['Where', `${w.unit_number ? `Unit ${w.unit_number} · ` : ''}${w.prop_name}`],
         ['Entry', w.permission_to_enter ? 'Permission to enter ✓' : '⚠ Resident must be home'],
@@ -120,7 +137,7 @@ export function routes(r: Router): void {
         </form>`)}`)}
 
       ${card('Recent activity', html`<ul class="timeline">${events.map((e) => html`<li><div><b>${e.body || e.kind}</b></div><div class="t-when">${(e.business_date || e.at).slice(0, 10)}</div></li>`)}</ul>`)}`,
-      '/myday');
+    });
   });
 
   r.post('/myday/:id/start', requirePerm('workorders:work'), (rq) => {

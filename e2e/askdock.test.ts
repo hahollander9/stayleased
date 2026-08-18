@@ -70,22 +70,41 @@ test('gate: Ask panel opens everywhere, greets with live property figures, answe
   await page.close();
 });
 
-test('gate: theme follows the system setting; the toggle cookie overrides it', async () => {
-  // system dark, no cookie → dark
+test('gate: theme follows the system setting; an explicit choice overrides it, and System gives it back', async () => {
+  // system dark, no choice → dark
   const dark = await newPage(browser, { colorScheme: 'dark' });
   await login(dark, base, 'admin@summitridge.demo');
   assert.equal(await dark.evaluate(() => document.documentElement.getAttribute('data-theme')), 'dark', 'system dark respected');
   await dark.close();
 
-  // system light, no cookie → light
+  // system light, no choice → light
   const light = await newPage(browser, { colorScheme: 'light' });
   await login(light, base, 'admin@summitridge.demo');
   assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'light', 'system light respected');
 
-  // explicit toggle wins over the system setting on the next load
-  await light.click('[data-theme-toggle]');
-  assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'dark', 'toggle flips immediately');
+  // Appearance lives in the account menu now — three named choices, not a bare
+  // glyph beside the setup gear (2026-08-18).
+  assert.equal(await light.locator('[data-theme-toggle]').count(), 0, 'no lone theme glyph in the app chrome');
+  await light.click('button.avatar');
+  await light.waitForTimeout(120);
+  assert.match((await light.textContent('#usermenu-pop')) || '', /Appearance/);
+
+  // an explicit choice wins over the system setting, and survives a reload
+  await light.click('[data-theme-set="dark"]');
+  assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'dark', 'the choice applies immediately');
   await light.reload({ waitUntil: 'networkidle' });
-  assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'dark', 'cookie override survives reload against system light');
+  assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'dark', 'and survives a reload against system light');
+
+  // the menu shows which choice is live
+  await light.click('button.avatar');
+  await light.waitForTimeout(120);
+  assert.equal(await light.locator('[data-theme-set="dark"]').getAttribute('aria-pressed'), 'true', 'the live choice is marked');
+
+  // System is a real choice, not the absence of one: picking it clears the
+  // override and hands the page back to the operating system.
+  await light.click('[data-theme-set="system"]');
+  assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'light', 'back to the system setting immediately');
+  await light.reload({ waitUntil: 'networkidle' });
+  assert.equal(await light.evaluate(() => document.documentElement.getAttribute('data-theme')), 'light', 'and it stays there');
   await light.close();
 });

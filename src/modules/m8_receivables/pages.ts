@@ -12,7 +12,7 @@ import { notify } from '../../lib/templates.ts';
 import { toCsv } from '../../lib/csv.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea, moneyInput,
-  registerNav, pager, emptyState, checkbox,
+  registerNav, pager, emptyState, checkbox, viewBar, rememberDensity,
 } from '../../ui/ui.ts';
 import { lines as lineChart, donut } from '../../lib/charts.ts';
 import { agingRows, leaseBalance, leaseLedger, createCharge } from './service.ts';
@@ -247,6 +247,26 @@ export function routes(r: Router): void {
     // tooltip carries the deterministic reason — the same sentence the agent
     // is allowed to quote. In shadow mode chips inform; nothing else changes.
     const scoring = { mode: scorerMode(ctx, 'delinquency_scoring') };
+    const dens = rememberDensity(rq);
+    const view: 'households' | 'properties' = rq.query.get('view') === 'properties' ? 'properties' : 'households';
+    // Totals always describe the WHOLE filtered list, never the page in front
+    // of you — a footer that silently means "this page only" is how a
+    // 362-household book gets read as a 50-household one.
+    const sum = (k: 'current' | 'd1_30' | 'd31_60' | 'd61_90' | 'd90p'): number => aging.reduce((acc, a) => acc + a[k], 0);
+    const byProperty = [...aging.reduce((m, a) => {
+      const p = m.get(a.property_id) || {
+        property_id: a.property_id, property_name: a.property_name, households: 0,
+        current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90p: 0, balance: 0,
+      };
+      p.households += 1; p.current += a.current; p.d1_30 += a.d1_30; p.d31_60 += a.d31_60;
+      p.d61_90 += a.d61_90; p.d90p += a.d90p; p.balance += a.balance;
+      m.set(a.property_id, p);
+      return m;
+    }, new Map<string, { property_id: string; property_name: string; households: number; current: number; d1_30: number; d31_60: number; d61_90: number; d90p: number; balance: number }>()).values()]
+      .sort((a, b) => b.balance - a.balance);
+    const pageSize = 50;
+    const page = Math.max(1, parseInt(rq.query.get('page') || '1', 10) || 1);
+    const pageRows = aging.slice((page - 1) * pageSize, page * pageSize);
     const scoreRows = q<any>(
       `SELECT da.lease_id, da.bucket, da.reason FROM delinquency_assessments da
         WHERE da.org_id=? AND da.as_of_date=(SELECT MAX(a2.as_of_date) FROM delinquency_assessments a2 WHERE a2.lease_id=da.lease_id AND a2.as_of_date<=?)`,
@@ -254,10 +274,15 @@ export function routes(r: Router): void {
     );
     const scoreBy = new Map<string, any>(scoreRows.map((s) => [s.lease_id as string, s]));
     const SCORE_TONE: Record<string, string> = { watch: 'warn', engage: 'bad', escalate: 'bad', clear: 'ok' };
+    // The scorer's buckets are internal vocabulary — 'engage', 'escalate'.
+    // What an operator needs on the row is what to DO about this household.
+    const SCORE_LABEL: Record<string, string> = {
+      clear: 'Current', watch: 'Watch', engage: 'Follow up', escalate: 'Needs a call',
+    };
     const scoreChip = (leaseId: string) => {
       const s = scoreBy.get(leaseId);
       return s
-        ? html`<span class="badge ${SCORE_TONE[s.bucket] || ''}" title="${s.reason}">${s.bucket}</span>`
+        ? html`<span class="badge ${SCORE_TONE[s.bucket] || ''}" title="${s.reason}">${SCORE_LABEL[s.bucket] || s.bucket}</span>`
         : html`<span class="mut">—</span>`;
     };
     return shell(rq, {
@@ -265,16 +290,41 @@ export function routes(r: Router): void {
       active: '/delinquency',
       subtitle: `${pastDue.length} past-due household${pastDue.length === 1 ? '' : 's'} · ${usd(pastDueTotal)} past due`
         + (currentTotal > 0 ? ` · ${usd(currentTotal)} current, not yet due` : '')
-        + ` · as of ${fmtDate(ctx.businessDate)}${scoreBy.size && scoring?.mode === 'shadow' ? ' · scoring: shadow (chips inform, behavior unchanged)' : ''}`,
+        + ` · as of ${fmtDate(ctx.businessDate)}`,
       actions: html`<a class="btn btn-ghost" href="/delinquency/export">Export CSV</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Property', select('property', props.map((p): [string, string] => [p.id, p.name]), propId || '', { blank: 'All properties' }))}
           ${field('Bucket', select('bucket', [['1_30', '1–30 days'], ['31_60', '31–60'], ['61_90', '61–90'], ['90p', '90+']], bucket, { blank: 'All buckets' }))}
         </form>
-        ${card(null, tbl(
-          [{ label: 'Household' }, { label: 'Score' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Current', num: true }, { label: '1–30', num: true }, { label: '31–60', num: true }, { label: '61–90', num: true }, { label: '90+', num: true }, { label: 'Total', num: true }],
-          aging.map((a) => ({
+        ${viewBar(rq, {
+          views: { current: view, choices: [['households', 'Households'], ['properties', 'By property']], label: 'View' },
+          density: dens,
+          note: view === 'households'
+            ? `Totals cover all ${aging.length} household${aging.length === 1 ? '' : 's'} below, not just this page.`
+            : 'Every household rolled up to the building it lives in.',
+        })}
+        ${when(view === 'properties', () => card(null, tbl(
+          [{ label: 'Property' }, { label: 'Households', num: true }, { label: 'Current', num: true }, { label: '1–30', num: true }, { label: '31–60', num: true }, { label: '61–90', num: true }, { label: '90+', num: true }, { label: 'Total', num: true }],
+          byProperty.map((p) => ({
+            href: `/delinquency?property=${p.property_id}`,
+            cells: [
+              html`<b>${p.property_name}</b>`, String(p.households),
+              p.current ? usd(p.current) : '', p.d1_30 ? usd(p.d1_30) : '', p.d31_60 ? usd(p.d31_60) : '',
+              p.d61_90 ? html`<span class="neg">${usd(p.d61_90)}</span>` : '', p.d90p ? html`<span class="neg">${usd(p.d90p)}</span>` : '',
+              html`<b>${usd(p.balance)}</b>`,
+            ],
+          })),
+          {
+            empty: 'No delinquent households — everyone is current. 🎉',
+            density: dens,
+            foot: ['All properties', String(aging.length),
+              usd(sum('current')), usd(sum('d1_30')), usd(sum('d31_60')), usd(sum('d61_90')), usd(sum('d90p')), usd(total)],
+          },
+        ), { flush: true }))}
+        ${when(view === 'households', () => card(null, html`${tbl(
+          [{ label: 'Household' }, { label: 'Status' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Current', num: true }, { label: '1–30', num: true }, { label: '31–60', num: true }, { label: '61–90', num: true }, { label: '90+', num: true }, { label: 'Total', num: true }],
+          pageRows.map((a) => ({
             href: `/delinquency/${a.lease_id}`,
             cells: [
               html`<b>${a.household_name}</b>`, scoreChip(a.lease_id), a.unit_number, a.property_name,
@@ -285,12 +335,11 @@ export function routes(r: Router): void {
           })),
           {
             empty: 'No delinquent households — everyone is current. 🎉',
-            foot: ['Totals', '', '', '',
-              usd(aging.reduce((s, a) => s + a.current, 0)), usd(aging.reduce((s, a) => s + a.d1_30, 0)),
-              usd(aging.reduce((s, a) => s + a.d31_60, 0)), usd(aging.reduce((s, a) => s + a.d61_90, 0)),
-              usd(aging.reduce((s, a) => s + a.d90p, 0)), usd(total)],
+            density: dens,
+            foot: ['Totals — all households', '', '', '',
+              usd(sum('current')), usd(sum('d1_30')), usd(sum('d31_60')), usd(sum('d61_90')), usd(sum('d90p')), usd(total)],
           },
-        ), { flush: true })}
+        )}${pager(rq, aging.length, pageSize)}`, { flush: true }))}
         ${when(cases.length, () => card('Open collection cases', tbl(
           [{ label: 'Household' }, { label: 'Opened' }, { label: 'Balance', num: true }, { label: 'Status' }],
           cases.map((c) => ({ href: `/leases/${c.lease_id}`, cells: [c.household_name, fmtDate(c.opened_date), usd(c.balance_cents), statusBadge(c.status)] })),

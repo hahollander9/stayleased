@@ -1302,3 +1302,60 @@ Tests: a new round-trip in `tests/import_remove.test.ts` uploads through the rea
 route, asserts the batch records its file, the review and record pages link it, `/f/:id`
 returns the exact bytes, and removal deletes row, blob, and reachability. Gates: tsc clean ·
 400/400 unit · setup/clientready/workingmodel/goldenpath/smoke e2e 30/30.
+
+## 2026-08-18 — Seven things a mainstream operator noticed, in one pass
+
+Henry walked the product as a customer would and reported seven separate places it
+behaved like software written for its authors. Each is fixed here.
+
+**The theme toggle beside the gear.** Two identical round icon buttons sat side by side in
+the top bar — a sun (personal) and a gear (administrative) — reading as one pair, so people
+hunting for settings landed in the theme. Appearance moved into the account menu where the
+profile and sign-out live, as three labelled choices: **System · Light · Dark**. "System" is
+now expressible (the boot script always honoured it; the two-state toggle could not say it).
+
+**Review still would not open the document.** The merged build stored originals from that
+moment forward, so every upload made *before* it — which is every upload a live customer
+has — rendered no button at all, with no explanation. Both the review screen and the
+read-only record now carry a **Source document** card in one of two states: the file is here
+(open it), or it is not (attach it, right there). Attaching is one-way — a record whose
+document can be swapped after review is not a record — audited, org-scoped, and refused on
+the lease-PDF lane, which already stores a PDF per draft. Import history marks which uploads
+have their document and links it from the row.
+
+**Lists could not be reshaped, and one of them double-counted money.** The residents list
+printed the LEASE balance on every adult's row under a bare "Balance" header: a couple showed
+$1,945.00 twice, and a reader summing the column got double what the portfolio was owed.
+Now: a **View** switch (People · Households) and a **Rows** switch (Roomy · Tight, remembered
+per operator by cookie) on both the residents and delinquency lists; the column is named
+**Household balance**, shared figures render muted with the reason on hover, and totals count
+each household exactly once. Owed and in-credit are reported separately rather than
+cancelling in a headline. Delinquency gained a **By property** rollup (362 rows → 3 for this
+portfolio), pagination, and a footer that states it covers the whole list, not the page.
+
+**Developer state in the product.** `scoring: shadow (chips inform, behavior unchanged)` was
+printed under two page titles. Removed. Scorer buckets now read as instructions —
+`escalate` → **Needs a call**, `engage` → **Follow up**, `hot` → **Hot lead** — and the
+setting that controls them says "Show me the rating only" / "Let the assistant act on the
+rating" instead of Shadow/Active.
+
+**My Day threw staff out of the app.** It rendered in the vendor portal shell — no nav, a
+different logo, a "Full app" escape hatch — and appeared in every admin's Operations menu
+through a wildcard permission, where it was permanently empty. It is now a page of the app
+like any other (responsive, so a tech on a phone keeps the nav they know), shown only to
+`MAINTENANCE_TECH` / `MAINTENANCE_SUPERVISOR`. The portal shell still serves vendors, who
+genuinely are outside the app.
+
+**"What else do I need to upload?" had no answer, and the Setup hub had no point.** New
+`src/modules/setup/readiness.ts` measures nine areas against the org's own data — units,
+leases, resident emails, opening balances, deposits, bank opening, lease documents, vendors,
+team — and reports each as On file / Partly there / Not yet with what it turns on and one
+button. The Migration Center opens with **What is still missing**; the Setup hub, which was
+three vanity counts over eleven identical link cards, now opens with **Your setup** and
+groups its links by intent (Bring your portfolio in · Set your rules · Run the company).
+
+Tests: `tests/import_source.test.ts` (6) and `tests/listviews.test.ts` (6) — attach/refuse/
+isolation on source documents, the double-count regression with real household fixtures,
+density persistence, jargon absence, readiness states. Two `scoring.test.ts` pins asserted the
+removed shadow caption and now assert its absence plus the plain-English chip.
+Gates: tsc clean · 412/412 unit · full e2e · design detector clean on new CSS.

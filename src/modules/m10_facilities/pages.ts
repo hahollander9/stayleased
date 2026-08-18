@@ -23,7 +23,14 @@ import {
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
 
 registerNav('Operations', { href: '/workorders', label: 'Work orders', perm: 'workorders:view', match: ['/workorders'] });
-registerNav('Operations', { href: '/myday', label: 'My day', perm: 'workorders:work' });
+// "My day" is one person's own queue, so it belongs to the people who work
+// that queue. An admin or accountant holds workorders:work through a wildcard
+// and was shown a permanently empty page in their Operations menu; maintenance
+// staff see it, everyone else sees the dispatch board instead.
+registerNav('Operations', {
+  href: '/myday', label: 'My day', perm: 'workorders:work',
+  show: (ctx) => ctx.roles.some((r) => r === 'MAINTENANCE_TECH' || r === 'MAINTENANCE_SUPERVISOR'),
+});
 registerNav('Operations', { href: '/dispatch', label: 'Dispatch board', perm: 'workorders:assign' });
 registerNav('Operations', { href: '/turns', label: 'Turn board', perm: 'turns:manage', match: ['/turns'] });
 registerNav('Operations', { href: '/inspections', label: 'Inspections', perm: 'inspections:manage', match: ['/inspections'] });

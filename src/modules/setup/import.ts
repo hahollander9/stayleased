@@ -25,6 +25,7 @@ import {
 import { leasePdfRoutes, leasePdfLaneCard } from './import_leases.ts';
 import { aiPlanSpreadsheet, applyReadingPlan, aiReadPdfTable, mappingScore } from './ai_reader.ts';
 import { docsChecklist } from './onboarding.ts';
+import { readinessPanel } from './readiness.ts';
 
 /** Migration Center — the working model's front door for data.
  * One principle: the customer uploads WHATEVER their old system produces
@@ -531,6 +532,32 @@ export function routes(r: Router): void {
     return redirect('/setup/import', `Removed ${label}${alsoFiles} from the Migration Center.${undone}`);
   });
 
+  /** Attach the original to an upload that has none — the recovery path for
+   * every batch imported before originals were kept. Only ever ADDS a missing
+   * document: an upload that already has its source cannot be swapped, because
+   * a record whose document can be replaced after the fact is not a record. */
+  r.post('/setup/import/b/:id/source', requirePerm('properties:manage'), async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const batch = batchById(ctx, rq.params.id!);
+    if (!batch) return notFound('Import not found');
+    if (batch.kind === 'lease_pdf') {
+      // this lane already stores every PDF it read, one per draft
+      return redirect(`/setup/import/leases/${batch.id}`, 'Lease PDFs are already stored with their drafts.', 'err');
+    }
+    const back = `/setup/import/b/${batch.id}`;
+    if (batch.source_file_id) return redirect(back, 'This upload already has its original on file.', 'err');
+    const up = (rq.uploads || []).find((u) => u.field === 'file' && u.data.length);
+    if (!up) return redirect(back, 'Choose the original file to attach.', 'err');
+    if (up.data.length > 15 * 1024 * 1024) return redirect(back, 'File is too large (15 MB max).', 'err');
+    const f = putFile(ctx, up.data, {
+      name: up.filename || batch.filename || 'original', mime: up.mime,
+      entity: 'import_batch', entityId: batch.id, visibility: 'staff',
+    });
+    run('UPDATE import_batches SET source_file_id=? WHERE id=? AND org_id=?', f.id, batch.id, ctx.orgId);
+    audit(ctx, 'import_batch', batch.id, 'attach_source', null, { filename: up.filename, size: up.data.length });
+    return redirect(back, 'Original attached — it opens from this screen from now on.');
+  });
+
   r.post('/setup/import/bank-balance', requirePerm('accounting:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const propertyId = String(rq.body.property || '');
@@ -738,6 +765,11 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
     crumbs: [['Setup', '/setup'], ['Migration Center']],
     subtitle: 'Bring your portfolio in from anywhere — upload what you have, confirm the mapping, done.',
     content: html`
+      ${readinessPanel(ctx, {
+        title: 'What is still missing',
+        only: ['portfolio', 'leases', 'contacts', 'balances', 'deposits', 'bank', 'documents', 'vendors'],
+        intro: 'Measured against the portfolio you have already brought in. Each line names what arrives with it — nothing here is busywork, and a portfolio can run well with several still open.',
+      })}
       ${when(history.length, () => card('Import history', tbl(
         [{ label: 'File' }, { label: 'Type' }, { label: 'Uploaded' }, { label: 'Status' }, { label: 'Result' }, { label: '' }],
         history.map((b) => {
@@ -749,7 +781,9 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
             ? (b.status === 'staged' ? `/setup/import/leases/${b.id}` : null)
             : `/setup/import/b/${b.id}`;
           return { cells: [
-            html`<b>${b.filename || '(pasted)'}</b>`,
+            html`<b>${b.filename || '(pasted)'}</b>${b.source_file_id
+              ? html`<span class="sub"><a href="/f/${b.source_file_id}" target="_blank" rel="noopener">Open the original</a></span>`
+              : b.kind === 'lease_pdf' ? raw('') : html`<span class="sub muted">original not on file</span>`}`,
             KINDS.find((k) => k.key === b.kind)?.label || (b.kind === 'lease_pdf' ? 'Lease PDFs' : b.kind),
             fmtDate(b.created_at.slice(0, 10)),
             statusBadge(b.status === 'applied' ? 'ok' : b.status === 'staged' ? 'pending' : 'error', b.status === 'applied' ? 'Applied' : b.status === 'staged' ? 'Staged' : 'Discarded'),
@@ -779,6 +813,43 @@ function openOriginal(batch: BatchRow): Child | undefined {
   return html`<a class="btn btn-ghost" href="/f/${batch.source_file_id}" target="_blank" rel="noopener">Open the original file</a>`;
 }
 
+const PAPER = raw('<svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>');
+
+/** The source document, stated on every review and record screen.
+ *
+ * Verification is the whole point of the review screen, and it is not
+ * verification if the document the reader is being checked against cannot be
+ * opened. Two states, both explicit: the file is here (open it), or it is not
+ * (attach it now). Uploads from before originals were kept land in the second
+ * state — the earlier build simply rendered nothing at all for them, so the
+ * button people were told to look for was missing with no explanation. */
+function sourceDocCard(batch: BatchRow & { created_at?: string }): Raw {
+  const name = batch.filename || 'the uploaded file';
+  if (batch.source_file_id) {
+    const f = q1<{ name: string; size: number; mime: string }>('SELECT name, size, mime FROM files WHERE id=?', batch.source_file_id);
+    const kb = f ? Math.max(1, Math.round(f.size / 1024)) : 0;
+    return card('Source document', html`<div class="srcdoc">
+      <span class="sd-icon">${PAPER}</span>
+      <div class="sd-body">
+        <div class="sd-name">${f?.name || name}</div>
+        <div class="sd-sub">${kb ? `${kb} KB · ` : ''}exactly as uploaded — nothing on this screen is read from anywhere else.</div>
+      </div>
+      <a class="btn" href="/f/${batch.source_file_id}" target="_blank" rel="noopener">Open the original file</a>
+    </div>`);
+  }
+  return card('Source document', html`<div class="srcdoc">
+    <span class="sd-icon absent">${PAPER}</span>
+    <div class="sd-body">
+      <div class="sd-name">Not on file</div>
+      <div class="sd-sub">This upload predates StayLeased keeping originals, so <b>${name}</b> itself was not saved — only what was read out of it. Attach the file and it opens from here from now on.</div>
+    </div>
+    <form method="post" action="/setup/import/b/${batch.id}/source" enctype="multipart/form-data" class="btn-row" style="gap:8px;align-items:center">
+      <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.pdf,text/csv,application/pdf,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
+      <button class="btn btn-ghost" type="submit">Attach the original</button>
+    </form>
+  </div>`);
+}
+
 function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?: string | null; summary?: string | null }): ReturnType<typeof shell> {
   const headers = j<string[]>(batch.headers, []);
   const rows = j<string[][]>(batch.rows, []);
@@ -796,6 +867,7 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
     subtitle: `${KINDS.find((k) => k.key === kind)?.label || kind} · uploaded ${fmtDate((batch as { created_at?: string }).created_at?.slice(0, 10) || batch.as_of || '')}`,
     actions: openOriginal(batch),
     content: html`
+      ${sourceDocCard(batch)}
       ${card(null, html`
         <div class="btn-row" style="align-items:center;gap:10px">
           ${statusBadge(applied ? 'ok' : 'error', applied ? 'Applied' : 'Discarded')}
@@ -925,6 +997,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     actions: openOriginal(batch),
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
+      ${sourceDocCard(batch)}
       ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}
       ${willNotImportCard(validation)}
       ${setAsideCard(j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] }))}

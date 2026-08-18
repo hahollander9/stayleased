@@ -1611,3 +1611,106 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
 .dropzone.has-file b, .dropzone.has-file .dz-hint { display: none; }
 .dropzone.has-file .dz-file { display: block; }
 .dropzone.has-file .dz-hint { display: none; }
+
+/* ---------- appearance control (account menu) ---------- */
+/* Theme lives in the account menu as three named choices. It used to be a bare
+   sun glyph beside the setup gear: two identical round buttons, one personal
+   and one administrative, which read as one pair and sent people looking for
+   settings into the theme instead. */
+.menu-sub { padding: 4px 10px 8px; }
+.menu-label { font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.segbar {
+  display: inline-flex; align-items: stretch; gap: 2px; padding: 2px;
+  border: 1px solid var(--line); border-radius: 999px; background: var(--surface-2);
+}
+.segbar .seg {
+  appearance: none; border: 0; background: none; cursor: pointer;
+  padding: 4px 11px; border-radius: 999px; font: 12px var(--font); color: var(--muted);
+  text-decoration: none; white-space: nowrap; transition: background .14s ease, color .14s ease;
+  display: inline-flex; align-items: center; width: auto; text-align: center;
+}
+.segbar .seg:hover { background: var(--brand-soft); color: var(--brand-ink); transform: none; }
+.segbar .seg.on, .segbar .seg[aria-pressed="true"] {
+  background: var(--brand-soft); color: var(--brand-ink); font-weight: 600;
+  box-shadow: inset 0 0 0 1px rgba(52, 211, 153, .3);
+}
+.menu .segbar .seg { display: inline-flex; }
+
+/* ---------- list view controls ---------- */
+.viewbar {
+  display: flex; align-items: center; gap: 18px; flex-wrap: wrap;
+  margin: 0 0 12px; padding: 0 2px;
+}
+.vb-group { display: inline-flex; align-items: center; gap: 8px; }
+.vb-label {
+  font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 600;
+}
+.vb-note { font-size: 12px; color: var(--muted); margin-left: auto; }
+@media (max-width: 720px) { .vb-note { margin-left: 0; flex-basis: 100%; } }
+
+/* Tight rows: roughly twice the list on one screen, same type scale so the
+   table stays readable rather than merely smaller. */
+.tbl.tight th { padding: 6px 10px; }
+.tbl.tight td { padding: 3px 10px; font-size: 12.5px; }
+.tbl.tight .sub { font-size: 11px; }
+.tbl.tight .badge { padding: 1px 7px; font-size: 10.5px; }
+
+/* a value that belongs to the row's household rather than to the row itself */
+.tbl .shared { color: var(--muted); font-weight: 400; }
+
+/* ---------- readiness panel (Setup hub · Migration Center) ---------- */
+.ready-bar { display: flex; gap: 3px; margin-top: 2px; }
+.rb-seg { flex: 1; height: 6px; border-radius: 999px; background: var(--line); }
+.rb-seg.done { background: var(--ok); }
+.rb-seg.partial { background: var(--warn); }
+.ready-list { display: flex; flex-direction: column; gap: 2px; }
+.ready-item {
+  display: flex; gap: 12px; align-items: flex-start;
+  padding: 12px 10px; border-top: 1px solid var(--line-2);
+}
+.ready-item:first-child { border-top: 0; }
+.ri-mark {
+  flex: none; width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center;
+  background: var(--line-2); color: var(--muted); margin-top: 1px;
+}
+.ri-mark.done { background: var(--ok-soft); color: var(--ok); }
+.ri-mark.partial { background: var(--warn-soft); color: var(--warn); }
+.ri-body { flex: 1; min-width: 0; }
+.ri-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.ri-state { font-size: 11px; font-weight: 600; color: var(--muted); }
+.ri-state.done { color: var(--ok); }
+.ri-state.partial { color: var(--warn); }
+.ri-opt {
+  font-size: 10.5px; color: var(--faint); border: 1px solid var(--line);
+  border-radius: 999px; padding: 0 7px;
+}
+.ri-status { font-size: 12.5px; color: var(--ink-2); margin-top: 2px; }
+.ri-unlocks { font-size: 12.5px; color: var(--muted); margin-top: 4px; }
+.ri-key {
+  font-size: 10px; text-transform: uppercase; letter-spacing: .07em; color: var(--faint);
+  font-weight: 700; margin-right: 4px;
+}
+.ri-actions { flex: none; align-self: center; }
+.ready-item.done .ri-body b { color: var(--ink-2); }
+@media (max-width: 720px) {
+  .ready-item { flex-wrap: wrap; }
+  .ri-actions { width: 100%; padding-left: 34px; }
+}
+
+/* ---------- setup hub ---------- */
+.setup-section-head {
+  font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted);
+  font-weight: 700; margin: 22px 0 10px 2px;
+}
+.setup-section-head:first-of-type { margin-top: 6px; }
+
+/* ---------- source document strip (Migration Center) ---------- */
+.srcdoc { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.srcdoc .sd-icon {
+  flex: none; width: 34px; height: 34px; border-radius: 9px; display: grid; place-items: center;
+  background: var(--brand-soft); color: var(--brand-ink);
+}
+.srcdoc .sd-icon.absent { background: var(--line-2); color: var(--muted); }
+.srcdoc .sd-body { flex: 1; min-width: 200px; }
+.srcdoc .sd-name { font-weight: 600; }
+.srcdoc .sd-sub { font-size: 12.5px; color: var(--muted); margin-top: 2px; }
