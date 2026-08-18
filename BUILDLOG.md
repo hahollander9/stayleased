@@ -1278,3 +1278,27 @@ them here." The audit's own second option, taken.
 `tests/import_livingston.test.ts` — a migrated portfolio reporting when billing starts rather than 0%
 collected, and a file stating no layout producing a floorplan that admits its bed/bath is a
 placeholder and is not named after one.
+
+## 2026-08-18 — The upload you can open: the Migration Center keeps the original document
+
+The review screen asked the operator to verify the reader's work against a document the
+product had already thrown away: only the parsed grid (`headers`/`rows`/`mapping`) survived
+an upload, so "check this against your rent roll" meant finding the file again in email or
+the old system's export folder. Only the lease-PDF lane kept its documents.
+
+Now every upload lane keeps the original. `/setup/import/upload` stores the file itself in
+the files store (`putFile`, `entity='import_batch'`, staff visibility, mime sniffed and
+coerced by the §SEC-1 rails — a scriptable file can never serve inline), and a new
+`import_batches.source_file_id` column (append-only migration in `db.ts`) ties it to the
+batch. The review page and the read-only record page both carry **Open the original file**
+— PDFs open inline in a new tab, spreadsheets download — so the read is checkable at the
+moment of approval AND later from Import history. Removing an upload takes the original
+with it (row in the tx, blob after commit, same rails as the lease-lane PDFs), and the
+remove confirm screen names the document. Batches uploaded before this build have no
+stored original and simply show no link. The remove flash now says "stored file" rather
+than "stored PDF", since the count can include a spreadsheet.
+
+Tests: a new round-trip in `tests/import_remove.test.ts` uploads through the real multipart
+route, asserts the batch records its file, the review and record pages link it, `/f/:id`
+returns the exact bytes, and removal deletes row, blob, and reachability. Gates: tsc clean ·
+400/400 unit · setup/clientready/workingmodel/goldenpath/smoke e2e 30/30.

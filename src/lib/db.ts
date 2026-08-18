@@ -80,6 +80,10 @@ export function db(): DatabaseSync {
     // pays. rent_cents stays whole (it is what the unit rents for); this records
     // who pays it, so the resident is billed only their own share.
     "ALTER TABLE leases ADD COLUMN subsidy_cents INTEGER NOT NULL DEFAULT 0",
+    // The uploaded document itself, kept alongside what was read out of it —
+    // review/record pages open the original so the operator can check the
+    // read against the source. NULL = uploaded before originals were kept.
+    "ALTER TABLE import_batches ADD COLUMN source_file_id TEXT",
   ];
   for (const m of MIGRATIONS) {
     try {

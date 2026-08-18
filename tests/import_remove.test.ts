@@ -423,3 +423,66 @@ test('a rent roll imported INTO an existing property removes its rows, not the b
   assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=?', pid), 1, 'only the second upload’s unit went');
   assert.equal(val<number>('SELECT COUNT(*) FROM units WHERE property_id=? AND unit_number=?', pid, 'A1'), 1, "the first upload's unit stays");
 });
+
+test('the original document is kept on upload, openable from review and record, and removed with the upload', async () => {
+  const csv = 'Vendor Name,Trade,Email,Phone\nAce Plumbing,Plumbing,ace@imprm.test,555-0101\nVolt Electric,Electrical,volt@imprm.test,555-0102\n';
+  const blob = (fid: string): string => join(ROOT, 'data', 'files', fid + '.bin');
+
+  const { base, close } = await startTestServer();
+  let fileId = '';
+  let batchId = '';
+  try {
+    const cookie = await loginAs(base, 'admin@imprm.test');
+
+    // upload through the real route — multipart, exactly as the browser sends it
+    const fd = new FormData();
+    fd.set('kind', 'vendors');
+    fd.set('file', new File([csv], 'vendors.csv', { type: 'text/csv' }));
+    const up = await fetch(`${base}/setup/import/upload`, {
+      method: 'POST', headers: { origin: base, cookie }, body: fd, redirect: 'manual',
+    });
+    assert.equal(up.status, 303, 'upload accepted');
+    batchId = /\/setup\/import\/b\/(imp\w+)/.exec(up.headers.get('location') || '')?.[1] || '';
+    assert.ok(batchId, 'landed on the review page');
+
+    // the document itself was kept, tied to the batch, staff-visible
+    const stored = q1<{ source_file_id: string | null }>('SELECT source_file_id FROM import_batches WHERE id=?', batchId);
+    fileId = stored?.source_file_id || '';
+    assert.ok(fileId, 'the batch records its source file');
+    const fileRow = q1<{ entity: string; entity_id: string; name: string; visibility: string }>('SELECT entity, entity_id, name, visibility FROM files WHERE id=?', fileId);
+    assert.equal(fileRow?.entity, 'import_batch');
+    assert.equal(fileRow?.entity_id, batchId);
+    assert.equal(fileRow?.name, 'vendors.csv');
+    assert.equal(fileRow?.visibility, 'staff');
+
+    // the review page links it, and the link serves the exact bytes uploaded
+    const review = await get(base, `/setup/import/b/${batchId}`, cookie);
+    assert.equal(review.status, 200);
+    assert.match(review.text, /Open the original file/);
+    assert.ok(review.text.includes(`/f/${fileId}`), 'the review page links the stored original');
+    const served = await fetch(`${base}/f/${fileId}`, { headers: { cookie } });
+    assert.equal(served.status, 200);
+    assert.equal(await served.text(), csv, 'the original bytes come back unchanged');
+
+    // the read-only record (discarded or applied) keeps the link — history can
+    // always be checked against its source
+    await post(base, `/setup/import/b/${batchId}/discard`, {}, cookie);
+    const record = await get(base, `/setup/import/b/${batchId}`, cookie);
+    assert.match(record.text, /Open the original file/);
+    assert.ok(record.text.includes(`/f/${fileId}`), 'the record page links the stored original');
+
+    // the confirm screen says the original goes too, and removing takes it
+    const confirm = await get(base, `/setup/import/b/${batchId}/remove`, cookie);
+    assert.match(confirm.text, /the original document/, 'the confirm screen names the original document');
+    const done = await post(base, `/setup/import/b/${batchId}/remove`, {}, cookie);
+    assert.equal(done.status, 303);
+
+    const gone = await fetch(`${base}/f/${fileId}`, { headers: { cookie } });
+    assert.equal(gone.status, 404, 'the original is unreachable after removal');
+  } finally {
+    close();
+  }
+  assert.equal(exists(batchId), false, 'batch row deleted');
+  assert.equal(q1('SELECT id FROM files WHERE id=?', fileId), undefined, 'file row deleted');
+  assert.equal(existsSync(blob(fileId)), false, 'blob deleted from disk');
+});

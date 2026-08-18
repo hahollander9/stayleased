@@ -25,6 +25,7 @@ export interface BatchRow {
   org_id: string;
   kind: ImportKind | 'lease_pdf';
   filename: string | null;
+  source_file_id?: string | null; // the uploaded document in the files store; NULL predates keeping originals
   property_id: string | null;
   new_property_name: string | null;
   preset: string | null;
