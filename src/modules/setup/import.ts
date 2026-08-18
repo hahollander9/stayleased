@@ -2,7 +2,7 @@ import { html, raw, when, join as hjoin, type Raw, type Child } from '../../lib/
 import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { q, q1, insert, run, tx, j, js, afterCommit } from '../../lib/db.ts';
-import { deleteFileRows, unlinkBlobs } from '../../lib/files.ts';
+import { putFile, deleteFileRows, unlinkBlobs } from '../../lib/files.ts';
 import { reverseImport, importFootprint, footprintBits, totalFootprint, type ReverseCounts } from './import_reverse.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate } from '../../lib/dates.ts';
@@ -68,6 +68,7 @@ function removeBatch(ctx: Ctx, batch: BatchRow, opts?: { force?: boolean }): { f
   const fileIds = batch.kind === 'lease_pdf'
     ? j<{ fileId?: string | null }[]>(batch.staged, []).map((d) => d.fileId).filter((f): f is string => !!f)
     : [];
+  if (batch.source_file_id) fileIds.push(batch.source_file_id); // the original document goes with its upload
   let files = 0;
   let undone: ReverseCounts | null = null;
   tx(() => {
@@ -404,8 +405,16 @@ export function routes(r: Router): void {
     if (propertyId && !canAccessProperty(ctx, propertyId)) return redirect('/setup/import', 'That property is not in your portfolio.', 'err');
 
     const batchId = id('imp');
+    // Keep the document itself, not just what was read out of it — the review
+    // and record pages open the original so the read can always be checked
+    // against the source. Mime is sniffed/coerced inside putFile (§SEC-1).
+    const sourceFile = putFile(ctx, up.data, {
+      name: up.filename || 'upload', mime: up.mime,
+      entity: 'import_batch', entityId: batchId, visibility: 'staff',
+    });
     insert('import_batches', {
       id: batchId, org_id: ctx.orgId, kind, filename: up.filename || null,
+      source_file_id: sourceFile.id,
       property_id: propertyId, new_property_name: newPropertyName,
       preset: mapping.preset, headers: js(headers), mapping: js(mapping), rows: js(dataRows),
       staged: js(futureRows), as_of: String(rq.body.as_of || '') || ctx.businessDate,
@@ -516,7 +525,7 @@ export function routes(r: Router): void {
       // the books-safe rails refuse rather than erase real history
       return redirect(`/setup/import/b/${batch.id}/remove`, (e as Error).message, 'err');
     }
-    const alsoFiles = result.files ? ` and ${result.files} stored PDF${result.files === 1 ? '' : 's'}` : '';
+    const alsoFiles = result.files ? ` and ${result.files} stored file${result.files === 1 ? '' : 's'}` : '';
     const bits = result.undone ? footprintBits(result.undone) : [];
     const undone = bits.length ? ` Also removed ${bits.join(', ')}.` : '';
     return redirect('/setup/import', `Removed ${label}${alsoFiles} from the Migration Center.${undone}`);
@@ -762,6 +771,14 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
 
 // ---------- read-only record for applied/discarded batches ----------
 
+/** "Open the original file" — the uploaded document itself, served from the
+ * files store. PDFs open inline in a new tab; spreadsheets download. Absent on
+ * batches uploaded before originals were kept. */
+function openOriginal(batch: BatchRow): Child | undefined {
+  if (!batch.source_file_id) return undefined;
+  return html`<a class="btn btn-ghost" href="/f/${batch.source_file_id}" target="_blank" rel="noopener">Open the original file</a>`;
+}
+
 function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?: string | null; summary?: string | null }): ReturnType<typeof shell> {
   const headers = j<string[]>(batch.headers, []);
   const rows = j<string[][]>(batch.rows, []);
@@ -777,6 +794,7 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
     active: '/setup/import',
     crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Record']],
     subtitle: `${KINDS.find((k) => k.key === kind)?.label || kind} · uploaded ${fmtDate((batch as { created_at?: string }).created_at?.slice(0, 10) || batch.as_of || '')}`,
+    actions: openOriginal(batch),
     content: html`
       ${card(null, html`
         <div class="btn-row" style="align-items:center;gap:10px">
@@ -818,7 +836,7 @@ function removePage(rq: Rq, batch: BatchRow & { created_at?: string; summary?: s
   const kindLabel = KINDS.find((k) => k.key === batch.kind)?.label || (isPdfLane ? 'Lease PDFs' : batch.kind);
   const held = isPdfLane
     ? `${pdfs} stored PDF${pdfs === 1 ? '' : 's'}`
-    : `${rows} data row${rows === 1 ? '' : 's'} read from the file`;
+    : `${rows} data row${rows === 1 ? '' : 's'} read from the file${batch.source_file_id ? ', the original document' : ''}`;
 
   return shell(rq, {
     title: 'Remove this upload',
@@ -904,6 +922,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     active: '/setup/import',
     crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Review']],
     subtitle: `${rows.length} data row${rows.length === 1 ? '' : 's'} · ${KINDS.find((k) => k.key === kind)?.label || kind}${preset ? ` · detected ${preset.name} format` : ''}`,
+    actions: openOriginal(batch),
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
       ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}

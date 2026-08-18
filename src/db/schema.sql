@@ -1991,6 +1991,7 @@ CREATE TABLE IF NOT EXISTS import_batches (
   org_id TEXT NOT NULL,
   kind TEXT NOT NULL, -- rent_roll|vendors|residents|balances|lease_pdf
   filename TEXT,
+  source_file_id TEXT, -- the uploaded document itself (files.id) — openable from review/record; NULL = uploaded before originals were kept
   property_id TEXT, -- target property (rent rolls may instead group by a property column)
   new_property_name TEXT, -- create-and-import-into when set
   preset TEXT, -- detected source system (buildium|appfolio|yardi|...)
