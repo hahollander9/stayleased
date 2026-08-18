@@ -94,15 +94,16 @@ export function routes(r: Router): void {
     );
     const heatBy = new Map<string, any>(heatRows.map((h) => [h.lead_id as string, h]));
     const HEAT_TONE: Record<string, string> = { hot: 'accent', warm: 'warn', cold: '' };
+    const HEAT_LABEL: Record<string, string> = { hot: 'Hot lead', warm: 'Warm', cold: 'Cold' };
     const heatChip = (leadId: string) => {
       const h = heatBy.get(leadId);
-      return h ? html` <span class="badge ${HEAT_TONE[h.bucket] || ''}" title="${h.reason}">${h.bucket}</span>` : null;
+      return h ? html` <span class="badge ${HEAT_TONE[h.bucket] || ''}" title="${h.reason}">${HEAT_LABEL[h.bucket] || h.bucket}</span>` : null;
     };
     return shell(rq, {
       title: 'Lead inbox',
       active: '/leads',
       actions: html`<a class="btn" href="/leads/new">Log walk-in / call</a>`,
-      subtitle: `Leads arrive from the ILS feed, website, phone and walk-ins — duplicates merge into one guest card.${heatBy.size && heatMode === 'shadow' ? ' · scoring: shadow (chips inform, behavior unchanged)' : ''}`,
+      subtitle: 'Leads arrive from listing sites, your website, phone and walk-ins — duplicates merge into one guest card.',
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${when(propId, () => html`<input type="hidden" name="property" value="${propId}" />`)}

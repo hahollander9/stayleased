@@ -8,6 +8,7 @@ import { audit } from '../../lib/audit.ts';
 import { parseCsvObjects } from '../../lib/csv.ts';
 import { v } from '../../lib/validate.ts';
 import { shell, card, kpis, tbl, field, input, select, moneyInput, statusBadge, emptyState } from '../../ui/ui.ts';
+import { readiness, readinessPanel } from './readiness.ts';
 
 /** M2.5 Setup hub: the gear → administration landing, a guided property
  * onboarding wizard, and a CSV Migration Center for bulk-importing a
@@ -31,19 +32,25 @@ function slugify(s: string): string {
 
 // ---------- setup hub ----------
 
-interface HubCard { href: string; title: string; desc: string; perm?: string; icon: string; demoOnly?: boolean; }
+interface HubCard { href: string; title: string; desc: string; perm?: string; icon: string; demoOnly?: boolean; group?: HubGroup; }
+type HubGroup = 'data' | 'configure' | 'administer';
+const HUB_GROUPS: [HubGroup, string][] = [
+  ['data', 'Bring your portfolio in'],
+  ['configure', 'Set your rules'],
+  ['administer', 'Run the company'],
+];
 const HUB: HubCard[] = [
-  { href: '/welcome', title: 'Getting started', desc: 'The guided go-live checklist — track what\'s left to set up.', perm: 'properties:manage', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' },
-  { href: '/setup/import', title: 'Migration Center', desc: 'Upload rent rolls, spreadsheets and lease PDFs — auto-mapped, reviewed, applied.', perm: 'properties:manage', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M4 21h16' },
-  { href: '/setup/connections', title: 'Connections', desc: 'AI brain, payments, bank feeds, listings — what\'s live and what\'s coming.', perm: 'properties:manage', icon: 'M9 12h6M8 7H6a5 5 0 0 0 0 10h2M16 7h2a5 5 0 0 1 0 10h-2' },
-  { href: '/setup/wizard', title: 'Add a property', desc: 'Guided wizard — property details, a floorplan, and its units.', perm: 'properties:manage', icon: 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6' },
-  { href: '/admin/settings', title: 'Organization settings', desc: 'Policies, fees, and defaults for your whole portfolio.', perm: 'admin:settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5A7 7 0 0 0 19 12z' },
-  { href: '/admin/staff', title: 'Staff & roles', desc: 'Invite users and assign roles and property scope.', perm: 'admin:staff', icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' },
-  { href: '/admin/roles', title: 'Permission matrix', desc: 'Review exactly what each role can do.', perm: 'admin:staff', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' },
-  { href: '/admin/api', title: 'Integrations', desc: 'Access keys and connections for outside software.', perm: 'admin:api', icon: 'M4 17l6-6-6-6M12 19h8' },
-  { href: '/admin/jobs', title: 'Scheduled jobs', desc: 'The automation engine and its run history.', perm: 'admin:jobs', icon: 'M12 6v6l4 2M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z' },
-  { href: '/admin/audit', title: 'Audit log', desc: 'Every change, who made it, and when.', perm: 'admin:audit', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M9 15h6M9 11h2' },
-  { href: '/dev/sim', title: 'Simulator console', desc: 'Advance the business date and drive the demo world.', perm: 'dev:console', demoOnly: true, icon: 'M13 2L3 14h9l-1 8 10-12h-9z' },
+  { href: '/welcome', title: 'Getting started', desc: 'The step-by-step walkthrough, with the option to skip what you do not need.', perm: 'properties:manage', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11', group: 'data' },
+  { href: '/setup/import', title: 'Migration Center', desc: 'Upload rent rolls, spreadsheets and lease PDFs — auto-mapped, reviewed, applied.', perm: 'properties:manage', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M4 21h16' , group: 'data' },
+  { href: '/setup/connections', title: 'Connections', desc: 'AI brain, payments, bank feeds, listings — what\'s live and what\'s coming.', perm: 'properties:manage', icon: 'M9 12h6M8 7H6a5 5 0 0 0 0 10h2M16 7h2a5 5 0 0 1 0 10h-2' , group: 'configure' },
+  { href: '/setup/wizard', title: 'Add a property', desc: 'Guided wizard — property details, a floorplan, and its units.', perm: 'properties:manage', icon: 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6' , group: 'data' },
+  { href: '/admin/settings', title: 'Organization settings', desc: 'Policies, fees, and defaults for your whole portfolio.', perm: 'admin:settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5A7 7 0 0 0 19 12z' , group: 'configure' },
+  { href: '/admin/staff', title: 'Staff & roles', desc: 'Invite users and assign roles and property scope.', perm: 'admin:staff', icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' , group: 'administer' },
+  { href: '/admin/roles', title: 'Permission matrix', desc: 'Review exactly what each role can do.', perm: 'admin:staff', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' , group: 'administer' },
+  { href: '/admin/api', title: 'Integrations', desc: 'Access keys and connections for outside software.', perm: 'admin:api', icon: 'M4 17l6-6-6-6M12 19h8' , group: 'administer' },
+  { href: '/admin/jobs', title: 'Scheduled jobs', desc: 'The automation engine and its run history.', perm: 'admin:jobs', icon: 'M12 6v6l4 2M12 22a10 10 0 1 0 0-20 10 10 0 0 0 0 20z' , group: 'administer' },
+  { href: '/admin/audit', title: 'Audit log', desc: 'Every change, who made it, and when.', perm: 'admin:audit', icon: 'M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M9 15h6M9 11h2' , group: 'administer' },
+  { href: '/dev/sim', title: 'Simulator console', desc: 'Advance the business date and drive the demo world.', perm: 'dev:console', demoOnly: true, icon: 'M13 2L3 14h9l-1 8 10-12h-9z' , group: 'administer' },
 ];
 
 function svgIcon(d: string): Raw {
@@ -57,22 +64,42 @@ export function routes(r: Router): void {
     const propCount = q1<{ n: number }>('SELECT COUNT(*) n FROM properties WHERE org_id=?', ctx.orgId)?.n ?? 0;
     const unitCount = q1<{ n: number }>('SELECT COUNT(*) n FROM units u JOIN properties p ON p.id=u.property_id WHERE p.org_id=?', ctx.orgId)?.n ?? 0;
     const staffCount = q1<{ n: number }>("SELECT COUNT(*) n FROM users WHERE org_id=? AND kind='staff' AND active=1", ctx.orgId)?.n ?? 0;
+    const leaseCount = q1<{ n: number }>("SELECT COUNT(*) n FROM leases WHERE org_id=? AND status IN ('active','month_to_month','notice')", ctx.orgId)?.n ?? 0;
+    // The hub's job is to answer "what is my company still missing?" — the
+    // links below are the means, not the message. It used to open with three
+    // vanity counts and eleven identical cards, which told an operator
+    // nothing they could act on.
+    const ready = can(ctx, 'properties:manage') ? readiness(ctx) : null;
+
     return shell(rq, {
       title: 'Setup',
       active: '/setup',
-      subtitle: 'Configure your portfolio, onboard properties, and administer StayLeased.',
+      subtitle: ready
+        ? `${ready.done} of ${ready.total} set up · ${ready.next.length ? `next: ${ready.next[0]!.title.toLowerCase()}` : 'everything is in place'}`
+        : 'Configure your portfolio and administer StayLeased.',
       content: html`
         ${kpis([
           { label: 'Properties', value: String(propCount), href: '/properties' },
           { label: 'Units', value: String(unitCount), href: '/units' },
-          { label: 'Staff', value: String(staffCount), href: '/admin/staff' },
+          { label: 'Active leases', value: String(leaseCount), href: '/leases' },
+          { label: 'People with logins', value: String(staffCount), href: '/admin/staff' },
         ])}
-        <div class="setup-grid">
-          ${cards.map((c) => html`<a class="setup-card" href="${c.href}">
-            <div class="sc-icon">${svgIcon(c.icon)}</div>
-            <div><div class="sc-title">${c.title}</div><div class="sc-desc">${c.desc}</div></div>
-          </a>`)}
-        </div>`,
+        ${when(!!ready, () => readinessPanel(ctx, {
+          title: 'Your setup',
+          intro: 'Counted from your own portfolio every time this page opens. Each line says where it stands and what it turns on — the software runs without any one of them, and works harder with each.',
+        }))}
+        ${join(HUB_GROUPS.map(([g, label]) => {
+          const list = cards.filter((c) => (c.group || 'administer') === g);
+          if (!list.length) return null;
+          return html`
+            <div class="setup-section-head">${label}</div>
+            <div class="setup-grid">
+              ${list.map((c) => html`<a class="setup-card" href="${c.href}">
+                <div class="sc-icon">${svgIcon(c.icon)}</div>
+                <div><div class="sc-title">${c.title}</div><div class="sc-desc">${c.desc}</div></div>
+              </a>`)}
+            </div>`;
+        }))}`,
     });
   });
 

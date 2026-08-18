@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join as pjoin } from 'node:path';
 import { createHash } from 'node:crypto';
 import { html, raw, esc, join, when, type Raw, type Child } from '../lib/html.ts';
-import { htmlRes, takeFlash, type Rq, type Res } from '../lib/http.ts';
+import { htmlRes, takeFlash, cookie, type Rq, type Res } from '../lib/http.ts';
 import { can, type Ctx } from '../lib/auth.ts';
 import { q, ROOT } from '../lib/db.ts';
 import { fmtDate } from '../lib/dates.ts';
@@ -242,6 +242,23 @@ function setupMenu(ctx: Ctx, active: string): Raw {
   </div>`;
 }
 
+/** Appearance lives in the account menu, named and labelled, because that is
+ * what it is: a personal preference, like the profile and the sign-out beside
+ * it. It used to be a bare sun glyph in the top bar directly beside the setup
+ * gear — two identical round icon buttons, one personal and one
+ * administrative, which read as a pair and sent people looking for settings
+ * into the theme. Three explicit choices also beat a toggle: "System" is a
+ * real answer that a two-state switch cannot express, and the boot script has
+ * always honoured it. */
+const APPEARANCE = html`<div class="menu-sub">
+  <div class="menu-label">Appearance</div>
+  <div class="segbar" role="group" aria-label="Appearance">
+    <button type="button" class="seg" data-theme-set="system">System</button>
+    <button type="button" class="seg" data-theme-set="light">Light</button>
+    <button type="button" class="seg" data-theme-set="dark">Dark</button>
+  </div>
+</div>`;
+
 // ---------- search registry (⌘K) ----------
 
 export interface SearchHit {
@@ -376,7 +393,6 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         ${ctx.orgKind === 'demo'
           ? html`<a class="bizdate" href="/dev/sim" title="Simulated business date — open Simulator Console"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</a>`
           : html`<span class="bizdate" title="Business date"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</span>`}
-        <button class="icon-btn" data-theme-toggle aria-label="Toggle light or dark theme" title="Light / dark theme">${raw('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.3 4.3l1.8 1.8M17.9 17.9l1.8 1.8M2.5 12H5M19 12h2.5M4.3 19.7l1.8-1.8M17.9 6.1l1.8-1.8"/></svg>')}</button>
         ${setupMenu(ctx, opts.active)}
         <div class="usermenu">
           <button class="avatar" data-toggle="#usermenu-pop" aria-label="Account menu">${initials(ctx.userName)}</button>
@@ -385,6 +401,9 @@ export function shell(r: Rq, opts: ShellOpts): Res {
             <hr />
             ${when(can(ctx, 'admin:settings'), () => html`<a href="/admin/settings">Org settings</a>`)}
             <a href="/me">My profile</a>
+            <hr />
+            ${APPEARANCE}
+            <hr />
             <form method="post" action="/logout"><button type="submit">Sign out</button></form>
           </div>
         </div>
@@ -508,11 +527,11 @@ export interface TblRow {
   cells: Child[];
   href?: string;
 }
-export function tbl(cols: Col[], rows: TblRow[], opts?: { empty?: string; foot?: Child[] }): Raw {
+export function tbl(cols: Col[], rows: TblRow[], opts?: { empty?: string; foot?: Child[]; density?: Density }): Raw {
   if (!rows.length) {
     return html`<div class="empty"><div class="e-title">${opts?.empty || 'Nothing here yet'}</div></div>`;
   }
-  return html`<div class="tbl-wrap"><table class="tbl">
+  return html`<div class="tbl-wrap"><table class="tbl ${opts?.density === 'tight' ? 'tight' : ''}">
     <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}" ${c.w ? raw(`style="width:${c.w}"`) : ''}>${c.label}</th>`)}</tr></thead>
     <tbody>${rows.map(
       (row) =>
@@ -520,6 +539,72 @@ export function tbl(cols: Col[], rows: TblRow[], opts?: { empty?: string; foot?:
     )}</tbody>
     ${when(opts?.foot, () => html`<tfoot><tr>${(opts!.foot || []).map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}">${cell}</td>`)}</tr></tfoot>`)}
   </table></div>`;
+}
+
+// ---------- list views: how a long table is shown ----------
+
+/** Row height. "Roomy" is the reading default; "Tight" fits roughly twice as
+ * many rows on a screen, which is what someone working a 300-row delinquency
+ * list actually wants. The choice follows the operator across every list and
+ * every session (cookie), because it is a preference about their eyes, not
+ * about the page they happen to be on. */
+export type Density = 'roomy' | 'tight';
+const DENSITY_COOKIE = 'sl_density';
+
+export function density(r: Rq): Density {
+  const fromUrl = r.query.get('density');
+  if (fromUrl === 'roomy' || fromUrl === 'tight') return fromUrl;
+  return r.cookies[DENSITY_COOKIE] === 'tight' ? 'tight' : 'roomy';
+}
+
+/** Call in a list route so a `?density=` in the URL is remembered next time. */
+export function rememberDensity(r: Rq): Density {
+  const d = density(r);
+  if (r.query.get('density') && r.cookies[DENSITY_COOKIE] !== d) {
+    r.setCookies.push(cookie(DENSITY_COOKIE, d, { maxAge: 365 * 86400, httpOnly: false }));
+  }
+  return d;
+}
+
+/** A segmented switch rendered as links, so it works with no JavaScript and
+ * every other filter on the page survives the click. */
+export function segLinks(
+  r: Rq,
+  param: string,
+  choices: [value: string, label: string][],
+  current: string,
+  label: string,
+): Raw {
+  const href = (v: string): string => {
+    const sp = new URLSearchParams(r.query);
+    sp.set(param, v);
+    sp.delete('page'); // a different shape of the list starts at the top
+    return `${r.path}?${sp}`;
+  };
+  return html`<div class="segbar" role="group" aria-label="${label}">
+    ${choices.map(([v, l]) => html`<a class="seg ${v === current ? 'on' : ''}" href="${href(v)}"
+      ${v === current ? raw('aria-current="true"') : ''}>${l}</a>`)}
+  </div>`;
+}
+
+/** The control strip that sits above a long list: how it is grouped, and how
+ * tightly it is packed. Views are optional — a list with only one sensible
+ * shape passes none and still gets the density control. */
+export function viewBar(
+  r: Rq,
+  opts: { views?: { param?: string; current: string; choices: [string, string][]; label?: string }; density: Density; note?: Child },
+): Raw {
+  return html`<div class="viewbar">
+    ${when(!!opts.views, () => html`<div class="vb-group">
+      <span class="vb-label">${opts.views!.label || 'View'}</span>
+      ${segLinks(r, opts.views!.param || 'view', opts.views!.choices, opts.views!.current, opts.views!.label || 'View')}
+    </div>`)}
+    <div class="vb-group">
+      <span class="vb-label">Rows</span>
+      ${segLinks(r, 'density', [['roomy', 'Roomy'], ['tight', 'Tight']], opts.density, 'Row height')}
+    </div>
+    ${when(opts.note, () => html`<div class="vb-note">${opts.note}</div>`)}
+  </div>`;
 }
 
 export function pager(r: Rq, total: number, perPage = 50): Raw {

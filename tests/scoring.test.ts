@@ -420,7 +420,7 @@ test('active mode holds renewal offers for escalated households; shadow does not
 
 // ---------- Task 7: workbench score chips ----------
 
-test('the delinquency workbench shows score chips with the reason, and names shadow mode', async () => {
+test('the delinquency workbench shows score chips in plain English, with the reason behind them', async () => {
   const ctx = sysCtx(fx.orgId, D);
   // an escalated household to render
   const lease = mkScoringLease();
@@ -442,7 +442,12 @@ test('the delinquency workbench shows score chips with the reason, and names sha
     const page = await get(base, '/delinquency', cookie);
     assert.equal(page.status, 200);
     assert.match(page.text, /class="badge bad" title="Escalate/, 'escalate chip with reason tooltip missing');
-    assert.match(page.text, /scoring: shadow \(chips inform, behavior unchanged\)/, 'shadow caption missing');
+    // The chip says what to DO, not which internal bucket the scorer picked.
+    // The mode the scorer runs in is a setting, not a caption on the operator's
+    // workbench (2026-08-18: no developer state in the product).
+    assert.match(page.text, />Needs a call</, 'the chip reads as an instruction, not a bucket name');
+    assert.doesNotMatch(page.text, /scoring: shadow/, 'internal scorer mode must not be reported in the product');
+    assert.doesNotMatch(page.text, /chips inform|behavior unchanged/);
   } finally {
     close();
   }
@@ -661,7 +666,7 @@ function mkStaff(): string {
   return email;
 }
 
-test('lead inbox shows heat chips with reasons and names shadow mode', async () => {
+test('lead inbox shows heat chips with reasons, in words a leasing agent uses', async () => {
   const ctx = sysCtx(fx.orgId, D);
   mkFitUnit(2);
   const hot = mkLead({ message: 'Can we tour a 2 bedroom this week?' });
@@ -679,7 +684,8 @@ test('lead inbox shows heat chips with reasons and names shadow mode', async () 
     const page = await get(base, '/leads', cookie);
     assert.equal(page.status, 200);
     assert.match(page.text, /class="badge accent" title="Hot/, 'hot chip with reason missing');
-    assert.match(page.text, /scoring: shadow \(chips inform, behavior unchanged\)/, 'shadow caption missing');
+    assert.match(page.text, />Hot lead</, 'the chip is labelled, not a raw bucket');
+    assert.doesNotMatch(page.text, /scoring: shadow/, 'internal scorer mode must not be reported in the product');
   } finally {
     close();
   }

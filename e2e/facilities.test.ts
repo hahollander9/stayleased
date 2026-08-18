@@ -24,7 +24,10 @@ test('GATE: tech My Day end-to-end on mobile width', async () => {
   const page = await newPage(browser, { mobile: true });
   await login(page, base, 'tech@summitridge.demo');
   await page.goto(`${base}/myday`);
-  const queue = (await page.textContent('.portal')) || '';
+  // My Day is a page of the app now, not a stripped-down portal — a tech keeps
+  // the nav, the search and the property switcher wherever they open it.
+  const queue = (await page.textContent('.content')) || '';
+  assert.ok(!/Full app/.test(await page.content()), 'no escape hatch back to an app the tech never left');
   assert.match(queue, /Water heater pilot light out/);
   await page.click('a.list-item:has-text("Water heater pilot light out")');
   await page.waitForLoadState('networkidle');

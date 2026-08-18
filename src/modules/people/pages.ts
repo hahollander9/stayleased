@@ -9,7 +9,7 @@ import { fmtDate, diffDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, select, registerNav, registerSearch,
-  historyPanel, pager, emptyState, input,
+  historyPanel, pager, emptyState, input, viewBar, rememberDensity, type Density,
 } from '../../ui/ui.ts';
 import { leaseLedger, leaseBalance } from '../m8_receivables/service.ts';
 
@@ -35,6 +35,48 @@ const LEASE_STATUSES = ['active', 'month_to_month', 'notice', 'draft', 'out_for_
 const RESIDENT_SORTS = ['name', 'unit', 'property', 'role', 'balance'] as const;
 type ResidentSort = (typeof RESIDENT_SORTS)[number];
 const PER_CHOICES = ['25', '50', '100', 'all'] as const;
+
+/** Two honest shapes for the same data. "People" answers "who lives here";
+ * "Households" answers "what do we bill and who is on the hook" — and only the
+ * second can total money, because money is owed per lease. */
+type ResidentView = 'people' | 'households';
+
+/** `primary` / `co` are how the lease records a signer; they are not words an
+ * operator says out loud. */
+const ROLE_LABEL: Record<string, string> = { primary: 'Primary', co: 'Co-resident', guarantor: 'Guarantor', occupant: 'Occupant', minor: 'Minor' };
+
+interface Household {
+  lease_id: string;
+  household: string;
+  unit_number: string;
+  prop_name: string;
+  lease_status: string;
+  people: { first_name: string; last_name: string; email?: string; role: string }[];
+}
+
+/** Collapse the per-adult rows onto their lease, preserving the order the rows
+ * arrived in (so the table's sort carries into the household view). */
+function groupHouseholds(rows: any[]): Household[] {
+  const by = new Map<string, Household>();
+  for (const r of rows) {
+    let h = by.get(r.lease_id);
+    if (!h) {
+      h = {
+        lease_id: r.lease_id, household: '', unit_number: r.unit_number, prop_name: r.prop_name,
+        lease_status: r.lease_status, people: [],
+      };
+      by.set(r.lease_id, h);
+    }
+    h.people.push({ first_name: r.first_name, last_name: r.last_name, email: r.email, role: r.role });
+  }
+  for (const h of by.values()) {
+    const primary = h.people.find((p) => p.role === 'primary') || h.people[0]!;
+    h.household = h.people.length > 1
+      ? `${primary.last_name} household`
+      : `${primary.first_name} ${primary.last_name}`;
+  }
+  return [...by.values()];
+}
 
 function residentCmp(sort: ResidentSort): (a: any, b: any) => number {
   const s = (v: unknown): string => String(v ?? '').toLowerCase();
@@ -88,9 +130,10 @@ function sortableTbl(
   cols: { label: Child; num?: boolean; ariaSort?: 'ascending' | 'descending' }[],
   rows: { cells: Child[]; href?: string }[],
   empty: string,
+  density: Density = 'roomy',
 ): Raw {
   if (!rows.length) return html`<div class="empty"><div class="e-title">${empty}</div></div>`;
-  return html`<div class="tbl-wrap"><table class="tbl">
+  return html`<div class="tbl-wrap"><table class="tbl ${density === 'tight' ? 'tight' : ''}">
     <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}" ${c.ariaSort ? raw(`aria-sort="${c.ariaSort}"`) : ''}>${c.label}</th>`)}</tr></thead>
     <tbody>${rows.map(
       (row) =>
@@ -104,12 +147,36 @@ export function routes(r: Router): void {
   r.get('/residents', requirePerm('residents:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const { rows, sort, dir, query } = residentListRows(ctx, rq);
-    const total = rows.length;
+    const dens = rememberDensity(rq);
+    const view: ResidentView = rq.query.get('view') === 'households' ? 'households' : 'people';
+
+    // One balance per household, resolved once and shared by both views. A
+    // lease's balance belongs to the LEASE, so printing it beside two adults
+    // on the same lease showed the same money twice and summed to double the
+    // truth; the total below counts each household exactly once.
+    const balOf = new Map<string, number>();
+    const balance = (leaseId: string): number => {
+      let b = balOf.get(leaseId);
+      if (b === undefined) { b = leaseBalance(ctx, leaseId); balOf.set(leaseId, b); }
+      return b;
+    };
+    const households = groupHouseholds(rows);
+    // Owed and in-credit are different facts and must not cancel each other in
+    // a headline: a portfolio owed $10k that also holds $3k of prepayments is
+    // not "owed $7k" to anyone collecting it. The column footer still sums the
+    // column arithmetically — a total under a column has to equal the column.
+    const owedTotal = households.reduce((sum, h) => sum + Math.max(0, balance(h.lease_id)), 0);
+    const creditTotal = households.reduce((sum, h) => sum + Math.min(0, balance(h.lease_id)), 0);
+    const netTotal = owedTotal + creditTotal;
+    const owingCount = households.filter((h) => balance(h.lease_id) > 0).length;
+
+    const listRows: any[] = view === 'households' ? households : rows;
+    const total = listRows.length;
     const perParam = rq.query.get('per') || '50';
     const per = (PER_CHOICES as readonly string[]).includes(perParam) ? perParam : '50';
     const pageSize = per === 'all' ? Math.max(total, 1) : parseInt(per, 10);
     const page = Math.max(1, parseInt(rq.query.get('page') || '1', 10) || 1);
-    const pageRows = per === 'all' ? rows : rows.slice((page - 1) * pageSize, page * pageSize);
+    const pageRows = per === 'all' ? listRows : listRows.slice((page - 1) * pageSize, page * pageSize);
 
     // sort links preserve search + page size (the pager already preserves
     // sort/dir/per the same way); a re-sort restarts at page 1
@@ -130,33 +197,76 @@ export function routes(r: Router): void {
     csvSp.delete('per');
     const csvQs = csvSp.toString();
 
+    const peopleTable = (): Raw => sortableTbl(
+      [head('name', 'Resident'), head('unit', 'Unit'), head('property', 'Property'), head('role', 'On the lease'),
+       { label: 'Lease' }, head('balance', 'Household balance', true)],
+      pageRows.map((x) => {
+        const bal = balance(x.lease_id);
+        const shared = x.role !== 'primary';
+        return {
+          href: `/residents/${x.id}`,
+          cells: [
+            html`<b>${x.first_name} ${x.last_name}</b><span class="sub">${x.email || 'No email on file'}</span>`,
+            x.unit_number, x.prop_name, ROLE_LABEL[x.role as string] || x.role, statusBadge(x.lease_status),
+            bal === 0
+              ? html`<span class="${shared ? 'shared' : ''}">${usd(0)}</span>`
+              : html`<span class="${shared ? 'shared' : bal > 0 ? 'neg' : ''}"
+                  title="${shared ? 'Owed by this household — counted once in the total below' : 'Owed by this household'}">${usd(bal)}</span>`,
+          ],
+        };
+      }),
+      'No residents match.',
+      dens,
+    );
+
+    const householdTable = (): Raw => tbl(
+      [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Who is on it' },
+       { label: 'Lease' }, { label: 'Balance', num: true }],
+      pageRows.map((h: Household) => {
+        const bal = balance(h.lease_id);
+        return {
+          href: `/leases/${h.lease_id}`,
+          cells: [
+            html`<b>${h.household}</b><span class="sub">${h.people.length} adult${h.people.length === 1 ? '' : 's'}</span>`,
+            h.unit_number, h.prop_name,
+            html`${h.people.map((p) => `${p.first_name} ${p.last_name}`).join(', ')}`,
+            statusBadge(h.lease_status),
+            html`<span class="${bal > 0 ? 'neg' : ''}">${usd(bal)}</span>`,
+          ],
+        };
+      }),
+      {
+        empty: 'No households match.',
+        density: dens,
+        foot: ['Total — all households', '', '', '',
+          `${households.length} household${households.length === 1 ? '' : 's'}`, usd(netTotal)],
+      },
+    );
+
     return shell(rq, {
       title: 'Residents',
       active: '/residents',
-      subtitle: `${total} adults on current leases`,
+      subtitle: `${rows.length} adult${rows.length === 1 ? '' : 's'} across ${households.length} household${households.length === 1 ? '' : 's'}`
+        + (owingCount ? ` · ${usd(owedTotal)} owed by ${owingCount} household${owingCount === 1 ? '' : 's'}` : ' · nothing owed')
+        + (creditTotal < 0 ? ` · ${usd(-creditTotal)} held in credit` : ''),
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${when(sort, () => html`<input type="hidden" name="sort" value="${sort}" /><input type="hidden" name="dir" value="${dir}" />`)}
+          ${when(view === 'households', () => html`<input type="hidden" name="view" value="households" />`)}
+          ${when(dens === 'tight', () => html`<input type="hidden" name="density" value="tight" />`)}
           ${field('Search', input('q', { value: query, placeholder: 'Name, email, or unit…', type: 'search' }))}
           ${field('Rows', select('per', PER_CHOICES.map((p): [string, string] => [p, p === 'all' ? 'All' : p]), per))}
           <button class="btn btn-ghost">Filter</button>
           <a class="btn btn-ghost" href="/residents.csv${csvQs ? `?${csvQs}` : ''}">Export CSV</a>
         </form>
-        ${card(null, html`${sortableTbl(
-          [head('name', 'Resident'), head('unit', 'Unit'), head('property', 'Property'), head('role', 'Role'), { label: 'Lease' }, head('balance', 'Balance', true)],
-          pageRows.map((x) => {
-            const bal: number = x.balance ?? leaseBalance(ctx, x.lease_id);
-            return {
-              href: `/residents/${x.id}`,
-              cells: [
-                html`<b>${x.first_name} ${x.last_name}</b><span class="sub">${x.email || ''}</span>`,
-                x.unit_number, x.prop_name, statusBadge(undefined, x.role), statusBadge(x.lease_status),
-                html`<span class="${bal > 0 ? 'neg' : ''}">${usd(bal)}</span>`,
-              ],
-            };
-          }),
-          'No residents match.',
-        )}${pager(rq, total, pageSize)}`, { flush: true })}`,
+        ${viewBar(rq, {
+          views: { current: view, choices: [['people', 'People'], ['households', 'Households']], label: 'View' },
+          density: dens,
+          note: view === 'people'
+            ? 'One row per adult. A balance is owed by the household, so roommates show the same figure.'
+            : 'One row per lease, with the balance counted once.',
+        })}
+        ${card(null, html`${view === 'households' ? householdTable() : peopleTable()}${pager(rq, total, pageSize)}`, { flush: true })}`,
     });
   });
 
@@ -165,12 +275,22 @@ export function routes(r: Router): void {
   r.get('/residents.csv', requirePerm('residents:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const { rows } = residentListRows(ctx, rq);
+    // One row per adult, so the balance repeats for roommates exactly as it
+    // does on screen — the header says whose it is, and a "counts once" flag
+    // lets a spreadsheet total the column without double-counting a household.
+    const seen = new Set<string>();
     const csv = toCsv(
-      ['Resident', 'Unit', 'Property', 'Role', 'Lease status', 'Balance'],
-      rows.map((x) => [
-        `${x.first_name} ${x.last_name}`, x.unit_number, x.prop_name, x.role, x.lease_status,
-        (((x.balance ?? leaseBalance(ctx, x.lease_id)) as number) / 100).toFixed(2),
-      ]),
+      ['Resident', 'Unit', 'Property', 'On the lease', 'Lease status', 'Household balance', 'Counts once'],
+      rows.map((x) => {
+        const first = !seen.has(x.lease_id);
+        seen.add(x.lease_id);
+        return [
+          `${x.first_name} ${x.last_name}`, x.unit_number, x.prop_name,
+          ROLE_LABEL[x.role as string] || x.role, x.lease_status,
+          (((x.balance ?? leaseBalance(ctx, x.lease_id)) as number) / 100).toFixed(2),
+          first ? 'yes' : 'no',
+        ];
+      }),
     );
     return fileRes(csv, 'text/csv; charset=utf-8', { filename: `residents-${ctx.businessDate}.csv` });
   });

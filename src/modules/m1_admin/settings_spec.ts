@@ -78,9 +78,11 @@ const AUTONOMY: [string, string][] = [
   ['approve', 'Draft, staff approves'],
   ['auto', 'Send automatically'],
 ];
+// "Shadow" is the engineering word for it. What the operator is choosing is
+// whether the rating is advice or instruction.
 const SCORER: [string, string][] = [
-  ['shadow', 'Shadow — score and show, change nothing'],
-  ['active', 'Active — let agents act on the score'],
+  ['shadow', 'Show me the rating only'],
+  ['active', 'Let the assistant act on the rating'],
 ];
 
 export const GROUPS = [

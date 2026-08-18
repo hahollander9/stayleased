@@ -141,8 +141,44 @@
     });
   });
 
-  // ---------- light / dark theme toggle ----------
+  // ---------- appearance: system / light / dark ----------
+  function systemTheme() {
+    return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  }
+  function themeChoice() {
+    var m = document.cookie.match(/(?:^|; )sl_theme=(light|dark)/);
+    return m ? m[1] : 'system';
+  }
+  // Mark the live choice so the segmented control shows where you are. Called
+  // on load and after every change; 'system' is a real choice, not the absence
+  // of one, so it gets its own segment rather than being inferred.
+  function paintTheme() {
+    var choice = themeChoice();
+    var segs = document.querySelectorAll('[data-theme-set]');
+    for (var i = 0; i < segs.length; i++) {
+      var on = segs[i].getAttribute('data-theme-set') === choice;
+      segs[i].classList.toggle('on', on);
+      segs[i].setAttribute('aria-pressed', on ? 'true' : 'false');
+    }
+  }
+  paintTheme();
+
   document.addEventListener('click', function (e) {
+    var s = e.target.closest('[data-theme-set]');
+    if (s) {
+      var want = s.getAttribute('data-theme-set');
+      if (want === 'system') {
+        document.cookie = 'sl_theme=;path=/;max-age=0;SameSite=Lax';
+      } else {
+        document.cookie = 'sl_theme=' + want + ';path=/;max-age=31536000;SameSite=Lax';
+      }
+      var applied = want === 'system' ? systemTheme() : want;
+      document.documentElement.setAttribute('data-theme', applied);
+      document.dispatchEvent(new CustomEvent('sl-theme', { detail: applied }));
+      paintTheme();
+      return;
+    }
+    // legacy two-state toggle — still used by the marketing chrome
     var b = e.target.closest('[data-theme-toggle]');
     if (!b) return;
     var el = document.documentElement;
@@ -150,6 +186,7 @@
     el.setAttribute('data-theme', next);
     document.cookie = 'sl_theme=' + next + ';path=/;max-age=31536000;SameSite=Lax';
     document.dispatchEvent(new CustomEvent('sl-theme', { detail: next }));
+    paintTheme();
   });
 
   // ---------- command palette ----------
