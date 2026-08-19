@@ -1439,3 +1439,75 @@ naming, and an honest unknown with the AI off. `tests/import_auto.test.ts` (5) �
 routing itself, a directory routing itself, an unimportable report kept and explained with
 nothing built, an explicit lane still winning, and the hub's single dropzone.
 Gates: tsc clean · 431/431 unit · full e2e.
+
+## 2026-08-19 — The model reads first, and the page says which brain read it
+
+Henry, on the ingestion build shipped an hour earlier: *"so is ai gonna read them? or is it a
+script that knows the format i want the first option not the latter."* Reading the code back,
+the honest answer was **partly the latter**, in two places:
+
+1. `classifyDocument` ran the signature matcher FIRST and short-circuited on a hit. A Yardi
+   file whose banner says "Rent Roll with Lease Charges" never reached the model at all. That
+   was defended as "instant and free" — which is true, and is not what was asked for.
+2. `applyReadingPlan`'s output only won if `mappingScore(ai) >= mappingScore(heuristic)`. A
+   column-name matcher could outvote a model that had read the whole grid.
+
+Both inverted. The model now reads every upload; the matcher runs as the **understudy** for
+when the model is unreachable (no key, outage, timeout, unusable reply) and as a **cross-check**
+when the model's own answer is uncertain — a low-confidence read that contradicts the
+document's printed title routes by the title and says so, rather than silently picking. The
+AI reading plan now wins whenever it maps anything at all; the heuristic answers only when
+there is no plan, because "the string matcher scored higher" is not a reason to overrule a
+reader that understood the document.
+
+The precedence is a pure function (`resolveClassification`) rather than control flow tangled
+into an async call, because "is the AI actually reading my documents?" deserves an answer that
+can be proven: seven tests cover confident-AI-wins, AI-wins-with-no-signature, the
+disagreement path, the agreement path, unreachable-with-a-key, no-key, and neither-answered.
+
+And the screens now say which brain did it — `read and identified by AI`, `read by AI`, or
+`matched by its report format (AI unavailable)` — with the upload card naming the live model
+or, when no key is configured, saying so plainly instead of implying a read happened.
+
+Deliberately unchanged: the deterministic transforms and the reconciliation strip that runs
+after the model decides. Those are not a format-matcher — they execute what the model read and
+check the arithmetic against the report's own summary page, which is what has caught every
+money bug in this pipeline (#67, #68). The model reasons; the machinery verifies.
+
+Gates: tsc clean · 439/439 unit · 179/179 e2e.
+
+## 2026-08-19 — What the engineering memory got wrong about itself
+
+A `/graphify` pass over the repo (316 files → 2,713 nodes, 13,517 edges) was run to build the
+knowledge graph, and its semantic layer read the docs against the source rather than against
+each other. Three of its findings were claims this repo makes about itself that are no longer
+true, and one of them is a data loss nobody had noticed.
+
+- **CLAUDE.md said CI did not exist.** "`.github/workflows/ci.yml` was lost to a web-UI upload
+  — restore on the next local push" has been false since the file came back: it is present,
+  git-tracked, and is the workflow that gates every push. The line now records that it is
+  restored and green-gating, and keeps the reason dot-directories never travel by upload.
+- **README.md documented the wrong brain.** It advertised `STAYLEASED_AI_MODEL` default
+  `claude-opus-4-8`; `src/lib/sim/llm.ts:123` has read `claude-opus-5` since that build.
+- **DOCLOG-PASTE-IN.md was a build that never landed.** It claims DECISIONS #73–#77 against the
+  tail as of 99f07c8. Those numbers are now occupied by five entirely different entries and the
+  tail is #84 — but the paste-in's own content never reached either log: `606-unit`, `rtempcon`,
+  `Will not import` and `depositHeld` appear in neither BUILDLOG.md nor DECISIONS.md. Its #71
+  and #72 did merge. So this is not a numbering collision, it is five unmerged decisions from
+  the 606-unit Cowork audit — the exact loss class the parallel-session rule exists to prevent,
+  and one that every gate passed over because `doclog.test.ts` checks contiguity and uniqueness,
+  which an absence satisfies perfectly. The file now says so at the top instead of presenting
+  stale numbers as current. **The content is still unmerged and still needs a decision.**
+
+Also this session: PR #17's `end-to-end` job went red for the first time on this branch (2 of
+179). Both failures were `page.click` timeouts waiting for a business-date advance to navigate
+— `goldenpath.test.ts:129` (+30 days, 120s budget, 200s actual) and `ledger.test.ts:54`
+(+1 week, 30s budget, 54s actual). Per-test comparison against the previous green run showed
+every date-advance test 3–6× slower and every other test ~1.2×, which reads exactly like a
+regression. It is not one: `jobs.ts` (which owns `advanceBusinessDate`) imports only db, ids,
+dates, auth, events and log, and the commit touched only `ai_classify.ts`, `import.ts` and
+their tests — `ai_classify.ts` has exactly one importer, the upload route. An A/B of both
+suites at HEAD and at the previous commit in one container settled it: golden path 4 at 61.5s
+vs 62.6s, the ledger gate at 12.2s vs 12.7s. The commit adds nothing; the runner was slow.
+Recorded rather than retried-away, because the fragility is real — golden path 4 spends half
+its click budget on a green run, so a slow runner will red it again.

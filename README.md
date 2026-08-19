@@ -40,7 +40,7 @@ npm run dev      # → http://localhost:3000
 
 **Live AI (optional).** The AI layer runs in deterministic **demo** mode out of
 the box. Set `ANTHROPIC_API_KEY` (and optionally `STAYLEASED_AI_MODEL`, default
-`claude-opus-4-8`) to switch the brain to **live** — a raw-HTTPS Anthropic
+`claude-opus-5`) to switch the brain to **live** — a raw-HTTPS Anthropic
 adapter with per-call/daily token caps, response caching, and a seamless
 fallback to the deterministic brain if the key is missing or a call fails. The
 active brain (Live/Demo) shows in **Reports → AI Activity**, which also has a

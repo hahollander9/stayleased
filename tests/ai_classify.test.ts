@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { classifyBySignature, classifyDocument } from '../src/modules/setup/ai_classify.ts';
+import { classifyBySignature, classifyDocument, resolveClassification, type DocClassification } from '../src/modules/setup/ai_classify.ts';
 import { YARDI_BLOCK_ROLL } from './fixtures/yardi_block_roll.ts';
 import { AUDUBON_BLOCK_ROLL } from './fixtures/audubon_block_roll.ts';
 
@@ -108,11 +108,89 @@ test('nothing recognisable classifies as unknown rather than guessing a lane', a
   assert.ok(c.why.length > 10, 'and it says why');
 });
 
-test('classifyDocument works end to end with no API key — the offline path is the default path', async () => {
+test('with the AI unreachable, a document that names itself still routes — degraded, and it says so', async () => {
+  // This is the OUTAGE path, not the design. With a key present the model reads
+  // every upload; signatures exist so an outage degrades the product instead of
+  // stopping it (2026-08-19: the reader is the model, not a lookup table).
   const c = await classifyDocument('orchard-east.xlsx', rows(
     ['Rent Roll with Lease Charges'], ['Orchard East (1042)'], ['Unit', 'Resident', 'Name', 'Rent'],
   ));
   assert.equal(c.kind, 'rent_roll');
-  assert.equal(c.by, 'signature', 'a document that names itself needs no model call');
+  assert.equal(c.by, 'signature');
   assert.equal(c.supported, true);
+  assert.match(c.why, /calls itself/, 'and states what it went on');
+});
+
+test('the fallback never pretends to be a read: an unrecognised file with no AI is unknown', async () => {
+  const c = await classifyDocument('mystery.csv', rows(['Alpha', 'Beta', 'Gamma'], ['1', '2', '3']));
+  assert.equal(c.kind, 'unknown');
+  assert.equal(c.by, 'fallback');
+  assert.equal(c.supported, false);
+});
+
+// ---------- who wins ----------
+//
+// The precedence rule is the whole answer to "is the AI reading my documents,
+// or is a script matching formats?" — so it is a pure function, proven here
+// rather than described in a comment. The model reads; the matcher is the
+// understudy for when the model cannot be reached.
+
+const aiSays = (over: Partial<DocClassification> = {}): DocClassification => ({
+  kind: 'balances', supported: true, report: 'Aged Receivables', system: 'Yardi',
+  confidence: 'high', why: 'Rows carry aging buckets per unit.', by: 'ai', ...over,
+});
+const sigSays = (over: Partial<DocClassification> = {}): DocClassification => ({
+  kind: 'rent_roll', supported: true, report: 'Rent Roll', system: 'Yardi',
+  confidence: 'high', why: 'The document calls itself a Rent Roll.', by: 'signature', ...over,
+});
+
+test('a confident AI read wins outright — the format matcher does not get a vote', () => {
+  const r = resolveClassification(aiSays(), sigSays(), true);
+  assert.equal(r.by, 'ai');
+  assert.equal(r.kind, 'balances', 'the model routed it, not the printed title');
+  assert.equal(r.report, 'Aged Receivables');
+});
+
+test('an AI read wins even when nothing else recognised the document', () => {
+  const r = resolveClassification(aiSays({ confidence: 'low' }), null, true);
+  assert.equal(r.by, 'ai');
+  assert.equal(r.kind, 'balances');
+});
+
+test('an uncertain AI read that contradicts the printed title surfaces the disagreement', () => {
+  const r = resolveClassification(aiSays({ confidence: 'low' }), sigSays(), true);
+  assert.equal(r.kind, 'rent_roll', 'the document’s own title decides a coin toss');
+  assert.match(r.why, /calls itself a Rent Roll/);
+  assert.match(r.why, /AI read it as aged receivables but was not certain/, 'and both readings are stated');
+  assert.equal(r.confidence, 'low', 'flagged as uncertain rather than presented as settled');
+});
+
+test('an uncertain AI read that AGREES with the title is left alone', () => {
+  const r = resolveClassification(aiSays({ kind: 'rent_roll', confidence: 'low' }), sigSays(), true);
+  assert.equal(r.by, 'ai');
+  assert.equal(r.kind, 'rent_roll');
+});
+
+test('with the model unreachable the matcher answers — and the page says why', () => {
+  const r = resolveClassification(null, sigSays(), true);
+  assert.equal(r.by, 'signature');
+  assert.equal(r.kind, 'rent_roll');
+  assert.match(r.why, /could not be reached/, 'a degraded read announces itself');
+});
+
+test('with no AI configured the matcher answers plainly, with no outage language', () => {
+  const r = resolveClassification(null, sigSays(), false);
+  assert.equal(r.by, 'signature');
+  assert.doesNotMatch(r.why, /could not be reached/);
+});
+
+test('neither reader answering is an honest unknown, never a guess', () => {
+  const live = resolveClassification(null, null, true, 'mystery.csv');
+  assert.equal(live.kind, 'unknown');
+  assert.equal(live.supported, false);
+  assert.match(live.why, /could not be reached/);
+
+  const offline = resolveClassification(null, null, false, 'mystery.csv');
+  assert.equal(offline.kind, 'unknown');
+  assert.doesNotMatch(offline.why, /could not be reached/);
 });

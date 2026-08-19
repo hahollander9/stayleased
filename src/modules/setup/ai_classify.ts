@@ -273,26 +273,67 @@ export async function classifyByAi(filename: string, rows: string[][]): Promise<
   };
 }
 
-/** What did they upload? Signatures first (free, and the document naming
- * itself is the best evidence there is); the model for everything else. */
-export async function classifyDocument(filename: string, rows: string[][]): Promise<DocClassification> {
-  const sig = classifyBySignature(filename, rows);
-  // a report that printed its own recognised name needs no second opinion
-  if (sig && sig.by === 'signature' && sig.confidence === 'high' && SIGNATURES.some((s) => s.report === sig.report)) {
-    return sig;
+/** Which answer wins, given what each reader produced.
+ *
+ * Split out from the call so the precedence is a pure function that can be
+ * proven rather than asserted in prose: THE MODEL'S ANSWER IS THE ANSWER, and
+ * the pattern matcher is the understudy that goes on when the model cannot.
+ * `aiLive` is passed in so the wording can tell "no key configured" apart from
+ * "configured but unreachable" — those mean different things to whoever is
+ * looking at the screen. */
+export function resolveClassification(
+  ai: DocClassification | null,
+  sig: DocClassification | null,
+  aiLive: boolean,
+  filename = '',
+): DocClassification {
+  if (ai) {
+    // The model read it. A confident answer stands on its own.
+    if (ai.confidence === 'high' || !sig) return ai;
+    // It hedged, and the document names itself something else — surface the
+    // disagreement instead of silently picking. The printed title routes it
+    // (it is the more literal evidence) and both readings are stated.
+    if (sig.kind !== ai.kind && sig.by === 'signature') {
+      return {
+        ...sig,
+        confidence: 'low',
+        why: `${sig.why} The AI read it as ${ai.report.toLowerCase()} but was not certain, so the document's own title decided it.`,
+      };
+    }
+    return ai;
   }
-  const ai = await classifyByAi(filename, rows).catch(() => null);
-  if (ai && (ai.confidence === 'high' || !sig)) return ai;
-  if (sig) return sig;
-  if (ai) return ai;
+
+  // Below here the model produced nothing: no key, an outage, a timeout, or an
+  // unusable reply. Everything that follows exists so that degrades the
+  // product instead of stopping it.
+  if (sig) {
+    return { ...sig, why: `${sig.why}${aiLive ? ' (the AI could not be reached for this file, so its format decided it)' : ''}` };
+  }
   return {
     kind: 'unknown',
     supported: false,
-    report: 'Unrecognized spreadsheet',
+    report: 'Unrecognized document',
     system: systemOf(filename),
     confidence: 'low',
-    why: 'Nothing in this file identifies it as a report StayLeased knows how to read.',
-    wouldUnlock: undefined,
+    why: aiLive
+      ? 'The AI could not be reached for this file, and nothing in it identifies a report StayLeased knows how to read.'
+      : 'Nothing in this file identifies it as a report StayLeased knows how to read.',
     by: 'fallback',
   };
+}
+
+/** What did they upload?
+ *
+ * THE MODEL READS IT — not a lookup table of the exports someone happened to
+ * anticipate. The document goes to Claude, which reasons about what it is from
+ * what is actually in it; that is the whole point, because a customer exports
+ * whatever their system offers and most of those shapes were never seen by
+ * anyone who wrote this code.
+ *
+ * The signature matcher still runs, in two roles, neither of them "the reader":
+ * the understudy for when the model is unreachable, and a cross-check when the
+ * model's own answer is uncertain. */
+export async function classifyDocument(filename: string, rows: string[][]): Promise<DocClassification> {
+  const [ai, sig] = [await classifyByAi(filename, rows).catch(() => null), classifyBySignature(filename, rows)];
+  return resolveClassification(ai, sig, llmStatus().live, filename);
 }
