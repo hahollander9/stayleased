@@ -133,8 +133,10 @@ GitHub `hahollander9/stayleased` @ main → Render auto-deploy → https://stayl
 `STAYLEASED_DB=/data/stayleased.db`, `STAYLEASED_SIGNUP_CODE`, `ANTHROPIC_API_KEY`
 (+`STAYLEASED_AI_MODEL`), optional `STAYLEASED_GA_ID` (GA4 — everything about it is OFF
 until this is set). Live orgs are fenced from sim jobs; external rails are simulated and
-disclosed in-product. `.github/workflows/ci.yml` was lost to a web-UI upload (dot-dirs don't
-survive them) — restore on the next local push.
+disclosed in-product. `.github/workflows/ci.yml` is restored and green-gating every push and
+PR (typecheck + unit, then the seeded e2e suite). It was once lost to a web-UI upload because
+dot-directories do not survive them — which is why nothing under `.github/` ever travels that
+way.
 
 ## Parallel-session rule
 

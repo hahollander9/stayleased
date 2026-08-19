@@ -5,9 +5,15 @@ web-UI upload (whole-file replace deletes parallel entries). If you land this bu
 the ZIP, append the entries below by hand — they are already inside the PATCH, so the
 `git am` path needs nothing from this file.
 
-The entries claim BUILDLOG header "2026-08-13 — The 606-unit import: nothing real
-discarded, nothing fake invented (Cowork audit session)" and DECISIONS #73–#77 against
-the tail as of 99f07c8. Re-check both tails before pasting.
+The entries below claim BUILDLOG header "2026-08-13 — The 606-unit import: nothing real
+discarded, nothing fake invented (Cowork audit session)" and DECISIONS #73–#77 against the
+tail as of 99f07c8.
+
+**Those numbers are stale, and this build has NOT landed.** DECISIONS #73–#77 are now
+occupied by entirely different entries and the tail is #84; #71 and #72 above did merge and
+are already in DECISIONS.md. Nothing else here reached either log — `606-unit`, `rtempcon`,
+`Will not import` and `depositHeld` appear in neither file. Renumber to the CURRENT tail
+before pasting, and drop the #71/#72 duplicates when you do.
 collected, and a file stating no layout producing a floorplan that admits its bed/bath is a
 placeholder and is not named after one.
 
