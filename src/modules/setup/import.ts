@@ -12,19 +12,20 @@ import { parseSpreadsheet, writeXlsx } from '../../lib/xlsx.ts';
 import { llmGenerate, llmStatus } from '../../lib/sim/llm.ts';
 import { shell, card, tbl, field, input, select, statusBadge } from '../../ui/ui.ts';
 import {
-  autoMap, fieldsFor, findHeaderRow, mergeStackedHeader, harvestSubRowCharges,
+  autoMap, fieldsFor, findHeaderRow, resolveStackedHeader, harvestSubRowCharges,
   detectDocumentPropertyBanner, splitPropertyBanner,
   scanRosterSections, parseSourceSummary, norm, PRESETS, extractRecord, toIsoDate,
   type ImportKind, type Mapping,
 } from './mapping.ts';
 import {
-  validateRentRoll, validateVendors, validateResidents, validateBalances,
-  applyRentRoll, applyVendors, applyResidents, applyBalances, postBankOpeningBalance,
+  validateRentRoll, validateVendors, validateResidents, validateBalances, validateDeposits,
+  applyRentRoll, applyVendors, applyResidents, applyBalances, applyDeposits, postBankOpeningBalance,
   type BatchRow, type Validation, type ImportRecon,
 } from './import_apply.ts';
 import { leasePdfRoutes, leasePdfLaneCard } from './import_leases.ts';
 import { aiPlanSpreadsheet, applyReadingPlan, aiReadPdfTable, mappingScore } from './ai_reader.ts';
-import { classifyDocument, type DocClassification } from './ai_classify.ts';
+import { type DocClassification } from './ai_classify.ts';
+import { readDocument, type DocumentRead, type DocStream } from './extract.ts';
 import { docsChecklist } from './onboarding.ts';
 import { readinessPanel } from './readiness.ts';
 
@@ -41,7 +42,81 @@ const KINDS: { key: ImportKind; label: string; blurb: string }[] = [
   { key: 'vendors', label: 'Vendors', blurb: 'Your plumbers, electricians and landscapers — name, trade, contact info.' },
   { key: 'residents', label: 'Resident directory', blurb: 'Emails, phones, co-tenants and guarantors for people on leases you already imported — matched by name and merged, never duplicated.' },
   { key: 'balances', label: 'Opening balances', blurb: 'Amounts owed per unit as of your switch date, onto existing leases.' },
+  { key: 'deposits', label: 'Security deposits', blurb: 'What each household was charged against what they actually paid — the shortfall no rent roll can show.' },
 ];
+
+/** Which stream leads the review.
+ *
+ * A rent roll always leads when one is present: it creates the properties,
+ * units and leases every other stream needs to attach to, so reviewing it
+ * first is not a preference, it is the dependency order. Otherwise the richest
+ * read leads — the stream that mapped the most columns is the one the document
+ * is mostly about. */
+const STREAM_ORDER: ImportKind[] = ['rent_roll', 'residents', 'balances', 'deposits', 'vendors'];
+
+function rankStream(s: DocStream): number {
+  const dep = STREAM_ORDER.indexOf(s.kind);
+  return dep < 0 ? 99 : dep;
+}
+
+function orderedStreams(read: DocumentRead | null): DocStream[] {
+  if (!read) return [];
+  const byCols = [...read.streams].sort((a, b) => Object.keys(b.cols).length - Object.keys(a.cols).length);
+  const rentRoll = byCols.find((s) => s.kind === 'rent_roll');
+  const lead = rentRoll ?? byCols[0];
+  if (!lead) return [];
+  return [lead, ...byCols.filter((s) => s !== lead).sort((a, b) => rankStream(a) - rankStream(b))];
+}
+
+/** The multi-stream read, narrowed to the single verdict the review screen and
+ * the batch record already speak. Kept so every existing surface keeps working
+ * while the read underneath it got wider. */
+function classificationOf(read: DocumentRead | null, filename: string): DocClassification | null {
+  if (!read) return null;
+  const lead = orderedStreams(read)[0];
+  const extra = read.streams.length - 1;
+  return {
+    kind: lead ? lead.kind : 'unknown',
+    supported: !!lead,
+    report: read.report || filename,
+    system: read.system,
+    confidence: lead?.confidence ?? 'high',
+    why: lead
+      ? `${lead.why || read.why}${extra > 0 ? ` This file also carries ${extra} other kind${extra === 1 ? '' : 's'} of data.` : ''}`
+      : read.why,
+    wouldUnlock: read.also_found[0]?.unlocks,
+    by: read.by === 'fallback' ? 'fallback' : read.by,
+  };
+}
+
+/** Cut one stream's own grid out of the raw sheet.
+ *
+ * Built from the RAW rows rather than from whatever the lead stream's readers
+ * did to them: the rent-roll path folds charge sub-rows, splits sections and
+ * appends computed columns, and a resident directory sharing that file must
+ * not inherit any of it. Each stream is read on its own terms. */
+function streamGrid(sheetRows: string[][], read: DocumentRead, stream: DocStream): { headers: string[]; dataRows: string[][]; mapping: Mapping } | null {
+  const headerIdx = read.header_row >= 0 && read.header_row < sheetRows.length
+    ? read.header_row
+    : findHeaderRow(sheetRows, stream.kind);
+  const headers = (sheetRows[headerIdx] || []).map((h) => String(h));
+  if (!headers.length) return null;
+  const skip = new Set(read.skip_rows);
+  const dataRows = sheetRows
+    .map((row, i) => ({ row, i }))
+    .filter(({ i }) => i > headerIdx && !skip.has(i))
+    .map(({ row }) => row.map((c) => String(c ?? '')))
+    .filter((row) => row.some((c) => c.trim() !== ''))
+    .slice(0, MAX_ROWS);
+  if (!dataRows.length) return null;
+  const cols: Record<number, string> = {};
+  headers.forEach((_, i) => { cols[i] = stream.cols[i] ?? ''; });
+  return {
+    headers,
+    dataRows,
+    mapping: { cols, preset: null, aiAssisted: [], reader: 'ai', notes: [stream.why].filter(Boolean) } as Mapping,
+  };
+}
 
 function batchById(ctx: Ctx, batchId: string): BatchRow | undefined {
   return q1<BatchRow>('SELECT * FROM import_batches WHERE id=? AND org_id=?', batchId, ctx.orgId);
@@ -96,6 +171,7 @@ function validate(ctx: Ctx, batch: BatchRow): Validation {
     case 'vendors': return validateVendors(ctx, batch);
     case 'residents': return validateResidents(ctx, batch);
     case 'balances': return validateBalances(ctx, batch);
+    case 'deposits': return validateDeposits(ctx, batch);
     default: return validateRentRoll(ctx, batch);
   }
 }
@@ -219,6 +295,8 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
     const explicit = KINDS.some((k) => k.key === asked) ? (asked as ImportKind) : null;
     let kind: ImportKind = explicit ?? 'rent_roll';
     let classification: DocClassification | null = null;
+    let docRead: DocumentRead | null = null;
+    let sheetRows: string[][] = []; // the raw grid, kept for the sibling streams
     const up = (rq.uploads || []).find((u) => u.field === 'file' && u.data.length);
     if (!up) return redirect(`/setup#upload`, 'Choose a file to upload.', 'err');
     if (up.data.length > 15 * 1024 * 1024) return redirect(`/setup#upload`, 'File is too large (15 MB max).', 'err');
@@ -255,12 +333,22 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
       const sheet = sheets.filter((s) => s.rows.length > 1).sort((a, b) => b.rows.length - a.rows.length)[0];
       if (!sheet) return redirect('/setup#upload', 'That file has no data rows.', 'err');
 
-      // What IS this? Asked once, before anything else, so the operator never
-      // had to pick a lane. An explicit choice overrides the answer.
-      classification = await classifyDocument(up.filename || 'upload', sheet.rows.slice(0, 60)).catch(() => null);
-      if (!explicit && classification) {
-        if (!classification.supported) return stageUnreadable(ctx, rq, up, classification);
-        kind = classification.kind as ImportKind;
+      // What IS this? Read once, before anything else, so the operator never
+      // has to pick a lane — and read for EVERY kind of data the file carries,
+      // because most systems do not export one entity per report. An explicit
+      // choice still overrides which stream leads.
+      sheetRows = sheet.rows.slice(0, MAX_ROWS + 40);
+      docRead = await readDocument(up.filename || 'upload', sheetRows).catch(() => null);
+      classification = classificationOf(docRead, up.filename || 'upload');
+      if (!explicit) {
+        const lead = orderedStreams(docRead)[0];
+        if (!lead) {
+          return stageUnreadable(ctx, rq, up, classification ?? {
+            kind: 'unknown', supported: false, report: up.filename || 'upload', system: null,
+            confidence: 'high', why: 'Nothing in this file matched anything StayLeased can import.', by: 'fallback',
+          });
+        }
+        kind = lead.kind;
       }
 
       // Whole-sheet AI reading first: the model sees the entire grid and plans
@@ -274,15 +362,12 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
       let hMapping = autoMap(hHeaders, kind, hRows.slice(0, 8));
       // stacked two-row header (Yardi): merge sub-labels when doing so maps
       // strictly more fields, and consume the continuation row
-      const stacked = mergeStackedHeader(hHeaders, sheet.rows[headerIdx + 1]);
-      if (stacked.merged) {
-        const mergedMap = autoMap(stacked.headers, kind, hRows.slice(1, 9));
-        const mappedCount = (m: Mapping): number => Object.values(m.cols).filter(Boolean).length;
-        if (mappedCount(mergedMap) > mappedCount(hMapping)) {
-          hHeaders = stacked.headers;
-          hRows = hRows.slice(1);
-          hMapping = mergedMap;
-        }
+      // stacked two-row headers, merged in whichever direction reads better
+      const resolved = resolveStackedHeader(sheet.rows, headerIdx, kind);
+      if (resolved.headers.join('\u0000') !== hHeaders.join('\u0000')) {
+        hHeaders = resolved.headers;
+        if (resolved.consumesNextRow) hRows = hRows.slice(1);
+        hMapping = autoMap(hHeaders, kind, hRows.slice(0, 8));
       }
 
       // The plan's document_property has already been resolved back to the cell
@@ -434,6 +519,7 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
           `it is recorded as the share a voucher pays, so each resident is billed only their own portion.`,
         );
       }
+      if (docRead?.also_found.length) mapping.alsoFound = docRead.also_found;
       if (Object.keys(h.codeNature).length) mapping.codeNature = h.codeNature;
       if (sourceSummary) mapping.source = sourceSummary;
       if (docProp) mapping.sourceProperty = { name: docProp, code: docPropCode };
@@ -479,6 +565,38 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
       status: 'staged', summary: null, created_by: ctx.userId, created_at: nowIso(), applied_at: null,
     });
     audit(ctx, 'import_batch', batchId, 'upload', null, { kind, filename: up.filename, rows: dataRows.length, preset: mapping.preset });
+
+    // Everything ELSE the file carries becomes its own reviewable batch.
+    //
+    // This is the difference between "what lane is this file?" and "what does
+    // this file contain?". A rent roll that also holds emails and deposits used
+    // to import as a rent roll, and the emails and deposits were simply gone —
+    // not refused, not reported, gone. Each extra stream now lands as a staged
+    // batch against the same original document, reviewed and applied on its
+    // own, in dependency order (the lead built the units these attach to).
+    const siblings: { id: string; kind: ImportKind; rows: number }[] = [];
+    if (!explicit && docRead && sheetRows.length) {
+      for (const stream of orderedStreams(docRead).slice(1)) {
+        const grid = streamGrid(sheetRows, docRead, stream);
+        if (!grid) continue;
+        const sibId = id('imp');
+        insert('import_batches', {
+          id: sibId, org_id: ctx.orgId, kind: stream.kind, filename: up.filename || null,
+          source_file_id: sourceFile.id, sibling_of: batchId,
+          property_id: propertyId, new_property_name: newPropertyName,
+          preset: null, headers: js(grid.headers),
+          mapping: js({ ...grid.mapping, classification: { ...classification, kind: stream.kind, why: stream.why, confidence: stream.confidence } }),
+          rows: js(grid.dataRows), staged: js([]),
+          as_of: String(rq.body.as_of || '') || ctx.businessDate,
+          status: 'staged', summary: null, created_by: ctx.userId, created_at: nowIso(), applied_at: null,
+        });
+        audit(ctx, 'import_batch', sibId, 'upload', null, { kind: stream.kind, filename: up.filename, rows: grid.dataRows.length, siblingOf: batchId });
+        siblings.push({ id: sibId, kind: stream.kind, rows: grid.dataRows.length });
+      }
+    }
+    if (siblings.length) {
+      run('UPDATE import_batches SET mapping=? WHERE id=?', js({ ...mapping, classification, siblings }), batchId);
+    }
     return redirect(`/setup/import/b/${batchId}`);
   });
 
@@ -538,6 +656,7 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
         batch.kind === 'vendors' ? applyVendors(ctx, batch)
         : batch.kind === 'residents' ? applyResidents(ctx, batch, { confirmDuplicates: String(rq.body.confirm_duplicates || '') === '1' })
         : batch.kind === 'balances' ? applyBalances(ctx, batch)
+        : batch.kind === 'deposits' ? applyDeposits(ctx, batch)
         : applyRentRoll(ctx, batch);
       const bits = summaryBits(s);
       const skipNote = s.skipped ? ` ${s.skipped} row${s.skipped === 1 ? '' : 's'} skipped (see the import log).` : '';
@@ -901,6 +1020,55 @@ function sourceDocCard(batch: BatchRow & { created_at?: string }): Raw {
  * where", a question nobody asked. What the operator needs to confirm is
  * "you read my file as X and you are about to create Y" — so that is what is
  * said, and the mapping stays one click away for when something looks wrong. */
+interface SiblingRow { id: string; kind: string; status: string; rows: string; applied_at: string | null }
+
+/** Every batch cut from the same upload — the lead and its siblings alike. */
+function siblingSet(ctx: Ctx, batch: BatchRow & { sibling_of?: string | null }): SiblingRow[] {
+  const leadId = batch.sibling_of || batch.id;
+  return q<SiblingRow>(
+    `SELECT id, kind, status, rows, applied_at FROM import_batches
+      WHERE org_id=? AND (id=? OR sibling_of=?) ORDER BY created_at`,
+    ctx.orgId, leadId, leadId,
+  );
+}
+
+/** What else the upload turned out to hold.
+ *
+ * The operator dropped ONE file and got several things to review, which is
+ * surprising unless the screen says why. So this names the file's other
+ * contents as contents — not as separate uploads they do not remember making —
+ * and states the order, because a resident directory or a balance list has
+ * nothing to attach to until the rent roll has built the units. */
+function alsoInFileCard(ctx: Ctx, batch: BatchRow & { sibling_of?: string | null }): Raw {
+  const set = siblingSet(ctx, batch);
+  if (set.length < 2) return raw('');
+  const leadId = batch.sibling_of || batch.id;
+  const others = set.filter((s) => s.id !== batch.id);
+  if (!others.length) return raw('');
+  const leadRow = set.find((s) => s.id === leadId);
+  const leadApplied = leadRow?.status === 'applied';
+  const leadLabel = (KINDS.find((k) => k.key === leadRow?.kind)?.label || 'the first part').toLowerCase();
+  return card('The rest of this file', html`
+    <p class="muted small">One upload, read for everything it carries. Each part is reviewed and applied on its own.</p>
+    ${tbl(
+      [{ label: 'Also inside' }, { label: 'Rows' }, { label: 'State' }, { label: '' }],
+      others.map((s) => {
+        const label = KINDS.find((k) => k.key === s.kind)?.label || s.kind;
+        const n = j<string[][]>(s.rows, []).length;
+        const isLead = s.id === leadId;
+        return { cells: [
+          html`<b>${label}</b>${isLead ? html` <span class="pill">read first</span>` : raw('')}`,
+          String(n),
+          s.status === 'applied' ? html`<span class="pill ok">imported</span>` : html`<span class="pill">waiting for you</span>`,
+          html`<a class="btn sm" href="/setup/import/b/${s.id}">Review</a>`,
+        ] };
+      }),
+    )}
+    ${when(!leadApplied && !!batch.sibling_of, () => html`
+      <p class="muted small">Apply <a href="/setup/import/b/${leadId}">the ${leadLabel} first</a> — these rows attach to the units and leases it creates.</p>`)}
+  `);
+}
+
 function readCard(batch: BatchRow, validation?: Validation): Raw {
   const mapping = j<Mapping & { classification?: DocClassification }>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] });
   const cls = mapping.classification;
@@ -926,6 +1094,8 @@ function readCard(batch: BatchRow, validation?: Validation): Raw {
       <div class="rc-line"><span class="rc-key">Contains</span> ${String(rows)} data row${rows === 1 ? '' : 's'}${validation ? ` · ${validation.ok + validation.warn} ready to import${validation.error ? `, ${validation.error} that cannot be read` : ''}` : ''}</div>
       ${when(mapping.aiAssisted.length > 0, () => html`<div class="rc-line"><span class="rc-key">Check</span> the AI filled in ${mapping.aiAssisted.join(', ')} — worth a look below.</div>`)}
       ${when(!!(mapping.notes || []).length, () => html`<div class="rc-line"><span class="rc-key">Notes</span> ${(mapping.notes || []).join(' ')}</div>`)}
+      ${when(!!(mapping.alsoFound || []).length, () => html`<div class="rc-line"><span class="rc-key">Read, not stored</span>
+        ${(mapping.alsoFound || []).map((f) => `${f.what} — would give you ${f.unlocks}`).join(' · ')}</div>`)}
     </div>
   `);
 }
@@ -1117,6 +1287,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
       ${readCard(batch, validation)}
+      ${alsoInFileCard(ctx, batch)}
       ${sourceDocCard(batch)}
       ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}
       ${willNotImportCard(validation)}

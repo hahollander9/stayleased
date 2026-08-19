@@ -569,6 +569,11 @@ export interface ApplySummary {
   portalInvites?: number;
   /** existing residents whose email/phone were filled in by a directory import */
   contactUpdates?: number;
+  /** deposits billed to residents and never collected, carried in from a
+   * deposit report — the number no rent roll can show */
+  depositsShortCents?: number;
+  /** leases that carried no deposit until this import filled the gap */
+  depositsFilledOnLeases?: number;
   /** signed-but-not-started leases created from a future-residents section */
   futureLeases?: number;
   /** exactly what each merge wrote onto an existing resident, so removing the
@@ -1109,6 +1114,132 @@ export function applyBalances(ctx: Ctx, batch: BatchRow): ApplySummary {
       }));
       summary.balancesCents += cents;
     }
+    run('UPDATE import_batches SET status=?, applied_at=?, summary=? WHERE id=?', 'applied', nowIso(), js(summary), batch.id);
+    audit(ctx, 'import_batch', batch.id, 'apply', null, summary as unknown as Record<string, unknown>);
+  });
+  emit(ctx, 'import.applied', 'import_batch', batch.id, { kind: batch.kind, ...summary });
+  return summary;
+}
+
+// ---------- deposits ----------
+
+/** Security-deposit positions carried in from a prior system's deposit report.
+ *
+ * This lane exists for one number the rent roll cannot carry. A rent roll has a
+ * single deposit column — what is HELD — so a household billed $3,165 that paid
+ * $633 is indistinguishable from one that paid in full. The gap is collectible
+ * money, and until it is imported nobody can see it.
+ *
+ * Deliberately NOT posted to the books. These rows record what the previous
+ * system said its position was; they are not entries StayLeased made, and
+ * inventing journal entries from another system's report is how a migration
+ * bills somebody twice. The one thing it does write onto a lease is the held
+ * deposit, and only where the lease carries none — per DECISIONS #81, a
+ * document fills a gap on an explicit apply and never overwrites a value that
+ * is already there. */
+export function validateDeposits(ctx: Ctx, batch: BatchRow): Validation {
+  const mapping = j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] });
+  const rows = j<string[][]>(batch.rows, []);
+  const out: Validation = { rows: [], ok: 0, warn: 0, error: 0, properties: [], blockers: [] };
+  const mapped = new Set(Object.values(mapping.cols).filter(Boolean));
+  if (!mapped.has('unit')) out.blockers.push('No column is mapped to “Unit number”.');
+  if (!['deposit_billed', 'deposit_held', 'deposit_shortfall', 'deposit_forfeited'].some((f) => mapped.has(f))) {
+    out.blockers.push('No column is mapped to a deposit amount — there is nothing to carry in.');
+  }
+  if (!batch.property_id) out.blockers.push('Choose the property these deposits belong to.');
+  else if (!canAccessProperty(ctx, batch.property_id)) out.blockers.push('That property is not in your portfolio.');
+
+  rows.forEach((raw, i) => {
+    const rec = extractRecord(raw, mapping);
+    const notes: string[] = [];
+    let level: VRow['level'] = 'ok';
+    const billed = moneyToCents(rec.deposit_billed) ?? 0;
+    const held = moneyToCents(rec.deposit_held) ?? 0;
+    const short = moneyToCents(rec.deposit_shortfall) ?? 0;
+    const forfeited = moneyToCents(rec.deposit_forfeited) ?? 0;
+
+    if (!rec.unit) { level = 'error'; notes.push('Unit is required.'); }
+    if (!billed && !held && !short && !forfeited) {
+      level = 'error';
+      notes.push('Every deposit amount on this row is zero or unreadable — nothing to record.');
+    }
+    if (batch.property_id && rec.unit) {
+      const unit = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', batch.property_id, rec.unit.trim());
+      if (!unit) {
+        // a deposit row with no unit is kept, not refused: a past resident's
+        // forfeiture is real history even when their unit has since been let
+        notes.push(`No unit “${rec.unit}” in that property — the row is kept, but nothing is attached to a lease.`);
+        if (level === 'ok') level = 'warn';
+      } else {
+        const lease = q1<{ id: string; household_name: string; deposit_cents: number }>(
+          `SELECT id, household_name, deposit_cents FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') ORDER BY created_at DESC LIMIT 1`,
+          unit.id,
+        );
+        if (!lease) {
+          notes.push(`Unit ${rec.unit} has no active lease — the position is recorded against the unit only.`);
+          if (level === 'ok') level = 'warn';
+        } else {
+          if (rec.tenant && lease.household_name && !lease.household_name.toLowerCase().includes(splitName(rec.tenant).last.toLowerCase())) {
+            notes.push(`Heads up: lease household is “${lease.household_name}”.`);
+            if (level === 'ok') level = 'warn';
+          }
+          if (held > 0 && lease.deposit_cents > 0 && lease.deposit_cents !== held) {
+            notes.push(`Lease already records ${(lease.deposit_cents / 100).toFixed(2)} held; that figure is kept and this one recorded beside it.`);
+            if (level === 'ok') level = 'warn';
+          }
+        }
+      }
+    }
+    if (short > 0 && level !== 'error') notes.push(`Short ${(short / 100).toFixed(2)} — billed and not collected.`);
+    tally(out, { n: i + 1, rec, level, notes });
+  });
+  return out;
+}
+
+export function applyDeposits(ctx: Ctx, batch: BatchRow): ApplySummary {
+  const validation = validateDeposits(ctx, batch);
+  if (validation.blockers.length) throw new Error(validation.blockers.join(' '));
+  const asOf = batch.as_of || ctx.businessDate;
+  const summary: ApplySummary = { properties: 0, units: 0, residents: 0, leases: 0, vendors: 0, balancesCents: 0, depositsCents: 0, skipped: validation.error };
+  let short = 0;
+  let filled = 0;
+  tx(() => {
+    for (const row of validation.rows) {
+      if (row.level === 'error') continue;
+      const rec = row.rec;
+      const unit = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', batch.property_id, String(rec.unit ?? '').trim());
+      const lease = unit
+        ? q1<{ id: string; deposit_cents: number }>(
+            `SELECT id, deposit_cents FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') ORDER BY created_at DESC LIMIT 1`,
+            unit.id,
+          )
+        : undefined;
+      const billed = moneyToCents(rec.deposit_billed) ?? 0;
+      const held = moneyToCents(rec.deposit_held) ?? 0;
+      const shortCents = moneyToCents(rec.deposit_shortfall) ?? 0;
+      const forfeited = moneyToCents(rec.deposit_forfeited) ?? 0;
+
+      const fillsLease = !!lease && held > 0 && lease.deposit_cents === 0;
+      insert('deposit_positions', {
+        id: id('dp'), org_id: ctx.orgId, property_id: batch.property_id,
+        lease_id: lease?.id ?? null, import_batch_id: batch.id, filled_lease: fillsLease ? 1 : 0,
+        unit_number: String(rec.unit ?? '').trim(),
+        household_name: String(rec.tenant ?? '').trim(),
+        source_ref: String(rec.source_ref ?? '').trim() || null,
+        as_of: asOf,
+        billed_cents: billed, held_cents: held, short_cents: shortCents, forfeited_cents: forfeited,
+        created_at: nowIso(),
+      });
+      summary.depositsCents += held;
+      short += shortCents;
+      // fill the gap, never overwrite what is already recorded (#81)
+      if (fillsLease) {
+        run('UPDATE leases SET deposit_cents=? WHERE id=?', held, lease!.id);
+        filled++;
+      }
+    }
+    summary.depositsShortCents = short;
+    summary.depositsFilledOnLeases = filled;
     run('UPDATE import_batches SET status=?, applied_at=?, summary=? WHERE id=?', 'applied', nowIso(), js(summary), batch.id);
     audit(ctx, 'import_batch', batch.id, 'apply', null, summary as unknown as Record<string, unknown>);
   });

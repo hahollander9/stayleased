@@ -59,7 +59,7 @@ test('each supported lane is reachable from the report name a system actually pr
 
 test('a portfolio report with no tenancy data is recognised and refused, not forced into a lane', () => {
   for (const title of ['Box Score Summary', 'Traffic By Day', 'Unit Availability', 'Market Rent Schedule',
-    '12 Month Occupancy', 'Concession Burn Off', 'Security Deposit Activity', 'Prospect Ledger', 'Reasons For Moveout']) {
+    '12 Month Occupancy', 'Concession Burn Off', 'Prospect Ledger', 'Reasons For Moveout']) {
     const c = classifyBySignature('export.xlsx', rows([title], ['Orchard East'], ['Unit', 'Something']))!;
     assert.ok(c, `${title} should be recognised`);
     assert.equal(c.kind, 'unknown', `${title} must not be imported as data`);
@@ -67,6 +67,35 @@ test('a portfolio report with no tenancy data is recognised and refused, not for
     assert.ok(c.report.length > 3, 'and it is named, not just rejected');
     assert.ok((c.wouldUnlock || '').length > 10, `${title} says what it would give them`);
   }
+});
+
+test('a deposit report now routes to its own lane rather than being refused', () => {
+  // It used to come back `unknown` — correctly, because nothing could store a
+  // deposit position. Now something can, and the shortfall it carries (billed
+  // and never collected) is money no other report in the portfolio shows.
+  const c = classifyBySignature('deposits.xlsx', rows(
+    ['Security Deposit Activity'],
+    ['Orchard East (1020)'],
+    ['Property', 'Unit', 'Resident', 'Prior Deposit', 'Deposits', '(Prpd)/Delnq'],
+  ))!;
+  assert.equal(c.kind, 'deposits');
+  assert.equal(c.supported, true);
+  assert.equal(c.report, 'Security Deposit Activity');
+});
+
+test('a bare deposit CSV is told apart from a rent roll by the shortfall column', () => {
+  // both carry the word "deposit"; only one is ABOUT deposits
+  const dep = classifyBySignature('x.csv', rows(
+    ['Unit', 'Resident', 'Deposits On Hand', '(Prpd)/Delnq Deposits', 'Deposits Forfeited'],
+    ['101', 'Ana Ramos', '1500', '0', '0'],
+  ))!;
+  assert.equal(dep.kind, 'deposits');
+
+  const roll = classifyBySignature('y.csv', rows(
+    ['Unit', 'Tenant', 'Rent', 'Lease From', 'Lease To', 'Deposit', 'Balance'],
+    ['101', 'Ana Ramos', '1500', '2026-01-01', '2026-12-31', '1500', '0'],
+  ))!;
+  assert.equal(roll.kind, 'rent_roll', 'a deposit COLUMN does not make a rent roll a deposit report');
 });
 
 test('a bare CSV with no banner is read by its column vocabulary', () => {

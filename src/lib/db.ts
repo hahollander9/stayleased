@@ -84,6 +84,12 @@ export function db(): DatabaseSync {
     // review/record pages open the original so the operator can check the
     // read against the source. NULL = uploaded before originals were kept.
     "ALTER TABLE import_batches ADD COLUMN source_file_id TEXT",
+    // One upload can carry several kinds of data (a rent roll that also holds
+    // resident contacts and deposits). Each becomes its own reviewable batch;
+    // this points the extras back at the one the operator landed on, so the
+    // review screen can show them as what they are — the same file, read again
+    // for something else — rather than as unexplained duplicate uploads.
+    "ALTER TABLE import_batches ADD COLUMN sibling_of TEXT",
   ];
   for (const m of MIGRATIONS) {
     try {

@@ -643,6 +643,43 @@ CREATE TABLE IF NOT EXISTS deposit_activity (
 );
 CREATE INDEX IF NOT EXISTS idx_da_lease ON deposit_activity(org_id, lease_id);
 
+-- Security-deposit positions carried in from a prior system's deposit report.
+--
+-- Distinct from deposit_activity, which is the ledger of what THIS system did
+-- (held, applied, refunded). This is a statement of position as the old system
+-- reported it, and it carries the one number nothing else can see: the
+-- SHORTFALL — billed to the resident and never collected. A rent roll has a
+-- single deposit column (what is held), so a household billed $3,165 that paid
+-- $633 looks identical to one that paid in full. That gap is collectible money.
+--
+-- Never posted to the books: this is what the previous system said, not an
+-- entry StayLeased made. It is evidence for the deposits workbench and a
+-- starting point for collections, and it dies with the import that created it.
+CREATE TABLE IF NOT EXISTS deposit_positions (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  property_id TEXT NOT NULL,
+  lease_id TEXT, -- NULL when no lease matched the row (kept, and reported as unmatched)
+  import_batch_id TEXT NOT NULL,
+  unit_number TEXT NOT NULL,
+  household_name TEXT NOT NULL,
+  source_ref TEXT, -- the id the old system used for this resident
+  as_of TEXT NOT NULL,
+  billed_cents INTEGER NOT NULL DEFAULT 0,
+  held_cents INTEGER NOT NULL DEFAULT 0,
+  short_cents INTEGER NOT NULL DEFAULT 0,
+  forfeited_cents INTEGER NOT NULL DEFAULT 0,
+  -- 1 when THIS import wrote leases.deposit_cents (it was empty and this row
+  -- filled it). Provenance, not a value comparison: a lease that already held
+  -- the same figure must survive the removal, and "the number still matches
+  -- what we would have written" cannot tell those two cases apart.
+  filled_lease INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_dp_lease ON deposit_positions(org_id, lease_id);
+CREATE INDEX IF NOT EXISTS idx_dp_batch ON deposit_positions(org_id, import_batch_id);
+CREATE INDEX IF NOT EXISTS idx_dp_prop ON deposit_positions(org_id, property_id);
+
 CREATE TABLE IF NOT EXISTS delinquency_notes (
   id TEXT PRIMARY KEY,
   org_id TEXT NOT NULL,
