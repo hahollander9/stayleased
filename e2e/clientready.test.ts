@@ -75,7 +75,7 @@ test('client walk 1: signup → rent-roll upload → applied with portal invites
   await page.setInputFiles('input[name=file]', RR_PATH);
   await page.check('input[name=prop_mode][value=new]');
   await page.fill('input[name=new_property]', 'Cedar Yard');
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & read it")')]);
   assert.match(page.url(), /\/setup\/import\/b\/imp/, 'review page');
 
   await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Apply")')]);
@@ -135,9 +135,10 @@ test('client walk 2: the org is operational — balances, books, dashboard', asy
 test('client walk 3: vendors CSV lane → dispatchable vendor list', async () => {
   const page = await newPage(browser);
   await login(page, base, ADMIN, PASS);
-  await page.goto(`${base}/setup/import?tab=vendors`, { waitUntil: 'networkidle' });
+  await page.goto(`${base}/setup`, { waitUntil: 'networkidle' });
   await page.setInputFiles('input[name=file]', VEND_PATH);
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload")')]);
+  // the same dropzone takes a vendor list — no lane was chosen
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & read it")')]);
   await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Apply")')]);
   assert.match(await body(page), /2 vendors/);
   await page.goto(`${base}/vendors`, { waitUntil: 'networkidle' });

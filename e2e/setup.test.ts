@@ -105,7 +105,7 @@ test('gate: a Yardi block-format rent roll uploads, ties out to its own summary,
 
   // "detect" is the rent-roll default: the property comes off the title banner
   await page.setInputFiles('input[name=file]', YARDI_PATH);
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & read it")')]);
   assert.match(page.url(), /\/setup\/import\/b\/imp/, 'should land on the review page');
   const review = await page.content();
 
@@ -144,7 +144,7 @@ test('gate: the 606-unit shapes â€” zero-rent tenancies, concessions, parking â€
   await login(page, base, 'admin@summitridge.demo');
   await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
   await page.setInputFiles('input[name=file]', AUDUBON_PATH);
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & read it")')]);
   assert.match(page.url(), /\/setup\/import\/b\/imp/, 'should land on the review page');
   const review = await page.content();
 
@@ -170,7 +170,7 @@ test('gate: an import that cannot tie to its own report applies only with explic
   await login(page, base, 'admin@summitridge.demo');
   await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
   await page.setInputFiles('input[name=file]', AUDUBON_GATE_PATH);
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & read it")')]);
   assert.match(page.url(), /\/setup\/import\/b\/imp/);
   const review = await page.content();
   assert.match(review, /do(es)? not tie to the summary block/i, 'the doctored summary must read as off');
