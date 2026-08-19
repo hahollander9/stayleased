@@ -304,8 +304,19 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
       // on everything the reader concluded
       if (kind === 'rent_roll') sourceSummary = parseSourceSummary(sheet.rows);
 
+      // The MODEL'S READ IS THE READ. It saw the whole grid and reasoned about
+      // it; the header-name matcher below did not — it pattern-matches column
+      // titles against a vocabulary someone wrote down in advance, which is
+      // exactly the behaviour this product is not supposed to have.
+      //
+      // The heuristic survives for one job: answering when there is no plan at
+      // all (no API key, an outage, an unusable response). It no longer
+      // competes on score, because "the string matcher scored higher" is not a
+      // reason to overrule a reader that understood the document — with one
+      // exception kept deliberately narrow: a plan that maps NOTHING is not a
+      // read, it is a failure, and falling back beats importing nothing.
       const aiRead = plan ? applyReadingPlan(sheet.rows.slice(0, MAX_ROWS + 40), plan, kind) : null;
-      if (aiRead && aiRead.dataRows.length && mappingScore(aiRead.mapping.cols, kind) >= mappingScore(hMapping.cols, kind)) {
+      if (aiRead && aiRead.dataRows.length && mappingScore(aiRead.mapping.cols, kind) > 0) {
         headers = aiRead.headers;
         dataRows = aiRead.dataRows.slice(0, MAX_ROWS);
         mapping = aiRead.mapping;
@@ -745,7 +756,9 @@ function anyFileCard(ctx: Ctx, props: { id: string; name: string }[]): Raw {
   return card('Upload anything from your old system', html`
     <p class="muted" style="margin-top:0">Rent rolls, resident directories, balances owed, vendor lists — as your system exports them.
       StayLeased identifies the document, reads it, and shows you what it found before anything is created.
-      ${ai.live ? html`<span class="pill">AI reading: live</span>` : html`<span class="muted small">(Live AI is off here — documents are matched by their own report names and column vocabulary.)</span>`}</p>
+      ${ai.live
+        ? html`<span class="pill">Claude reads every upload (${ai.model})</span>`
+        : html`<span class="muted small">The AI reader is not configured in this environment, so uploads fall back to matching known report formats — set <code>ANTHROPIC_API_KEY</code> to have documents actually read.</span>`}</p>
     <form method="post" action="/setup/import/upload" enctype="multipart/form-data">
       <div class="form-grid">
         ${field('Any export (Excel, CSV, or PDF)', raw(`<label class="dropzone" data-dropzone>
@@ -893,7 +906,14 @@ function readCard(batch: BatchRow, validation?: Validation): Raw {
   const cls = mapping.classification;
   const rows = j<string[][]>(batch.rows, []).length;
   const kindLabel = KINDS.find((k) => k.key === batch.kind)?.label || String(batch.kind);
-  const reader = mapping.reader === 'ai' ? 'read by AI' : cls?.by === 'ai' ? 'identified by AI' : 'read from the file';
+  // Say plainly which brain did this. "The AI reads my documents" has to be
+  // checkable on the screen, not taken on faith — and when the model was
+  // unreachable and a pattern match answered instead, that is worth seeing.
+  const reader = mapping.reader === 'ai' && cls?.by === 'ai' ? 'read and identified by AI'
+    : mapping.reader === 'ai' ? 'read by AI'
+    : cls?.by === 'ai' ? 'identified by AI'
+    : cls?.by === 'signature' ? 'matched by its report format (AI unavailable)'
+    : 'read from the file';
 
   return card('What StayLeased read', html`
     <div class="readcard">

@@ -1439,3 +1439,39 @@ naming, and an honest unknown with the AI off. `tests/import_auto.test.ts` (5) �
 routing itself, a directory routing itself, an unimportable report kept and explained with
 nothing built, an explicit lane still winning, and the hub's single dropzone.
 Gates: tsc clean · 431/431 unit · full e2e.
+
+## 2026-08-19 — The model reads first, and the page says which brain read it
+
+Henry, on the ingestion build shipped an hour earlier: *"so is ai gonna read them? or is it a
+script that knows the format i want the first option not the latter."* Reading the code back,
+the honest answer was **partly the latter**, in two places:
+
+1. `classifyDocument` ran the signature matcher FIRST and short-circuited on a hit. A Yardi
+   file whose banner says "Rent Roll with Lease Charges" never reached the model at all. That
+   was defended as "instant and free" — which is true, and is not what was asked for.
+2. `applyReadingPlan`'s output only won if `mappingScore(ai) >= mappingScore(heuristic)`. A
+   column-name matcher could outvote a model that had read the whole grid.
+
+Both inverted. The model now reads every upload; the matcher runs as the **understudy** for
+when the model is unreachable (no key, outage, timeout, unusable reply) and as a **cross-check**
+when the model's own answer is uncertain — a low-confidence read that contradicts the
+document's printed title routes by the title and says so, rather than silently picking. The
+AI reading plan now wins whenever it maps anything at all; the heuristic answers only when
+there is no plan, because "the string matcher scored higher" is not a reason to overrule a
+reader that understood the document.
+
+The precedence is a pure function (`resolveClassification`) rather than control flow tangled
+into an async call, because "is the AI actually reading my documents?" deserves an answer that
+can be proven: seven tests cover confident-AI-wins, AI-wins-with-no-signature, the
+disagreement path, the agreement path, unreachable-with-a-key, no-key, and neither-answered.
+
+And the screens now say which brain did it — `read and identified by AI`, `read by AI`, or
+`matched by its report format (AI unavailable)` — with the upload card naming the live model
+or, when no key is configured, saying so plainly instead of implying a read happened.
+
+Deliberately unchanged: the deterministic transforms and the reconciliation strip that runs
+after the model decides. Those are not a format-matcher — they execute what the model read and
+check the arithmetic against the report's own summary page, which is what has caught every
+money bug in this pipeline (#67, #68). The model reasons; the machinery verifies.
+
+Gates: tsc clean · 439/439 unit · 179/179 e2e.
