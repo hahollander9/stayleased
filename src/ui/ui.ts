@@ -234,9 +234,9 @@ function setupMenu(ctx: Ctx, active: string): Raw {
     <button class="icon-btn ${active.startsWith('/setup') ? 'active' : ''}" data-toggle="#setup-pop" aria-label="Setup and administration" title="Setup &amp; administration">${GEAR}</button>
     <div class="menu" id="setup-pop">
       <div class="menu-head">Setup &amp; administration</div>
-      <a href="/setup" class="${active === '/setup' ? 'active' : ''}">Setup hub</a>
+      <a href="/setup" class="${active.startsWith('/setup') && active !== '/setup/wizard' ? 'active' : ''}">Setup hub</a>
+      ${when(can(ctx, 'properties:manage'), () => html`<a href="/setup#upload">Upload your data</a>`)}
       ${when(can(ctx, 'properties:manage'), () => html`<a href="/setup/wizard" class="${active === '/setup/wizard' ? 'active' : ''}">Add a property (wizard)</a>`)}
-      ${when(can(ctx, 'properties:manage'), () => html`<a href="/setup/import" class="${active.startsWith('/setup/import') ? 'active' : ''}">Migration Center (CSV import)</a>`)}
       ${when(setup.length, () => html`<hr />${setup.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}`)}
     </div>
   </div>`;

@@ -1,5 +1,6 @@
 import { html, when, raw, type Raw } from '../../lib/html.ts';
-import { q1, val } from '../../lib/db.ts';
+import { q, q1, val } from '../../lib/db.ts';
+import { hasRealAddress } from '../../lib/address.ts';
 import { card } from '../../ui/ui.ts';
 import type { Ctx } from '../../lib/auth.ts';
 
@@ -67,6 +68,14 @@ export function readinessItems(ctx: Ctx): ReadyItem[] {
   // carried over what residents owe
   const bankOpening = !!q1(
     `SELECT id FROM journal_entries WHERE org_id=? AND memo LIKE 'Opening operating bank balance%' LIMIT 1`, o);
+  // A rent roll names buildings; it does not carry their street address, so an
+  // imported property holds a placeholder until someone supplies the real one.
+  // Until then the public community site can show no address at all.
+  const properties = q<{ id: string; name: string; address1: string; city: string; state: string; zip: string }>(
+    'SELECT id, name, address1, city, state, zip FROM properties WHERE org_id=? ORDER BY name', o);
+  const addressed = properties.filter((p) => hasRealAddress(p));
+  const unaddressed = properties.filter((p) => !hasRealAddress(p));
+
   const vendors = n('SELECT COUNT(*) FROM vendors WHERE org_id=? AND active=1', o);
   const staff = n(`SELECT COUNT(*) FROM users WHERE org_id=? AND kind='staff' AND active=1`, o);
 
@@ -95,6 +104,20 @@ export function readinessItems(ctx: Ctx): ReadyItem[] {
           : 'No leases yet — units are all reading vacant.',
       unlocks: 'Rent bills itself on the 1st, late fees follow your policy, and the resident portal has someone to let in.',
       links: [['/setup/import?tab=rentroll', 'Upload a rent roll'], ['/setup/import?tab=leases', 'Upload lease PDFs']],
+    },
+    {
+      key: 'addresses',
+      title: 'Property addresses',
+      state: properties.length === 0 ? 'missing' : some(addressed.length, properties.length),
+      status: properties.length === 0
+        ? 'No properties yet.'
+        : unaddressed.length === 0
+          ? `All ${properties.length} propert${properties.length === 1 ? 'y has' : 'ies have'} a street address`
+          : `${unaddressed.length} of ${properties.length} have no street address yet — ${unaddressed.slice(0, 3).map((p) => p.name).join(', ')}${unaddressed.length > 3 ? `, +${unaddressed.length - 3} more` : ''}`,
+      unlocks: 'The address on your public community page and its listing data, directions for applicants and vendors, and the mailing address on notices and statements.',
+      links: unaddressed.length === 1 && unaddressed[0]
+        ? [[`/properties/${unaddressed[0].id}/edit`, `Add the address for ${unaddressed[0].name}`]]
+        : [['/properties', 'Add the addresses']],
     },
     {
       key: 'contacts',
@@ -209,38 +232,46 @@ const PLUS = raw('<svg viewBox="0 0 24 24" width="14" height="14" fill="none" st
 const MARK: Record<ReadyState, Raw> = { done: TICK, partial: HALF, missing: PLUS };
 const WORD: Record<ReadyState, string> = { done: 'On file', partial: 'Partly there', missing: 'Not yet' };
 
-/** The readiness panel. `title` names it for the surface it sits on; when
- * `only` is given just those items render (the Migration Center shows the ones
- * an upload can satisfy; the Setup hub shows everything). */
+/** The readiness panel.
+ *
+ * What is OUTSTANDING is the page; what is already done is a line you can open
+ * if you want to check. A finished portfolio otherwise pushes nine rows of
+ * ticks in front of the operator before they reach anything they can act on,
+ * which is how a status board turns back into wallpaper. */
 export function readinessPanel(ctx: Ctx, opts: { title?: string; only?: string[]; intro?: string } = {}): Raw {
-  const { items, done, total } = readiness(ctx);
+  const { items } = readiness(ctx);
   const list = opts.only ? items.filter((i) => opts.only!.includes(i.key)) : items;
-  const shown = list.length;
-  const shownDone = list.filter((i) => i.state === 'done').length;
+  const outstanding = list.filter((i) => i.state !== 'done');
+  const settled = list.filter((i) => i.state === 'done');
 
-  return card(opts.title ?? 'What your portfolio still needs', html`
+  const row = (i: ReadyItem): Raw => html`<div class="ready-item ${i.state}">
+    <span class="ri-mark ${i.state}" aria-hidden="true">${MARK[i.state]}</span>
+    <div class="ri-body">
+      <div class="ri-head">
+        <b>${i.title}</b>
+        <span class="ri-state ${i.state}">${WORD[i.state]}</span>
+        ${when(!!i.optional && i.state !== 'done', () => html`<span class="ri-opt">optional</span>`)}
+      </div>
+      <div class="ri-status">${i.status}</div>
+      ${when(i.state !== 'done', () => html`<div class="ri-unlocks"><span class="ri-key">Turns on</span> ${i.unlocks}</div>`)}
+    </div>
+    ${when(i.state !== 'done', () => html`<div class="ri-actions">
+      ${i.links.slice(0, 1).map(([href, label]) => html`<a class="btn btn-ghost" href="${href}">${label}</a>`)}
+    </div>`)}
+  </div>`;
+
+  return card(opts.title ?? 'Your setup', html`
     <p class="muted" style="margin-top:0">${opts.intro
-      ?? 'Everything below is optional in the sense that the software runs without it — and each one turns something on. Counted from your own data, so it is current every time you open this page.'}</p>
-    <div class="ready-bar" role="img" aria-label="${String(shownDone)} of ${String(shown)} complete">
+      ?? 'Counted from your own portfolio every time this page opens. Each line says where it stands and what it turns on — the software runs without any one of them, and works harder with each.'}</p>
+    <div class="ready-bar" role="img" aria-label="${String(settled.length)} of ${String(list.length)} complete">
       ${list.map((i) => html`<span class="rb-seg ${i.state}"></span>`)}
     </div>
-    <p class="small muted" style="margin:6px 0 14px">${String(shownDone)} of ${String(shown)} complete${opts.only ? '' : ` · ${String(done)} of ${String(total)} across your whole setup`}</p>
-    <div class="ready-list">
-      ${list.map((i) => html`<div class="ready-item ${i.state}">
-        <span class="ri-mark ${i.state}" aria-hidden="true">${MARK[i.state]}</span>
-        <div class="ri-body">
-          <div class="ri-head">
-            <b>${i.title}</b>
-            <span class="ri-state ${i.state}">${WORD[i.state]}</span>
-            ${when(!!i.optional && i.state !== 'done', () => html`<span class="ri-opt">optional</span>`)}
-          </div>
-          <div class="ri-status">${i.status}</div>
-          <div class="ri-unlocks"><span class="ri-key">Turns on</span> ${i.unlocks}</div>
-        </div>
-        ${when(i.state !== 'done', () => html`<div class="ri-actions">
-          ${i.links.slice(0, 1).map(([href, label]) => html`<a class="btn btn-ghost" href="${href}">${label}</a>`)}
-        </div>`)}
-      </div>`)}
-    </div>
+    <p class="small muted" style="margin:6px 0 14px">${String(settled.length)} of ${String(list.length)} complete</p>
+    ${when(outstanding.length === 0, () => html`<div class="callout ok" style="margin-top:0"><b>Everything is on file.</b> Nothing is waiting on you — new gaps appear here if data goes missing.</div>`)}
+    <div class="ready-list">${outstanding.map(row)}</div>
+    ${when(settled.length > 0, () => html`<details class="ready-done">
+      <summary>${String(settled.length)} already on file</summary>
+      <div class="ready-list">${settled.map(row)}</div>
+    </details>`)}
   `);
 }

@@ -190,10 +190,13 @@ test('the setup hub leads with what the company still needs', async () => {
     assert.equal(setup.status, 200);
     assert.match(setup.text, /Your setup/);
     assert.match(setup.text, /Turns on/i, 'each line says what it unlocks');
-    assert.match(setup.text, /Bring your portfolio in/, 'and the links are grouped by intent');
+    assert.match(setup.text, /Other ways in/, 'and the links are grouped by intent');
     assert.match(setup.text, /Run the company/);
 
-    const hub = await get(base, '/setup/import', cookie);
-    assert.match(hub.text, /What is still missing/, 'the Migration Center asks the same question');
+    // one hub: /setup/import is a redirect into the page above, not a twin of it
+    const legacy = await fetch(`${base}/setup/import?tab=rentroll`, { headers: { cookie }, redirect: 'manual' });
+    assert.equal(legacy.status, 303);
+    assert.match(legacy.headers.get('location') || '', /^\/setup\?tab=rentroll/);
+    assert.match(setup.text, /Bring your data in/, 'the upload lanes live on the hub itself');
   } finally { close(); }
 });

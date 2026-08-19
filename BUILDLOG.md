@@ -1359,3 +1359,43 @@ isolation on source documents, the double-count regression with real household f
 density persistence, jargon absence, readiness states. Two `scoring.test.ts` pins asserted the
 removed shadow caption and now assert its absence plus the plain-English chip.
 Gates: tsc clean · 412/412 unit · full e2e · design detector clean on new CSS.
+
+## 2026-08-19 — One Setup, and a building that knows where it is
+
+Two reports, one root: the product had grown a second page that told the same story, and it
+had no idea where its own buildings were.
+
+**One hub.** Yesterday's build put the readiness panel on both the Setup hub and the
+Migration Center, which made them read as duplicates — because by then they were. The
+Migration Center is gone as a page: its upload lanes, its history and its recovery hints now
+live on `/setup` under **Bring your data in**, directly beneath the readiness that says which
+of them to use. `/setup/import` 303s to `/setup#upload` preserving `?tab=`, so every existing
+link, bookmark and deep tab link still lands; the sub-pages (review, record, remove, lease
+drafts, templates) keep their URLs and re-crumb as Setup → Uploads → …. The name "Migration
+Center" is retired from the product; marketing describes the capability without naming a
+screen that no longer exists. The readiness panel now leads with what is OUTSTANDING and
+collapses what is done behind "N already on file" — a finished portfolio was pushing nine
+rows of ticks in front of the operator before anything actionable.
+
+**A building that knows where it is.** A rent roll names buildings; it does not carry their
+street address. The importer therefore wrote `(address pending) / — / -- / 00000` into every
+imported property — and the **public community page printed exactly that**, in its footer and
+inside its `PostalAddress` JSON-LD. New `src/lib/address.ts` makes the placeholder a marker
+rather than data: `hasRealAddress()` gates the footer line and the schema block (a page with
+no real address now publishes no address at all, per the SEO doctrine), and a new
+**Property addresses** readiness item names the buildings still missing one and links
+straight to the fix.
+
+**Documents close the gap they can.** The lease-PDF reader now also extracts the premises
+address, and when the property has none the review screen offers it: the address, how many of
+the uploaded documents agree on it, and one button. Accepting is audited and one-way (an
+address already on file is never silently overwritten), and `parseUsAddress` refuses anything
+that is not a complete `street, city, ST 12345` — a half-read line is dropped, never written.
+That is the shape the rest of this should take: upload a document, and the hub's list of
+what is missing gets shorter by itself.
+
+Tests: `tests/address.test.ts` (6) — placeholder vs real, parse refusals, the public page
+publishing nothing rather than the placeholder, the readiness item naming the building, the
+document-supplied address end to end including the no-overwrite and unreadable paths. Seven
+existing pins named the retired page or its copy and now assert the merged hub.
+Gates: tsc clean · 418/418 unit · full e2e.

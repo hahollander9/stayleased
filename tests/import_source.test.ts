@@ -154,8 +154,8 @@ test('an applied record keeps the document reachable — history is checkable la
     const after = await get(base, `/setup/import/b/${batch.id}`, cookie);
     assert.match(after.text, /Open the original file/);
 
-    // and the Migration Center says which uploads have their document
-    const hub = await get(base, '/setup/import', cookie);
+    // and the Setup hub says which uploads have their document
+    const hub = await get(base, '/setup', cookie);
     assert.match(hub.text, /Open the original/);
   } finally { close(); }
 });

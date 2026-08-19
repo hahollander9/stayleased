@@ -10,7 +10,7 @@ import { AUDUBON_BLOCK_ROLL } from '../tests/fixtures/audubon_block_roll.ts';
 import type { Browser } from 'playwright';
 
 /** Phase 2 / M2.5 gate: the top module bar renders, the Setup hub loads, the
- * property wizard creates a property with units, and the Migration Center
+ * property wizard creates a property with units, and the Setup hub
  * previews then imports units from CSV. */
 
 let base: string;
@@ -63,7 +63,7 @@ test('gate: setup hub → property wizard creates a property with units', async 
   const page = await newPage(browser);
   await login(page, base, 'admin@summitridge.demo');
   await page.goto(`${base}/setup`, { waitUntil: 'networkidle' });
-  assert.match(await page.content(), /Migration Center/);
+  assert.match(await page.content(), /Bring your data in/, 'the Setup hub carries the upload lanes itself');
 
   await page.goto(`${base}/setup/wizard`, { waitUntil: 'networkidle' });
   await page.fill('input[name=name]', 'Wizard Test Property');
@@ -81,7 +81,7 @@ test('gate: setup hub → property wizard creates a property with units', async 
   await page.close();
 });
 
-test('gate: Migration Center previews then imports units from CSV (legacy templates)', async () => {
+test('gate: the Setup hub previews then imports units from CSV (legacy templates)', async () => {
   const page = await newPage(browser);
   await login(page, base, 'admin@summitridge.demo');
   await page.goto(`${base}/setup/import/legacy?entity=units`, { waitUntil: 'networkidle' });

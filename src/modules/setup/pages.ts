@@ -9,6 +9,7 @@ import { parseCsvObjects } from '../../lib/csv.ts';
 import { v } from '../../lib/validate.ts';
 import { shell, card, kpis, tbl, field, input, select, moneyInput, statusBadge, emptyState } from '../../ui/ui.ts';
 import { readiness, readinessPanel } from './readiness.ts';
+import { importSections } from './import.ts';
 
 /** M2.5 Setup hub: the gear → administration landing, a guided property
  * onboarding wizard, and a CSV Migration Center for bulk-importing a
@@ -35,13 +36,12 @@ function slugify(s: string): string {
 interface HubCard { href: string; title: string; desc: string; perm?: string; icon: string; demoOnly?: boolean; group?: HubGroup; }
 type HubGroup = 'data' | 'configure' | 'administer';
 const HUB_GROUPS: [HubGroup, string][] = [
-  ['data', 'Bring your portfolio in'],
+  ['data', 'Other ways in'],
   ['configure', 'Set your rules'],
   ['administer', 'Run the company'],
 ];
 const HUB: HubCard[] = [
   { href: '/welcome', title: 'Getting started', desc: 'The step-by-step walkthrough, with the option to skip what you do not need.', perm: 'properties:manage', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11', group: 'data' },
-  { href: '/setup/import', title: 'Migration Center', desc: 'Upload rent rolls, spreadsheets and lease PDFs — auto-mapped, reviewed, applied.', perm: 'properties:manage', icon: 'M12 3v12m0 0 4-4m-4 4-4-4M4 21h16' , group: 'data' },
   { href: '/setup/connections', title: 'Connections', desc: 'AI brain, payments, bank feeds, listings — what\'s live and what\'s coming.', perm: 'properties:manage', icon: 'M9 12h6M8 7H6a5 5 0 0 0 0 10h2M16 7h2a5 5 0 0 1 0 10h-2' , group: 'configure' },
   { href: '/setup/wizard', title: 'Add a property', desc: 'Guided wizard — property details, a floorplan, and its units.', perm: 'properties:manage', icon: 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6' , group: 'data' },
   { href: '/admin/settings', title: 'Organization settings', desc: 'Policies, fees, and defaults for your whole portfolio.', perm: 'admin:settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5A7 7 0 0 0 19 12z' , group: 'configure' },
@@ -65,11 +65,10 @@ export function routes(r: Router): void {
     const unitCount = q1<{ n: number }>('SELECT COUNT(*) n FROM units u JOIN properties p ON p.id=u.property_id WHERE p.org_id=?', ctx.orgId)?.n ?? 0;
     const staffCount = q1<{ n: number }>("SELECT COUNT(*) n FROM users WHERE org_id=? AND kind='staff' AND active=1", ctx.orgId)?.n ?? 0;
     const leaseCount = q1<{ n: number }>("SELECT COUNT(*) n FROM leases WHERE org_id=? AND status IN ('active','month_to_month','notice')", ctx.orgId)?.n ?? 0;
-    // The hub's job is to answer "what is my company still missing?" — the
-    // links below are the means, not the message. It used to open with three
-    // vanity counts and eleven identical cards, which told an operator
-    // nothing they could act on.
-    const ready = can(ctx, 'properties:manage') ? readiness(ctx) : null;
+    // One page, one story: what the portfolio still needs, the lanes that
+    // supply it, what has been supplied so far, and the settings underneath.
+    const canImport = can(ctx, 'properties:manage');
+    const ready = canImport ? readiness(ctx) : null;
 
     return shell(rq, {
       title: 'Setup',
@@ -84,10 +83,11 @@ export function routes(r: Router): void {
           { label: 'Active leases', value: String(leaseCount), href: '/leases' },
           { label: 'People with logins', value: String(staffCount), href: '/admin/staff' },
         ])}
-        ${when(!!ready, () => readinessPanel(ctx, {
-          title: 'Your setup',
-          intro: 'Counted from your own portfolio every time this page opens. Each line says where it stands and what it turns on — the software runs without any one of them, and works harder with each.',
-        }))}
+        ${when(!!ready, () => readinessPanel(ctx))}
+        ${when(canImport, () => html`
+          <div class="setup-section-head" id="upload">Bring your data in</div>
+          <p class="muted small" style="margin:-4px 0 12px 2px">Upload whatever your old system exports — rent rolls, spreadsheets, signed lease PDFs. Columns are mapped for you, you confirm, and one apply builds the portfolio.</p>
+          ${importSections(rq)}`)}
         ${join(HUB_GROUPS.map(([g, label]) => {
           const list = cards.filter((c) => (c.group || 'administer') === g);
           if (!list.length) return null;
@@ -215,7 +215,7 @@ function wizardPage(rq: Rq, errs: string[] = [], b: Record<string, any> = {}): R
         ${card(null, html`
           ${stepHead(3, 'Units')}
           <div class="form-grid">
-            ${field('How many units?', input('unit_count', { type: 'number', value: val('unit_count', '12'), min: '0', max: '500' }), 'Created vacant-ready on this floorplan. Max 500 in the wizard — use the Migration Center for larger imports.')}
+            ${field('How many units?', input('unit_count', { type: 'number', value: val('unit_count', '12'), min: '0', max: '500' }), 'Created vacant-ready on this floorplan. Max 500 in the wizard — upload a rent roll in Setup for larger imports.')}
             ${field('First unit number', input('unit_start', { type: 'number', value: val('unit_start', '101') }))}
           </div>
         `)}
@@ -341,10 +341,10 @@ function importPage(rq: Rq, opts: { entity?: string; property?: string; csv?: st
   );
   const templateLink = `/setup/import/legacy/template?entity=${spec.key}`;
   return shell(rq, {
-    title: 'Migration Center — templates',
+    title: 'Fixed-format templates',
     active: '/setup/import/legacy',
-    crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Templates']],
-    subtitle: 'Fixed-format CSV importers. For auto-mapped uploads of anything (rent rolls, vendor lists, Excel), use the Migration Center hub.',
+    crumbs: [['Setup', '/setup'], ['Uploads', '/setup#upload'], ['Templates']],
+    subtitle: 'Fixed-format CSV importers. For auto-mapped uploads of anything (rent rolls, vendor lists, Excel), use the upload lanes in Setup.',
     content: html`
       ${when(opts.errs?.length, () => html`<div class="flash err">${opts.errs!.join(' ')}</div>`)}
       <div class="tabs">${Object.values(IMPORTS).map((s) => html`<a href="/setup/import/legacy?entity=${s.key}" class="${s.key === entity ? 'active' : ''}">${s.label}</a>`)}</div>
@@ -401,7 +401,7 @@ function runImport(rq: Rq) {
     });
     const okN = results.filter((r) => r.ok).length;
     return redirect(spec.needsProperty ? `/properties/${propertyId}` : '/properties',
-      `Imported ${okN} of ${results.length} ${spec.label.toLowerCase()}.${okN < results.length ? ' Some rows were skipped — see the Migration Center to retry.' : ''}`);
+      `Imported ${okN} of ${results.length} ${spec.label.toLowerCase()}.${okN < results.length ? ' Some rows were skipped — see Setup to retry.' : ''}`);
   }
 
   // preview: dry-run validate without persisting (rollback the savepoint)

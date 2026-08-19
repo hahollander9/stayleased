@@ -253,7 +253,7 @@ export function routes(r: Router): void {
       : card('Danger zone', html`
         <p style="margin-top:0"><b>Clear all portfolio data.</b> This permanently deletes every property in
         ${orgName} and everything recorded under it — units, leases, resident records and their portal access,
-        vendors, uploads in the Migration Center, and every journal entry on both the accrual and cash books.
+        vendors, uploaded files in Setup, and every journal entry on both the accrual and cash books.
         It is meant for starting an onboarding over: import, check the result, clear, import again.</p>
         <p class="small muted" style="margin-top:0">Your organization, staff accounts and roles, chart of accounts,
         settings and audit trail all stay. Unlike removing a single property, this clears recorded payments and
@@ -574,7 +574,7 @@ export function routes(r: Router): void {
     add(n('import_batches'), 'upload');
     add(n('journal_entries'), 'journal entry', 'journal entries');
     // land where the next attempt starts
-    return redirect('/setup/import', bits.length
+    return redirect('/setup#upload', bits.length
       ? `${org.name} cleared — ${bits.join(', ')} removed. Import when you're ready.`
       : `${org.name} had no portfolio data to clear.`);
   });

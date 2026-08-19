@@ -154,7 +154,12 @@ async function aiAssistMapping(headers: string[], samples: string[][], mapping: 
 export function routes(r: Router): void {
   leasePdfRoutes(r);
 
-  r.get('/setup/import', requirePerm('properties:manage'), (rq) => hubPage(rq));
+  // One hub. /setup/import was its own page whose top half duplicated the
+  // Setup hub's; every link, bookmark and deep tab link still lands correctly.
+  r.get('/setup/import', requirePerm('properties:manage'), (rq) => {
+    const tab = rq.query.get('tab');
+    return redirect(tab ? `/setup?tab=${encodeURIComponent(tab)}#upload` : '/setup#upload');
+  });
 
   r.get('/setup/import/template', requirePerm('properties:manage'), (rq) => {
     const kind = rq.query.get('kind') || 'rent_roll';
@@ -403,7 +408,7 @@ export function routes(r: Router): void {
         }
       }
     }
-    if (propertyId && !canAccessProperty(ctx, propertyId)) return redirect('/setup/import', 'That property is not in your portfolio.', 'err');
+    if (propertyId && !canAccessProperty(ctx, propertyId)) return redirect('/setup#upload', 'That property is not in your portfolio.', 'err');
 
     const batchId = id('imp');
     // Keep the document itself, not just what was read out of it — the review
@@ -497,7 +502,7 @@ export function routes(r: Router): void {
     if (!batch) return notFound('Import not found');
     run(`UPDATE import_batches SET status='discarded' WHERE id=?`, batch.id);
     audit(ctx, 'import_batch', batch.id, 'discard');
-    return redirect('/setup/import', 'Import discarded — nothing was written.');
+    return redirect('/setup#upload', 'Import discarded — nothing was written.');
   });
 
   // Removing an upload is destructive and cannot be undone, so it gets the
@@ -529,7 +534,7 @@ export function routes(r: Router): void {
     const alsoFiles = result.files ? ` and ${result.files} stored file${result.files === 1 ? '' : 's'}` : '';
     const bits = result.undone ? footprintBits(result.undone) : [];
     const undone = bits.length ? ` Also removed ${bits.join(', ')}.` : '';
-    return redirect('/setup/import', `Removed ${label}${alsoFiles} from the Migration Center.${undone}`);
+    return redirect('/setup#upload', `Removed ${label}${alsoFiles} from Setup.${undone}`);
   });
 
   /** Attach the original to an upload that has none — the recovery path for
@@ -680,7 +685,12 @@ function willNotImportCard(validation: Validation): Raw {
 
 // ---------- hub page ----------
 
-function hubPage(rq: Rq): ReturnType<typeof shell> {
+/** The data-intake half of the Setup hub: history of what has been uploaded,
+ * and the lanes for uploading more. It used to be its own page ("Migration
+ * Center") whose top half was the same readiness panel the Setup hub already
+ * showed — two screens telling the same story, which is why they read as
+ * duplicates. The lanes now sit under the readiness they answer. */
+export function importSections(rq: Rq): Raw {
   const ctx = rq.ctx as Ctx;
   const tab = rq.query.get('tab') || 'rentroll';
   const props = orgProperties(ctx);
@@ -759,48 +769,36 @@ function hubPage(rq: Rq): ReturnType<typeof shell> {
       <a class="btn btn-ghost" href="/setup/import/legacy">Open template importers</a>`)],
   ];
 
-  return shell(rq, {
-    title: 'Migration Center',
-    active: '/setup/import',
-    crumbs: [['Setup', '/setup'], ['Migration Center']],
-    subtitle: 'Bring your portfolio in from anywhere — upload what you have, confirm the mapping, done.',
-    content: html`
-      ${readinessPanel(ctx, {
-        title: 'What is still missing',
-        only: ['portfolio', 'leases', 'contacts', 'balances', 'deposits', 'bank', 'documents', 'vendors'],
-        intro: 'Measured against the portfolio you have already brought in. Each line names what arrives with it — nothing here is busywork, and a portfolio can run well with several still open.',
-      })}
-      ${when(history.length, () => card('Import history', tbl(
-        [{ label: 'File' }, { label: 'Type' }, { label: 'Uploaded' }, { label: 'Status' }, { label: 'Result' }, { label: '' }],
-        history.map((b) => {
-          const s = b.summary ? j<Partial<import('./import_apply.ts').ApplySummary>>(b.summary, {}) : null;
-          const result = b.status === 'applied'
-            ? (s ? summaryBits(s).slice(0, 4).join(' · ') || 'Applied' : 'Applied') + (s?.skipped ? ` · ${s.skipped} skipped` : '')
-            : b.status === 'staged' ? `${j<string[][]>(b.rows, []).length} rows awaiting review` : '—';
-          const href = b.kind === 'lease_pdf'
-            ? (b.status === 'staged' ? `/setup/import/leases/${b.id}` : null)
-            : `/setup/import/b/${b.id}`;
-          return { cells: [
-            html`<b>${b.filename || '(pasted)'}</b>${b.source_file_id
-              ? html`<span class="sub"><a href="/f/${b.source_file_id}" target="_blank" rel="noopener">Open the original</a></span>`
-              : b.kind === 'lease_pdf' ? raw('') : html`<span class="sub muted">original not on file</span>`}`,
-            KINDS.find((k) => k.key === b.kind)?.label || (b.kind === 'lease_pdf' ? 'Lease PDFs' : b.kind),
-            fmtDate(b.created_at.slice(0, 10)),
-            statusBadge(b.status === 'applied' ? 'ok' : b.status === 'staged' ? 'pending' : 'error', b.status === 'applied' ? 'Applied' : b.status === 'staged' ? 'Staged' : 'Discarded'),
-            html`<span class="muted small">${result}</span>`,
-            html`<div class="btn-row" style="gap:6px;flex-wrap:nowrap;justify-content:flex-end">
-              ${href ? html`<a class="btn btn-ghost" href="${href}">${b.status === 'staged' ? 'Review' : 'View'}</a>` : raw('')}
-              <a class="btn btn-ghost" href="/setup/import/b/${b.id}/remove">Remove</a>
-            </div>`,
-          ] };
-        }),
-        { empty: '' },
-      ), { flush: true }))}
-      ${when(props.length, () => html`<p class="muted small" style="margin:-4px 0 12px 2px">Imported into the wrong place? <a href="/properties">Remove the property and start over →</a></p>`)}
-      <div class="tabs">${lanes.map(([key, label]) => html`<a href="/setup/import?tab=${key}" class="${key === tab ? 'active' : ''}">${label}</a>`)}</div>
-      ${(lanes.find(([key]) => key === tab) || lanes[0]!)[2]}
-    `,
-  });
+  return html`
+    ${when(history.length, () => card('Uploads', tbl(
+      [{ label: 'File' }, { label: 'Type' }, { label: 'Uploaded' }, { label: 'Status' }, { label: 'Result' }, { label: '' }],
+      history.map((b) => {
+        const s = b.summary ? j<Partial<import('./import_apply.ts').ApplySummary>>(b.summary, {}) : null;
+        const result = b.status === 'applied'
+          ? (s ? summaryBits(s).slice(0, 4).join(' · ') || 'Applied' : 'Applied') + (s?.skipped ? ` · ${s.skipped} skipped` : '')
+          : b.status === 'staged' ? `${j<string[][]>(b.rows, []).length} rows awaiting review` : '—';
+        const href = b.kind === 'lease_pdf'
+          ? (b.status === 'staged' ? `/setup/import/leases/${b.id}` : null)
+          : `/setup/import/b/${b.id}`;
+        return { cells: [
+          html`<b>${b.filename || '(pasted)'}</b>${b.source_file_id
+            ? html`<span class="sub"><a href="/f/${b.source_file_id}" target="_blank" rel="noopener">Open the original</a></span>`
+            : b.kind === 'lease_pdf' ? raw('') : html`<span class="sub muted">original not on file</span>`}`,
+          KINDS.find((k) => k.key === b.kind)?.label || (b.kind === 'lease_pdf' ? 'Lease PDFs' : b.kind),
+          fmtDate(b.created_at.slice(0, 10)),
+          statusBadge(b.status === 'applied' ? 'ok' : b.status === 'staged' ? 'pending' : 'error', b.status === 'applied' ? 'Applied' : b.status === 'staged' ? 'Staged' : 'Discarded'),
+          html`<span class="muted small">${result}</span>`,
+          html`<div class="btn-row" style="gap:6px;flex-wrap:nowrap;justify-content:flex-end">
+            ${href ? html`<a class="btn btn-ghost" href="${href}">${b.status === 'staged' ? 'Review' : 'View'}</a>` : raw('')}
+            <a class="btn btn-ghost" href="/setup/import/b/${b.id}/remove">Remove</a>
+          </div>`,
+        ] };
+      }),
+      { empty: '' },
+    ), { flush: true }))}
+    ${when(history.length && props.length, () => html`<p class="muted small" style="margin:-4px 0 12px 2px">Imported into the wrong place? <a href="/properties">Remove the property and start over →</a></p>`)}
+    <div class="tabs">${lanes.map(([key, label]) => html`<a href="/setup?tab=${key}#upload" class="${key === tab ? 'active' : ''}">${label}</a>`)}</div>
+    ${(lanes.find(([key]) => key === tab) || lanes[0]!)[2]}`;
 }
 
 // ---------- read-only record for applied/discarded batches ----------
@@ -863,7 +861,7 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
   return shell(rq, {
     title: `Import — ${batch.filename || 'upload'}`,
     active: '/setup/import',
-    crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Record']],
+    crumbs: [['Setup', '/setup'], ['Uploads', '/setup#upload'], ['Record']],
     subtitle: `${KINDS.find((k) => k.key === kind)?.label || kind} · uploaded ${fmtDate((batch as { created_at?: string }).created_at?.slice(0, 10) || batch.as_of || '')}`,
     actions: openOriginal(batch),
     content: html`
@@ -885,7 +883,7 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
         { empty: 'No columns were mapped.' },
       ), { flush: true })}
       <div class="wiz-actions">
-        <a class="btn btn-ghost" href="/setup/import">Back to Migration Center</a>
+        <a class="btn btn-ghost" href="/setup#upload">Back to Setup</a>
         <a class="btn btn-ghost" href="/setup/import/b/${batch.id}/remove">Remove this upload</a>
       </div>
     `,
@@ -913,11 +911,11 @@ function removePage(rq: Rq, batch: BatchRow & { created_at?: string; summary?: s
   return shell(rq, {
     title: 'Remove this upload',
     active: '/setup/import',
-    crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Remove']],
+    crumbs: [['Setup', '/setup'], ['Uploads', '/setup#upload'], ['Remove']],
     subtitle: `${kindLabel} · ${label}`,
     content: html`
       ${card('Remove this upload', html`
-        <p style="margin-top:0"><b>${label}</b> and everything the Migration Center is holding from it —
+        <p style="margin-top:0"><b>${label}</b> and everything Setup is holding from it —
         ${held}${isPdfLane ? '' : ', the column mapping, and the reader’s notes'} — are deleted permanently.
         This cannot be undone.</p>
         ${!applied
@@ -992,7 +990,7 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
   return shell(rq, {
     title: `Review import — ${batch.filename || 'upload'}`,
     active: '/setup/import',
-    crumbs: [['Setup', '/setup'], ['Migration Center', '/setup/import'], ['Review']],
+    crumbs: [['Setup', '/setup'], ['Uploads', '/setup#upload'], ['Review']],
     subtitle: `${rows.length} data row${rows.length === 1 ? '' : 's'} · ${KINDS.find((k) => k.key === kind)?.label || kind}${preset ? ` · detected ${preset.name} format` : ''}`,
     actions: openOriginal(batch),
     content: html`

@@ -175,7 +175,7 @@ test('gate: live org fences — no simulator, honest connections, no sim leads',
   assert.match(conn, /Working now/);
   assert.match(conn, /Coming soon/i);
   assert.match(conn, /Payments/);
-  assert.match(conn, /Migration Center|File import/);
+  assert.match(conn, /File import|upload/i);
 
   // the AI connection test runs a real round-trip and reports honestly
   await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Test connection")')]);

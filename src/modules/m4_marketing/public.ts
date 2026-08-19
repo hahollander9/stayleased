@@ -4,6 +4,7 @@ import { q, q1, val, j } from '../../lib/db.ts';
 import { sysCtx, type Ctx } from '../../lib/auth.ts';
 import { fmtDate, addDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
+import { hasRealAddress, formatAddress } from '../../lib/address.ts';
 import { v } from '../../lib/validate.ts';
 import { logo } from '../../ui/ui.ts';
 import { intakeLead, bookTour, tourSlots } from '../m3_crm/service.ts';
@@ -102,7 +103,7 @@ function siteNav(prop: any): Raw {
 
 function siteFooter(prop: any): Raw {
   return html`<footer class="foot">
-    <div><b>${prop.name}</b> · ${prop.address1}, ${prop.city}, ${prop.state} ${prop.zip} · ${prop.phone || ''}</div>
+    <div><b>${prop.name}</b>${formatAddress(prop) ? ` · ${formatAddress(prop)}` : ''}${prop.phone ? ` · ${prop.phone}` : ''}</div>
     <div style="margin-top:6px">Professionally managed with StayLeased · <span title="We follow all fair housing laws">⌂ Equal Housing Opportunity</span></div>
     <div class="foot-copy">© 2026 StayLeased</div>
   </footer>`;
@@ -120,7 +121,12 @@ export function routes(r: Router): void {
     const flash = takeFlash(rq);
     const ld = {
       '@context': 'https://schema.org', '@type': 'ApartmentComplex', name: prop.name,
-      address: { '@type': 'PostalAddress', streetAddress: prop.address1, addressLocality: prop.city, addressRegion: prop.state, postalCode: prop.zip },
+      // schema mirrors the page (SEO doctrine): a property whose address is
+      // still the import placeholder publishes no PostalAddress at all rather
+      // than "(address pending), —, -- 00000"
+      address: hasRealAddress(prop)
+        ? { '@type': 'PostalAddress', streetAddress: prop.address1, addressLocality: prop.city, addressRegion: prop.state, postalCode: prop.zip }
+        : undefined,
       telephone: prop.phone || undefined, numberOfAvailableAccommodationUnits: totalAvail,
     };
     const body = html`

@@ -165,7 +165,7 @@ test('resident on another property survives with portal account; orphan resident
   assert.ok(q1('SELECT id FROM household_members WHERE lease_id=? AND resident_id=?', leaseB, shared.id), 'other household intact');
 });
 
-test('route: typed-name mismatch refuses; exact name deletes; Migration Center shows the start-over link', async () => {
+test('route: typed-name mismatch refuses; exact name deletes', async () => {
   const pid = importProperty('Typed Confirm Court', [
     ['T1', 'Tess Typed', 'tess@propdel.test', '1100', '1100', '', '2026-01-01', '2026-12-31'],
   ]);
@@ -180,12 +180,10 @@ test('route: typed-name mismatch refuses; exact name deletes; Migration Center s
     assert.match(edit.text, new RegExp(`/properties/${pid}/delete`));
     assert.match(edit.text, /confirm_name/);
 
-    // Migration Center: muted start-over line once the org has properties
-    const hub = await get(base, '/setup/import', cookie);
-    assert.equal(hub.status, 200);
-    assert.match(hub.text, /Imported into the wrong place\?/);
-    assert.match(hub.text, /Remove the property and start over/);
-    assert.match(hub.text, /href="\/properties"/);
+    // the retired standalone import page now lands on the one hub
+    const legacy = await fetch(`${base}/setup/import`, { headers: { cookie }, redirect: 'manual' });
+    assert.equal(legacy.status, 303);
+    assert.match(legacy.headers.get('location') || '', /^\/setup/);
 
     // wrong name → refused, nothing deleted
     const bad = await post(base, `/properties/${pid}/delete`, { confirm_name: 'Wrong Name Court' }, cookie);

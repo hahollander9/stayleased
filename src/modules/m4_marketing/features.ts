@@ -995,7 +995,7 @@ export const MK_PAGES: MkPage[] = [
   {
     slug: 'switching-from-buildium-appfolio', group: 'for', label: 'Switching from Buildium / AppFolio',
     title: 'Your rent roll imports in one afternoon. Seriously.',
-    sub: 'Export from Buildium, AppFolio, Yardi, RentManager, or TenantCloud — the Migration Center recognizes the format, maps it automatically, shows you everything for review, and builds your portfolio from one file.',
+    sub: 'Export from Buildium, AppFolio, Yardi, RentManager, or TenantCloud — StayLeased recognizes the format, maps it automatically, shows you everything for review, and builds your portfolio from one file.',
     points: [
       'Preset detection for the big five’s export formats',
       'One rent-roll file creates properties, units, leases, and residents',
@@ -1007,7 +1007,7 @@ export const MK_PAGES: MkPage[] = [
       { b: 'Keep your history', s: 'Balances convert cleanly; your old exports stay yours' },
     ],
     features: [
-      { t: 'Export-shaped import', b: 'The Migration Center detects Buildium/AppFolio/Yardi/RentManager/TenantCloud export shapes and applies the right mapping preset — you’re not massaging columns in Excel first.' },
+      { t: 'Export-shaped import', b: 'The importer detects Buildium/AppFolio/Yardi/RentManager/TenantCloud export shapes and applies the right mapping preset — you’re not massaging columns in Excel first.' },
       { t: 'AI reading with human review', b: 'The AI reads the whole sheet and proposes the mapping; automated checks verify everything; you review and approve before a single record is created. The AI never writes directly to your records.' },
       { t: 'One file → whole portfolio', b: 'A rent roll builds properties, buildings, units, floorplans, leases, residents, and balances in one transactional apply.' },
       { t: 'Conversion accounting done right', b: 'Prior balances arrive as opening balances (not fake history), deposits land on both bases correctly, and each lease’s billing start date guarantees no month gets billed twice.' },
