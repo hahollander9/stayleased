@@ -92,7 +92,7 @@ test('a staged upload is removed outright — no typed confirm, row and grid gon
 
     const done = await post(base, `/setup/import/b/${batch.id}/remove`, {}, cookie);
     assert.equal(done.status, 303);
-    assert.equal(done.location, '/setup/import');
+    assert.equal(done.location, '/setup#upload');
     assert.equal(exists(batch.id), false, 'batch row deleted');
 
     const audited = removeAudit(batch.id);
@@ -143,7 +143,7 @@ test('an applied upload needs the typed file name — and removing it takes the 
     // exact name → the upload and its import both go
     const ok = await post(base, `/setup/import/b/${batch.id}/remove`, { confirm_name: 'applied.xlsx' }, cookie);
     assert.equal(ok.status, 303);
-    assert.equal(ok.location, '/setup/import');
+    assert.equal(ok.location, '/setup#upload');
     assert.equal(exists(batch.id), false, 'batch row deleted');
   } finally {
     close();
@@ -241,9 +241,9 @@ test('the hub lists a Remove action per upload, and another org cannot reach one
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@imprm.test');
-    const hub = await get(base, '/setup/import', cookie);
+    const hub = await get(base, '/setup', cookie);
     assert.equal(hub.status, 200);
-    assert.match(hub.text, /Import history/);
+    assert.match(hub.text, /Uploads/);
     assert.match(hub.text, new RegExp(`/setup/import/b/${mine.id}/remove`), 'the upload carries a Remove action');
     assert.doesNotMatch(hub.text, /theirs\.xlsx/, "another org's uploads are not listed");
 

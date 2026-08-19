@@ -37,7 +37,7 @@ function rails(ctx: Ctx): Rail[] {
     },
     {
       key: 'imports', name: 'File import (Excel · CSV · lease PDFs)',
-      desc: 'Rent rolls, vendor lists, balances and signed leases — auto-mapped and reviewed in the Migration Center.',
+      desc: 'Rent rolls, vendor lists, balances and signed leases — auto-mapped and reviewed in Setup.',
       status: 'live', href: '/setup/import',
     },
     {
@@ -56,7 +56,7 @@ function rails(ctx: Ctx): Rail[] {
     {
       key: 'bank', name: 'Bank feeds (Plaid)',
       desc: live
-        ? 'Automatic bank-transaction feeds are coming. Today: post your opening balance in the Migration Center and reconcile manually.'
+        ? 'Automatic bank-transaction feeds are coming. Today: post your opening balance in Setup and reconcile manually.'
         : 'The demo org uses a simulated bank feed for reconciliation.',
       status: live ? 'waitlist' : 'simulated',
     },
@@ -83,7 +83,7 @@ function rails(ctx: Ctx): Rail[] {
     },
     {
       key: 'pms_sync', name: 'Buildium · AppFolio · Yardi live sync',
-      desc: 'A connected two-way sync is on the roadmap. Today their exports import in minutes through the Migration Center — most portfolios move in one sitting.',
+      desc: 'A connected two-way sync is on the roadmap. Today their exports import in minutes through Setup — most portfolios move in one sitting.',
       status: 'waitlist', href: '/setup/import',
     },
   ];

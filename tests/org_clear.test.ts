@@ -121,7 +121,7 @@ test('the route needs the typed org name, and refuses the demo org outright', as
 
     const ok = await post(base, '/admin/settings/clear-data', { confirm_name: 'Clear Test Co' }, cookie);
     assert.equal(ok.status, 303);
-    assert.equal(ok.location, '/setup/import', 'lands where the next import starts');
+    assert.equal(ok.location, '/setup#upload', 'lands where the next import starts');
     assert.equal(val<number>('SELECT COUNT(*) FROM properties WHERE org_id=?', orgId), 0, 'cleared');
 
     // the demo org keeps its seeded world even with the name typed correctly

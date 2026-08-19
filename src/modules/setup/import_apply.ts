@@ -2,6 +2,7 @@ import { q, q1, insert, run, tx, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addMonths, firstOfMonth } from '../../lib/dates.ts';
 import { audit } from '../../lib/audit.ts';
+import { ADDRESS_PENDING } from '../../lib/address.ts';
 import { emit } from '../../lib/events.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { canAccessProperty } from '../../lib/auth.ts';
@@ -630,7 +631,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
       insert('properties', {
         id: pid, org_id: ctx.orgId, name, slug: uniquePropertySlug(name), type: 'multifamily', import_batch_id: batch.id,
         source_ref: sourceRef,
-        address1: '(address pending)', city: '—', state: '--', zip: '00000', timezone: importTimezone(ctx),
+        address1: ADDRESS_PENDING, city: '—', state: '--', zip: '00000', timezone: importTimezone(ctx),
         phone: null, email: null, year_built: null, fiscal_year_start_month: 1, created_at: nowIso(),
       });
       summary.properties++;
