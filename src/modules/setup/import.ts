@@ -24,6 +24,7 @@ import {
 } from './import_apply.ts';
 import { leasePdfRoutes, leasePdfLaneCard } from './import_leases.ts';
 import { aiPlanSpreadsheet, applyReadingPlan, aiReadPdfTable, mappingScore } from './ai_reader.ts';
+import { classifyDocument, type DocClassification } from './ai_classify.ts';
 import { docsChecklist } from './onboarding.ts';
 import { readinessPanel } from './readiness.ts';
 
@@ -184,12 +185,43 @@ export function routes(r: Router): void {
     return fileRes(csv, 'text/csv; charset=utf-8', { filename: 'stayleased-residents-template.csv' });
   });
 
+/** A document we identified but cannot build anything from — an availability
+ * report, a traffic sheet, a box score.
+ *
+ * This is not an error and must not read like one. The file is kept, named
+ * correctly, and listed with what it WOULD unlock, because "I don't import
+ * this yet" is information and a rejected upload is not. Forcing it into a
+ * lane instead would silently corrupt a portfolio, which is the one outcome
+ * worse than not importing it. */
+function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer; mime: string }, cls: DocClassification) {
+  const batchId = id('imp');
+  const f = putFile(ctx, up.data, {
+    name: up.filename || 'upload', mime: up.mime,
+    entity: 'import_batch', entityId: batchId, visibility: 'staff',
+  });
+  insert('import_batches', {
+    id: batchId, org_id: ctx.orgId, kind: 'unknown', filename: up.filename || null,
+    source_file_id: f.id, property_id: null, new_property_name: null, preset: null,
+    headers: '[]', mapping: js({ cols: {}, preset: null, aiAssisted: [], classification: cls }),
+    rows: '[]', staged: '[]', as_of: (rq.ctx as Ctx).businessDate,
+    status: 'discarded', summary: null, created_by: ctx.userId, created_at: nowIso(), applied_at: null,
+  });
+  audit(ctx, 'import_batch', batchId, 'upload', null, { kind: 'unknown', filename: up.filename, report: cls.report, by: cls.by });
+  return redirect(`/setup/import/b/${batchId}`);
+}
+
   r.post('/setup/import/upload', requirePerm('properties:manage'), async (rq) => {
     const ctx = rq.ctx as Ctx;
-    const kind = (KINDS.some((k) => k.key === rq.body.kind) ? String(rq.body.kind) : 'rent_roll') as ImportKind;
+    // 'auto' is the default and the point: the operator drops a file, and the
+    // software works out what it is. An explicit kind is still honoured for
+    // anyone who wants to force a lane.
+    const asked = String(rq.body.kind || 'auto');
+    const explicit = KINDS.some((k) => k.key === asked) ? (asked as ImportKind) : null;
+    let kind: ImportKind = explicit ?? 'rent_roll';
+    let classification: DocClassification | null = null;
     const up = (rq.uploads || []).find((u) => u.field === 'file' && u.data.length);
-    if (!up) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'Choose a file to upload.', 'err');
-    if (up.data.length > 15 * 1024 * 1024) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'File is too large (15 MB max).', 'err');
+    if (!up) return redirect(`/setup#upload`, 'Choose a file to upload.', 'err');
+    if (up.data.length > 15 * 1024 * 1024) return redirect(`/setup#upload`, 'File is too large (15 MB max).', 'err');
 
     let headers: string[];
     let dataRows: string[][];
@@ -203,12 +235,13 @@ export function routes(r: Router): void {
     const isPdf = /\.pdf$/i.test(up.filename || '') || (up.data.length > 4 && up.data.subarray(0, 4).toString('latin1') === '%PDF');
     if (isPdf) {
       // PDF rent rolls: the AI reads the whole table — no template involved
-      if (kind !== 'rent_roll') return redirect(`/setup/import?tab=${tabFor(kind)}`, 'PDF reading is available on the rent-roll lane.', 'err');
+      kind = 'rent_roll';
       if (!llmStatus().live) {
-        return redirect('/setup/import?tab=rentroll', 'Reading PDF rent rolls requires the live AI, which is offline in this environment — export the report as Excel/CSV instead.', 'err');
+        return redirect('/setup#upload', 'Reading PDF reports requires the live AI, which is offline in this environment — export the report as Excel/CSV instead.', 'err');
       }
       const table = await aiReadPdfTable(up.data, kind);
-      if (!table) return redirect('/setup/import?tab=rentroll', 'The AI couldn\'t find a unit table in that PDF. If it\'s a lease agreement, use the Lease PDFs lane; otherwise try the Excel/CSV export.', 'err');
+      if (!table) return redirect('/setup#upload', 'The AI couldn\'t find a unit table in that PDF. If it\'s a signed lease, drop it in the lease-PDF lane; otherwise try the Excel/CSV export.', 'err');
+      classification = { kind: 'rent_roll', supported: true, report: 'Rent roll (PDF)', system: null, confidence: 'high', why: 'The AI read a unit table out of this PDF.', by: 'ai' };
       headers = table.headers;
       dataRows = table.dataRows.slice(0, MAX_ROWS);
       mapping = table.mapping;
@@ -217,10 +250,18 @@ export function routes(r: Router): void {
       try {
         sheets = parseSpreadsheet(up.filename || 'upload.csv', up.data, parseCsv);
       } catch (e) {
-        return redirect(`/setup/import?tab=${tabFor(kind)}`, `Couldn't read that file (${(e as Error).message}). Export as .xlsx or .csv and try again.`, 'err');
+        return redirect('/setup#upload', `Couldn't read that file (${(e as Error).message}). Export as .xlsx or .csv and try again.`, 'err');
       }
       const sheet = sheets.filter((s) => s.rows.length > 1).sort((a, b) => b.rows.length - a.rows.length)[0];
-      if (!sheet) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'That file has no data rows.', 'err');
+      if (!sheet) return redirect('/setup#upload', 'That file has no data rows.', 'err');
+
+      // What IS this? Asked once, before anything else, so the operator never
+      // had to pick a lane. An explicit choice overrides the answer.
+      classification = await classifyDocument(up.filename || 'upload', sheet.rows.slice(0, 60)).catch(() => null);
+      if (!explicit && classification) {
+        if (!classification.supported) return stageUnreadable(ctx, rq, up, classification);
+        kind = classification.kind as ImportKind;
+      }
 
       // Whole-sheet AI reading first: the model sees the entire grid and plans
       // the read (header, columns, skip rows, property sections). Deterministic
@@ -269,7 +310,7 @@ export function routes(r: Router): void {
         dataRows = aiRead.dataRows.slice(0, MAX_ROWS);
         mapping = aiRead.mapping;
       } else {
-        if (!hRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found under the header.', 'err');
+        if (!hRows.length) return redirect('/setup#upload', 'No data rows found under the header.', 'err');
         hMapping = await aiAssistMapping(hHeaders, hRows, hMapping, kind);
         headers = hHeaders;
         dataRows = hRows;
@@ -386,7 +427,7 @@ export function routes(r: Router): void {
       if (sourceSummary) mapping.source = sourceSummary;
       if (docProp) mapping.sourceProperty = { name: docProp, code: docPropCode };
     }
-    if (!dataRows.length) return redirect(`/setup/import?tab=${tabFor(kind)}`, 'No data rows found in that file.', 'err');
+    if (!dataRows.length) return redirect('/setup#upload', 'No data rows found in that file.', 'err');
 
     // property targeting — 'detect' (the rent-roll default) resolves the
     // property FROM the document: its Property column when one is mapped,
@@ -422,7 +463,7 @@ export function routes(r: Router): void {
       id: batchId, org_id: ctx.orgId, kind, filename: up.filename || null,
       source_file_id: sourceFile.id,
       property_id: propertyId, new_property_name: newPropertyName,
-      preset: mapping.preset, headers: js(headers), mapping: js(mapping), rows: js(dataRows),
+      preset: mapping.preset, headers: js(headers), mapping: js({ ...mapping, classification }), rows: js(dataRows),
       staged: js(futureRows), as_of: String(rq.body.as_of || '') || ctx.businessDate,
       status: 'staged', summary: null, created_by: ctx.userId, created_at: nowIso(), applied_at: null,
     });
@@ -436,6 +477,7 @@ export function routes(r: Router): void {
     if (!batch || batch.kind === 'lease_pdf') return notFound('Import not found');
     // applied/discarded batches stay visitable as a read-only record — the
     // history's answer to "what did I upload, and what did it do?"
+    if (batch.kind === 'unknown') return unknownPage(rq, batch);
     if (batch.status === 'applied' || batch.status === 'discarded') return recordPage(rq, batch);
     return reviewPage(rq, batch);
   });
@@ -690,93 +732,82 @@ function willNotImportCard(validation: Validation): Raw {
  * Center") whose top half was the same readiness panel the Setup hub already
  * showed — two screens telling the same story, which is why they read as
  * duplicates. The lanes now sit under the readiness they answer. */
+
+/** One dropzone for everything.
+ *
+ * The lanes below it still exist for anyone who wants to force a type, but
+ * nobody should have to: a landlord exporting from Yardi is choosing between
+ * forty report names already, and asking them to then match it to one of our
+ * five is the software delegating its own work. Drop the file — it gets
+ * identified, read, and shown back for confirmation. */
+function anyFileCard(ctx: Ctx, props: { id: string; name: string }[]): Raw {
+  const ai = llmStatus();
+  return card('Upload anything from your old system', html`
+    <p class="muted" style="margin-top:0">Rent rolls, resident directories, balances owed, vendor lists — as your system exports them.
+      StayLeased identifies the document, reads it, and shows you what it found before anything is created.
+      ${ai.live ? html`<span class="pill">AI reading: live</span>` : html`<span class="muted small">(Live AI is off here — documents are matched by their own report names and column vocabulary.)</span>`}</p>
+    <form method="post" action="/setup/import/upload" enctype="multipart/form-data">
+      <div class="form-grid">
+        ${field('Any export (Excel, CSV, or PDF)', raw(`<label class="dropzone" data-dropzone>
+          <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm,.pdf,application/pdf,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m0 0 4.2 4.2M12 4 7.8 8.2"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
+          <b>Drop any file here <span>or click to browse</span></b>
+          <span class="dz-hint">No column mapping, no template — exactly as it came out of your system</span>
+          <span class="dz-file" data-dz-name></span>
+        </label>`))}
+        ${field('Import into', raw(`<div>
+          <label style="display:flex;gap:6px;align-items:center;margin-bottom:2px"><input type="radio" name="prop_mode" value="detect" checked/> Read it from the file</label>
+          <div class="muted small" style="margin:0 0 10px 22px">The property the document names is matched or created automatically.</div>
+          <label style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><input type="radio" name="prop_mode" value="existing"/> Existing property:&nbsp;</label>
+          ${props.length ? `<select name="property">${props.map((p) => `<option value="${p.id}">${p.name.replace(/</g, '&lt;')}</option>`).join('')}</select>` : '<span class="muted small">none yet</span>'}
+          <label style="display:flex;gap:6px;align-items:center;margin:8px 0 4px"><input type="radio" name="prop_mode" value="new"/> New property named:&nbsp;</label>
+          <input name="new_property" placeholder="Orchard East" />
+        </div>`))}
+        ${field('As-of (switch) date', input('as_of', { type: 'date', value: ctx.businessDate }), 'Balances post on this date; billing starts the following month.')}
+      </div>
+      <details class="lane-details">
+        <summary>It is a specific type and I want to say so</summary>
+        <p class="muted small" style="margin:8px 0 0">Only needed when the file is unusual — otherwise leave this alone and let StayLeased read it.</p>
+        <div class="form-grid" style="margin-top:6px">
+          ${field('Treat this file as', select('kind', [
+            ['auto', 'Work it out from the document (recommended)'],
+            ...KINDS.map((k) => [k.key, k.label] as [string, Child]),
+          ], 'auto'))}
+        </div>
+      </details>
+      <div class="wiz-actions"><button class="btn" type="submit">Upload &amp; read it</button></div>
+    </form>`);
+}
+
 export function importSections(rq: Rq): Raw {
   const ctx = rq.ctx as Ctx;
-  const tab = rq.query.get('tab') || 'rentroll';
   const props = orgProperties(ctx);
   const history = q<BatchRow & { created_at: string; applied_at: string | null; summary: string | null }>(
     `SELECT * FROM import_batches WHERE org_id=? ORDER BY created_at DESC LIMIT 12`, ctx.orgId,
   );
-  const ai = llmStatus();
-
-  const aiLive = llmStatus().live;
-  const uploader = (kind: ImportKind, extra?: Raw): Raw => html`
-    <form method="post" action="/setup/import/upload" enctype="multipart/form-data">
-      <input type="hidden" name="kind" value="${kind}" />
-      <div class="form-grid">
-        ${field(kind === 'rent_roll' && aiLive ? 'Rent roll file (Excel, CSV, or PDF)' : 'Spreadsheet file',
-          raw(`<label class="dropzone" data-dropzone>
-            <input type="file" name="file" accept=".csv,.tsv,.txt,.xlsx,.xlsm${kind === 'rent_roll' && aiLive ? ',.pdf,application/pdf' : ''},text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" required />
-            <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 16V4m0 0 4.2 4.2M12 4 7.8 8.2"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3"/></svg>
-            <b>Drop the file here <span>or click to browse</span></b>
-            <span class="dz-hint">Exactly as your old system exports it — nothing to reformat</span>
-            <span class="dz-file" data-dz-name></span>
-          </label>`))}
-        ${kind === 'rent_roll'
-          ? field('Import into', raw(`<div>
-              <label style="display:flex;gap:6px;align-items:center;margin-bottom:2px"><input type="radio" name="prop_mode" value="detect" checked/> Read it from the file</label>
-              <div class="muted small" style="margin:0 0 10px 22px">The property named in the document — or its Property column — is matched or created automatically.</div>
-              <label style="display:flex;gap:6px;align-items:center;margin-bottom:4px"><input type="radio" name="prop_mode" value="existing"/> Existing property:&nbsp;</label>
-              ${props.length ? `<select name="property">${props.map((p) => `<option value="${p.id}">${p.name.replace(/</g, '&lt;')}</option>`).join('')}</select>` : '<span class="muted small">none yet</span>'}
-              <label style="display:flex;gap:6px;align-items:center;margin:8px 0 4px"><input type="radio" name="prop_mode" value="new"/> New property named:&nbsp;</label>
-              <input name="new_property" placeholder="Harbor Point Apartments" />
-            </div>`))
-          : kind === 'vendors'
-            ? raw('')
-            : field('Property', props.length ? select('property', props.map((p) => [p.id, p.name] as [string, Child]), '', { required: true }) : html`<span class="muted">No properties yet — import a rent roll first.</span>`)}
-        ${field('As-of (switch) date', input('as_of', { type: 'date', value: ctx.businessDate }), 'Balances post on this date; billing starts the following month.')}
-      </div>
-      ${extra || ''}
-      <div class="wiz-actions"><button class="btn" type="submit">Upload &amp; map columns</button></div>
-    </form>`;
-
-  const lanes: [string, string, Raw][] = [
-    ['rentroll', 'Rent roll', html`
-      ${card('Upload your rent roll', html`
-        <p class="muted" style="margin-top:0">${KINDS[0]!.blurb}</p>
-        <p class="muted small" style="margin-top:-6px">${hjoin(PRESETS.map((p) => html`${p.name}`), raw(' · ').s)} · any spreadsheet
-        · <a href="/setup/import/template?kind=rent_roll">Excel template</a>
-        ${ai.live ? html` <span class="pill" title="The model reads the entire document — headers, sections, totals — and pre-fills the mapping; you review before anything is written">AI document reading: on</span>` : raw('')}</p>
-        ${uploader('rent_roll')}
-      `)}
-      <details style="margin:2px 0 0">
-        <summary style="cursor:pointer;font-weight:600;font-size:14px;padding:6px 2px">What to have ready — and what each file unlocks</summary>
-        ${docsChecklist(true)}
-      </details>`],
-    ['leases', 'Lease PDFs', leasePdfLaneCard(ctx, props)],
-    ['vendors', 'Vendors', card('Import vendors', html`
-      <p class="muted" style="margin-top:0">${KINDS[1]!.blurb} <a href="/setup/import/template?kind=vendors">CSV template</a>.</p>
-      ${uploader('vendors')}`)],
-    ['residents', 'Resident directory', card('Upload your resident directory', html`
-      <p class="muted" style="margin-top:0">${KINDS[2]!.blurb} Yardi calls this export the Tenant/Resident Directory; Buildium and AppFolio call it the tenant or contact list. <a href="/setup/import/template?kind=residents">Blank CSV template</a>.</p>
-      ${uploader('residents')}`)],
-    ['balances', 'Opening balances', html`
-      ${card('Per-unit balances owed', html`
-        <p class="muted" style="margin-top:0">${KINDS[3]!.blurb} Already in your rent roll's Balance column? Skip this. <a href="/setup/import/template?kind=balances">CSV template</a>.</p>
-        ${uploader('balances')}`)}
-      ${card('Opening bank balance', html`
-        <p class="muted" style="margin-top:0">Your operating account balance on the switch date — one number, no file.</p>
-        <form method="post" action="/setup/import/bank-balance">
-          <div class="form-grid">
-            ${field('Property', props.length ? select('property', props.map((p) => [p.id, p.name] as [string, Child]), '', { required: true }) : html`<span class="muted">Import properties first.</span>`)}
-            ${field('Balance (USD)', input('amount', { placeholder: '25000.00', required: true }))}
-            ${field('As of', input('as_of', { type: 'date', value: ctx.businessDate }))}
-          </div>
-          <div class="wiz-actions"><button class="btn" ${props.length ? '' : 'disabled'}>Post opening balance</button></div>
-        </form>`)}`],
-    ['templates', 'Templates', card('Fixed-format CSV templates', html`
-      <p class="muted" style="margin-top:0">Prefer exact templates over auto-mapping? The strict importers for properties, floorplans and units live here.</p>
-      <a class="btn btn-ghost" href="/setup/import/legacy">Open template importers</a>`)],
-  ];
 
   return html`
+    ${anyFileCard(ctx, props)}
+    ${leasePdfLaneCard(ctx, props)}
+    ${card('Opening bank balance', html`
+      <p class="muted" style="margin-top:0">Your operating account balance on the switch date — one number, no file.</p>
+      <form method="post" action="/setup/import/bank-balance">
+        <div class="form-grid">
+          ${field('Property', props.length ? select('property', props.map((p) => [p.id, p.name] as [string, Child]), '', { required: true }) : html`<span class="muted">Import properties first.</span>`)}
+          ${field('Balance (USD)', input('amount', { placeholder: '25000.00', required: true }))}
+          ${field('As of', input('as_of', { type: 'date', value: ctx.businessDate }))}
+        </div>
+        <div class="wiz-actions"><button class="btn" ${props.length ? '' : 'disabled'}>Post opening balance</button></div>
+      </form>`)}
     ${when(history.length, () => card('Uploads', tbl(
-      [{ label: 'File' }, { label: 'Type' }, { label: 'Uploaded' }, { label: 'Status' }, { label: 'Result' }, { label: '' }],
+      [{ label: 'File' }, { label: 'Read as' }, { label: 'Uploaded' }, { label: 'Status' }, { label: 'Result' }, { label: '' }],
       history.map((b) => {
         const s = b.summary ? j<Partial<import('./import_apply.ts').ApplySummary>>(b.summary, {}) : null;
+        const cls = j<Mapping & { classification?: DocClassification }>(b.mapping, { cols: {}, preset: null, aiAssisted: [] }).classification;
         const result = b.status === 'applied'
           ? (s ? summaryBits(s).slice(0, 4).join(' · ') || 'Applied' : 'Applied') + (s?.skipped ? ` · ${s.skipped} skipped` : '')
-          : b.status === 'staged' ? `${j<string[][]>(b.rows, []).length} rows awaiting review` : '—';
+          : b.status === 'staged' ? `${j<string[][]>(b.rows, []).length} rows awaiting review`
+          : b.kind === 'unknown' ? 'Not imported — StayLeased does not read this report' : '—';
         const href = b.kind === 'lease_pdf'
           ? (b.status === 'staged' ? `/setup/import/leases/${b.id}` : null)
           : `/setup/import/b/${b.id}`;
@@ -784,9 +815,10 @@ export function importSections(rq: Rq): Raw {
           html`<b>${b.filename || '(pasted)'}</b>${b.source_file_id
             ? html`<span class="sub"><a href="/f/${b.source_file_id}" target="_blank" rel="noopener">Open the original</a></span>`
             : b.kind === 'lease_pdf' ? raw('') : html`<span class="sub muted">original not on file</span>`}`,
-          KINDS.find((k) => k.key === b.kind)?.label || (b.kind === 'lease_pdf' ? 'Lease PDFs' : b.kind),
+          cls?.report || KINDS.find((k) => k.key === b.kind)?.label || (b.kind === 'lease_pdf' ? 'Lease PDFs' : b.kind),
           fmtDate(b.created_at.slice(0, 10)),
-          statusBadge(b.status === 'applied' ? 'ok' : b.status === 'staged' ? 'pending' : 'error', b.status === 'applied' ? 'Applied' : b.status === 'staged' ? 'Staged' : 'Discarded'),
+          statusBadge(b.status === 'applied' ? 'ok' : b.status === 'staged' ? 'pending' : 'error',
+            b.status === 'applied' ? 'Applied' : b.status === 'staged' ? 'Staged' : b.kind === 'unknown' ? 'Kept' : 'Discarded'),
           html`<span class="muted small">${result}</span>`,
           html`<div class="btn-row" style="gap:6px;flex-wrap:nowrap;justify-content:flex-end">
             ${href ? html`<a class="btn btn-ghost" href="${href}">${b.status === 'staged' ? 'Review' : 'View'}</a>` : raw('')}
@@ -797,8 +829,8 @@ export function importSections(rq: Rq): Raw {
       { empty: '' },
     ), { flush: true }))}
     ${when(history.length && props.length, () => html`<p class="muted small" style="margin:-4px 0 12px 2px">Imported into the wrong place? <a href="/properties">Remove the property and start over →</a></p>`)}
-    <div class="tabs">${lanes.map(([key, label]) => html`<a href="/setup?tab=${key}#upload" class="${key === tab ? 'active' : ''}">${label}</a>`)}</div>
-    ${(lanes.find(([key]) => key === tab) || lanes[0]!)[2]}`;
+    ${docsChecklist(true)}
+    <p class="muted small" style="margin:10px 0 0 2px">Prefer exact templates over reading? <a href="/setup/import/legacy">Fixed-format CSV importers</a> · <a href="/setup/import/template?kind=rent_roll">blank rent-roll template</a></p>`;
 }
 
 // ---------- read-only record for applied/discarded batches ----------
@@ -848,6 +880,74 @@ function sourceDocCard(batch: BatchRow & { created_at?: string }): Raw {
   </div>`);
 }
 
+
+/** What the reader made of the document, in the operator's language.
+ *
+ * This is the first thing on the review screen, where a column-mapping table
+ * used to be. Mapping is machinery: it answers "which spreadsheet column went
+ * where", a question nobody asked. What the operator needs to confirm is
+ * "you read my file as X and you are about to create Y" — so that is what is
+ * said, and the mapping stays one click away for when something looks wrong. */
+function readCard(batch: BatchRow, validation?: Validation): Raw {
+  const mapping = j<Mapping & { classification?: DocClassification }>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] });
+  const cls = mapping.classification;
+  const rows = j<string[][]>(batch.rows, []).length;
+  const kindLabel = KINDS.find((k) => k.key === batch.kind)?.label || String(batch.kind);
+  const reader = mapping.reader === 'ai' ? 'read by AI' : cls?.by === 'ai' ? 'identified by AI' : 'read from the file';
+
+  return card('What StayLeased read', html`
+    <div class="readcard">
+      <div class="rc-line"><span class="rc-key">Document</span>
+        <b>${cls?.report || kindLabel}</b>${cls?.system ? html` <span class="pill">${cls.system} export</span>` : raw('')}
+        <span class="pill">${reader}</span>
+        ${when(!cls?.supported && batch.kind !== 'unknown', () => html`<span class="pill">check this</span>`)}</div>
+      ${when(!!cls?.why, () => html`<div class="rc-line"><span class="rc-key">Why</span> ${cls!.why}</div>`)}
+      ${when(!!mapping.sourceProperty?.name, () => html`<div class="rc-line"><span class="rc-key">Property</span> ${mapping.sourceProperty!.name}${mapping.sourceProperty!.code ? ` (${mapping.sourceProperty!.code})` : ''}</div>`)}
+      <div class="rc-line"><span class="rc-key">Contains</span> ${String(rows)} data row${rows === 1 ? '' : 's'}${validation ? ` · ${validation.ok + validation.warn} ready to import${validation.error ? `, ${validation.error} that cannot be read` : ''}` : ''}</div>
+      ${when(mapping.aiAssisted.length > 0, () => html`<div class="rc-line"><span class="rc-key">Check</span> the AI filled in ${mapping.aiAssisted.join(', ')} — worth a look below.</div>`)}
+      ${when(!!(mapping.notes || []).length, () => html`<div class="rc-line"><span class="rc-key">Notes</span> ${(mapping.notes || []).join(' ')}</div>`)}
+    </div>
+  `);
+}
+
+/** The record for a document we identified but do not import. */
+function unknownPage(rq: Rq, batch: BatchRow & { created_at?: string }): ReturnType<typeof shell> {
+  const mapping = j<Mapping & { classification?: DocClassification }>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] });
+  const cls = mapping.classification;
+  return shell(rq, {
+    title: cls?.report || 'Unrecognized document',
+    active: '/setup',
+    crumbs: [['Setup', '/setup'], ['Uploads', '/setup#upload'], ['Document']],
+    subtitle: batch.filename || 'upload',
+    actions: openOriginal(batch),
+    content: html`
+      ${card('What this is', html`
+        <div class="readcard">
+          <div class="rc-line"><span class="rc-key">Document</span> <b>${cls?.report || 'Unrecognized'}</b>${cls?.system ? html` <span class="pill">${cls.system} export</span>` : raw('')}</div>
+          ${when(!!cls?.why, () => html`<div class="rc-line"><span class="rc-key">Why</span> ${cls!.why}</div>`)}
+        </div>
+        <div class="callout info" style="margin-bottom:0">
+          <b>Nothing was imported from this file.</b> StayLeased builds a portfolio from rent rolls, resident
+          directories, balances owed, vendor lists and signed leases — this report carries none of those.
+          ${cls?.wouldUnlock ? html` If it were supported it would add ${cls.wouldUnlock}.` : raw('')}
+          The file itself is kept, so nothing is lost.
+        </div>
+      `)}
+      ${card('What to send instead', html`
+        <p class="muted" style="margin-top:0">From the same system, these are the exports StayLeased reads:</p>
+        <ul class="tight-list">
+          <li><b>Rent Roll</b> (or Rent Roll with Lease Charges) — builds properties, units, residents, leases, rents, deposits and balances in one file.</li>
+          <li><b>Resident Directory</b> — emails and phones for people already on leases.</li>
+          <li><b>Aged Receivables</b> — what residents owe as of your switch date.</li>
+          <li><b>Vendor list</b> — who you dispatch work to.</li>
+          <li><b>Signed lease PDFs</b> — the documents themselves, read page by page.</li>
+        </ul>
+        <div class="btn-row"><a class="btn" href="/setup#upload">Upload another file</a>
+          <a class="btn btn-ghost" href="/setup/import/b/${batch.id}/remove">Remove this upload</a></div>
+      `)}`,
+  });
+}
+
 function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?: string | null; summary?: string | null }): ReturnType<typeof shell> {
   const headers = j<string[]>(batch.headers, []);
   const rows = j<string[][]>(batch.rows, []);
@@ -865,6 +965,7 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
     subtitle: `${KINDS.find((k) => k.key === kind)?.label || kind} · uploaded ${fmtDate((batch as { created_at?: string }).created_at?.slice(0, 10) || batch.as_of || '')}`,
     actions: openOriginal(batch),
     content: html`
+      ${readCard(batch)}
       ${sourceDocCard(batch)}
       ${card(null, html`
         <div class="btn-row" style="align-items:center;gap:10px">
@@ -991,23 +1092,22 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
     title: `Review import — ${batch.filename || 'upload'}`,
     active: '/setup/import',
     crumbs: [['Setup', '/setup'], ['Uploads', '/setup#upload'], ['Review']],
-    subtitle: `${rows.length} data row${rows.length === 1 ? '' : 's'} · ${KINDS.find((k) => k.key === kind)?.label || kind}${preset ? ` · detected ${preset.name} format` : ''}`,
+    subtitle: `${rows.length} data row${rows.length === 1 ? '' : 's'} · nothing is created until you apply`,
     actions: openOriginal(batch),
     content: html`
       ${when(validation.blockers.length, () => html`<div class="callout bad"><b>Before you can apply:</b> ${validation.blockers.join(' ')}</div>`)}
+      ${readCard(batch, validation)}
       ${sourceDocCard(batch)}
       ${when(!!validation.recon, () => reconStrip(validation.recon!, false))}
       ${willNotImportCard(validation)}
       ${setAsideCard(j<Mapping>(batch.mapping, { cols: {}, preset: null, aiAssisted: [] }))}
       ${when(!!validation.duplicateGuard, () => html`<div class="callout bad"><b>Hold on — this looks like it would duplicate residents.</b> ${validation.duplicateGuard!.message}</div>`)}
-      ${when(!!preset, () => html`<div class="callout info">Recognized a <b>${preset!.name}</b> export — its columns were pre-mapped. Adjust anything below.</div>`)}
-      ${when(mapping.reader === 'ai', () => html`<div class="callout info"><b>Read by AI.</b> The model read the whole document — header, columns, section labels and summary rows. ${(mapping.notes || []).join(' ')} Everything below is already pre-filled from that read — this screen is verification, not data entry. Nothing imports until you apply.</div>`)}
-      ${when(mapping.reader !== 'ai' && !!(mapping.notes || []).length, () => html`<div class="callout info">${(mapping.notes || []).join(' ')}</div>`)}
-      ${when(mapping.aiAssisted.length, () => html`<div class="callout info">AI assist mapped: ${mapping.aiAssisted.join(', ')} — double-check those selects below.</div>`)}
 
       <form method="post" action="/setup/import/b/${batch.id}/mapping">
-      ${card('1 · Column mapping', html`
-        <p class="muted small" style="margin-top:0">${String(headers.filter((_, i) => mapping.cols[i]).length)} of ${String(headers.length)} columns mapped automatically${mapping.reader === 'ai' ? ' by the AI read' : preset ? ` from the ${preset.name} format` : ''} — adjust anything, then re-check.</p>
+      ${card(null, html`
+        <details class="mapping-details">
+        <summary>Show how the columns were matched${mapping.reader === 'ai' ? ' by the AI' : preset ? ` from the ${preset.name} format` : ''} — ${String(headers.filter((_, i) => mapping.cols[i]).length)} of ${String(headers.length)} columns</summary>
+        <p class="muted small">Only needed when something above looks wrong. Change anything here and re-check.</p>
         ${tbl(
           [{ label: 'Your column' }, { label: 'Sample values' }, { label: 'Maps to' }, { label: '' }],
           headers.map((h, i) => ({ cells: [
@@ -1030,10 +1130,11 @@ function reviewPage(rq: Rq, batch: BatchRow): ReturnType<typeof shell> {
           ${field('As-of (switch) date', input('as_of', { type: 'date', value: batch.as_of || ctx.businessDate }), 'Balances post this date; billing starts the following month.')}
         </div>
         <div class="wiz-actions"><button class="btn btn-ghost" type="submit">Re-check with this mapping</button></div>
+        </details>
       `)}
       </form>
 
-      ${card('2 · Preview', html`
+      ${card('What will be imported', html`
         <div class="btn-row" style="margin-bottom:10px">
           ${statusBadge('ok', `${validation.ok} ready`)}
           ${validation.warn ? statusBadge('pending', `${validation.warn} with warnings (will import)`) : ''}

@@ -99,16 +99,17 @@ test('gate: rent-roll xlsx → auto-map → review → apply builds the portfoli
   const page = await newPage(browser);
   await login(page, base, 'casey@newco.test', 'longpassword1');
   await page.goto(`${base}/setup/import`, { waitUntil: 'networkidle' });
-  assert.match(await page.content(), /Upload your rent roll/);
+  assert.match(await page.content(), /Upload anything from your old system/);
 
   await page.setInputFiles('input[name=file]', XLSX_PATH);
   await page.check('input[name=prop_mode][value=new]');
   await page.fill('input[name=new_property]', 'Bayview Flats');
-  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & map columns")')]);
+  await Promise.all([page.waitForLoadState('networkidle'), page.click('button:has-text("Upload & read it")')]);
 
   assert.match(page.url(), /\/setup\/import\/b\/imp/, 'should land on the review page');
   const review = await page.content();
-  assert.match(review, /Column mapping/);
+  assert.match(review, /What StayLeased read/);
+  assert.match(review, /Show how the columns were matched/, 'the mapping is still reachable');
   assert.match(review, /2 ready|3 ready/); // vacant row + 2 occupied (some may warn)
   // auto-mapping picked the right targets
   const unitSel = await page.locator('select[name=map_0]').inputValue();

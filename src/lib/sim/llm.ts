@@ -120,7 +120,7 @@ export function makeAnthropicLlm(apiKey: string): LlmProvider {
 import { request as httpsRequest } from 'node:https';
 
 const API_KEY = process.env.ANTHROPIC_API_KEY || env('LLM_KEY') || '';
-export const AI_MODEL = process.env.STAYLEASED_AI_MODEL || 'claude-opus-4-8';
+export const AI_MODEL = process.env.STAYLEASED_AI_MODEL || 'claude-opus-5';
 const TOKENS_PER_CALL_CAP = Math.max(64, parseInt(process.env.STAYLEASED_AI_MAX_TOKENS || '700', 10) || 700);
 // structured document extraction (rent-roll PDFs, reading plans) needs far
 // more output room than a chat reply; still bounded, still under the daily cap

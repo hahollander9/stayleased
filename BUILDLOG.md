@@ -1399,3 +1399,43 @@ publishing nothing rather than the placeholder, the readiness item naming the bu
 document-supplied address end to end including the no-overwrite and unreadable paths. Seven
 existing pins named the retired page or its copy and now assert the merged hub.
 Gates: tsc clean · 418/418 unit · full e2e.
+
+## 2026-08-19 — Drop anything: the software works out what the document is
+
+Henry's report, on the Orchard East migration: *"i dont want column mapping, i want AI to read the
+documents i upload and reason and put it in that way."* Fair. The AI was already reading the
+whole grid (`aiPlanSpreadsheet` plans header, columns, sections, charge codes) — but the
+operator still had to pick a lane before uploading and then confirm a column-mapping table
+afterwards, which is the software delegating its own work twice.
+
+**One dropzone.** `Upload anything from your old system` takes Excel, CSV or PDF with no type
+chosen. New `setup/ai_classify.ts` answers "what is this?" two ways: **signatures** — these
+reports print their own names (`Rent Roll with Lease Charges`, `Aged Receivables`, `Resident
+Directory`, `Box Score Summary`), and bare CSVs are recognised by column vocabulary — then
+**the model**, for anything the signatures do not settle. A document that names itself needs
+no model call at all, which means the common case is instant, free, and works with the API
+key absent. The lanes survive behind "Or choose the type yourself" for anyone who wants to
+force one; an explicit choice always wins.
+
+**Reports we cannot import are named, not rejected.** Yardi offers ~40 exports and StayLeased
+builds from five. A Box Score, Traffic Sheet, Unit Availability or Prospect Ledger now lands
+on its own page: what it is, that nothing was imported, what it *would* unlock, and which
+exports to send instead — with the file kept. The alternative, forcing an unrecognised report
+into the nearest lane, writes garbage into a real book; that is the one outcome worse than
+not importing it.
+
+**The review screen leads with meaning.** `What StayLeased read` states the document, why it
+was identified that way, the property it names, and what it contains — the operator confirms
+a *reading*, not a spreadsheet. The column mapping moved into `Show how the columns were
+matched`, one click away for when a number looks wrong. Two contradictions went with it: the
+page used to announce a "Buildium format" (a column-preset match) beside the classifier's own
+answer, and printed the property-detection note twice.
+
+Also: the live model default moves to `claude-opus-5` (`STAYLEASED_AI_MODEL` still overrides).
+
+Tests: `tests/ai_classify.test.ts` (8) — banner reads, the real Yardi fixtures, every
+supported lane by its printed report name, the refusal set, bare-CSV vocabulary, source-system
+naming, and an honest unknown with the AI off. `tests/import_auto.test.ts` (5) — a rent roll
+routing itself, a directory routing itself, an unimportable report kept and explained with
+nothing built, an explicit lane still winning, and the hub's single dropzone.
+Gates: tsc clean · 431/431 unit · full e2e.
