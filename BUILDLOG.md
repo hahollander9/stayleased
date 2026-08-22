@@ -1511,3 +1511,71 @@ suites at HEAD and at the previous commit in one container settled it: golden pa
 vs 62.6s, the ledger gate at 12.2s vs 12.7s. The commit adds nothing; the runner was slow.
 Recorded rather than retried-away, because the fragility is real — golden path 4 spends half
 its click budget on a green run, so a slow runner will red it again.
+
+## 2026-08-19 — One file, everything in it: the reader stops picking a lane
+
+Henry: *"i want stayleased to be able to read any kind of file from any system not just
+yardi with AI for all and input what needs to be included so its functional."*
+
+The Migration Center was LANE-SHAPED. Four importers, and the reader's whole job was to pick
+one of them. That shape had two failures, and the second is the one that was quietly costing
+data.
+
+**It only knew the systems we taught it.** Recognition was a list of report titles — "Rent
+Roll with Lease Charges", "Aged Receivables" — which is a list of the reports *Yardi* prints.
+A RealPage "Unit Status", an Entrata resident export, a spreadsheet somebody keeps by hand:
+none of them say any of those words, so all of them came back `unknown`.
+
+**And a file carrying two kinds of data had to throw one away.** Most systems do not export
+one entity per report. A rent roll carries units AND tenancies AND resident contacts AND
+deposits. Picking a lane meant discarding the rest — not refusing it, not reporting it,
+discarding it, with no line on any screen saying so.
+
+New `setup/extract.ts` reads for MEANING and returns every stream it finds. A document is no
+longer "a rent roll"; it is a grid that happens to carry four entities, each extracted on its
+own terms. The printed title is used only to NAME the document back to the operator, never to
+decide what it holds. The trust boundary is unchanged: the model returns a description of the
+grid and deterministic code executes it through the same validators, review screen and
+transactional apply — `validateRead` drops a column index the grid does not have, a field key
+no applier knows, a stream with nothing to key its rows on, and a rent code the file never
+mentions, and resolves every echoed string back to its full cell (the
+"Livingston Place at Souther" defence). Seventeen tests cover exactly those refusals.
+
+Each extra stream now lands as its own staged batch against the same original document, and
+the review screen grew **"The rest of this file"** — what else the upload turned out to hold,
+each part reviewed and applied on its own, with the dependency order stated (a directory or a
+balance list has nothing to attach to until the rent roll has built the units).
+
+**A fifth lane: security deposits.** Prompted by Henry's own Security Deposit Activity export.
+A rent roll carries one deposit figure — what is HELD — so a household billed $3,165 that paid
+$633 is indistinguishable from one that paid in full. His file carries $6,138.95 of deposit
+billed and never collected across 18 current residents, and $2,511 forfeited. New
+`deposit_positions` table, `validateDeposits`/`applyDeposits`, and the shortfall surfaced on
+the setup hub as money owed. Deliberately posts NOTHING to the books: these rows record what
+the previous system said its position was, and inventing journal entries from another system's
+report is how a migration bills somebody twice.
+
+Two real defects found while building, both by tests rather than by reading:
+
+- **The reversal destroyed real deposits.** `applyDeposits` fills `leases.deposit_cents` only
+  where a lease carries none (#81), and the reversal put it back by matching on the amount.
+  But a lease that already held the same figure matches too — so removing the upload zeroed a
+  deposit the import had never written. Value is not provenance: the position row now carries
+  `filled_lease`, and only rows that actually wrote are restored.
+- **The shortfall column never mapped.** On a real Yardi deposit report the two header rows
+  are `Prior Deposit / Billed`, `Deposits / On Hand`, `(Prpd)/Delnq / Deposits` — and every
+  word the column vocabulary knows sits on the SECOND row. `findHeaderRow` therefore picked
+  the continuation row and merged it with the first row of DATA, losing `(Prpd)/Delnq
+  Deposits` entirely: the lane would have imported, tied out, and carried none of the money it
+  exists to find. New `resolveStackedHeader` tries the merge in both directions and keeps
+  whichever maps more fields. On Henry's real file that is the difference between 4 fields and
+  all 7.
+
+Verified in a browser at 1440 and 390. One finding worth recording and NOT fixed here: every
+page in the app overflows horizontally on a 390px viewport (scrollWidth 652), and the
+offenders are the header's `.searchbtn` and `.askbtn` — the dashboard does it identically, so
+it predates this build and belongs to the app shell, not to these cards.
+
+Gates: `tsc --noEmit` clean · unit 468/468 · seeded e2e setup·clientready·workingmodel·
+goldenpath·smoke 30/30. `tests/ai_classify.test.ts` pin updated in this commit: "Security
+Deposit Activity" is no longer in the refused list, because it now has a lane.

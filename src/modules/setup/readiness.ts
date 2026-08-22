@@ -63,6 +63,12 @@ export function readinessItems(ctx: Ctx): ReadyItem[] {
   const openingBalances = n(`SELECT COUNT(*) FROM charges WHERE org_id=? AND kind='opening_balance'`, o);
   const depositsHeld = n(
     `SELECT COUNT(*) FROM leases WHERE org_id=? AND status IN ('active','month_to_month','notice') AND deposit_cents > 0`, o);
+  // Deposits BILLED and never collected, carried in from a deposit report.
+  // This is money the operator is owed and has no other way to see: a rent
+  // roll shows one deposit figure — what is held — so a household that paid a
+  // fifth of its deposit looks exactly like one that paid in full.
+  const depositShortRows = n('SELECT COUNT(*) FROM deposit_positions WHERE org_id=? AND short_cents > 0', o);
+  const depositShortCents = n('SELECT COALESCE(SUM(short_cents),0) FROM deposit_positions WHERE org_id=? AND short_cents > 0', o);
   // the specific entry postBankOpeningBalance writes — NOT "any conversion
   // entry", which would report the bank balance as posted for an org that only
   // carried over what residents owe
@@ -149,9 +155,12 @@ export function readinessItems(ctx: Ctx): ReadyItem[] {
       optional: true,
       status: depositsHeld > 0
         ? `${depositsHeld} lease${depositsHeld === 1 ? '' : 's'} record a deposit held`
+          + (depositShortRows
+            ? ` · ${depositShortRows} household${depositShortRows === 1 ? '' : 's'} still owe $${(depositShortCents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} of deposit`
+            : '')
         : 'No deposits recorded against leases.',
-      unlocks: 'Move-out accounting that knows what to return, and a deposit liability your books actually carry.',
-      links: [['/setup/import?tab=rentroll', 'Include deposits in the rent roll'], ['/deposits', 'Review deposits']],
+      unlocks: 'Move-out accounting that knows what to return, a deposit liability your books actually carry, and the deposits residents were billed but never paid.',
+      links: [['/setup#upload', 'Upload a deposit report'], ['/deposits', 'Review deposits']],
     },
     {
       key: 'bank',

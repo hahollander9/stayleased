@@ -37,12 +37,13 @@ export interface ReverseCounts {
   portalLogins: number;
   /** existing residents whose imported email/phone were put back to empty */
   contactRestores: number;
+  /** deposit positions carried in from a deposit report */
+  depositPositions: number;
 }
 
 const ZERO: ReverseCounts = {
   properties: 0, units: 0, floorplans: 0, leases: 0, residents: 0, vendors: 0,
-  charges: 0, journalEntries: 0, portalLogins: 0, contactRestores: 0,
-};
+  charges: 0, journalEntries: 0, portalLogins: 0, contactRestores: 0, depositPositions: 0 };
 
 function countStamped(orgId: string, table: string, batchId: string): number {
   return val<number>(`SELECT COUNT(*) FROM ${table} WHERE org_id=? AND import_batch_id=?`, orgId, batchId) || 0;
@@ -87,6 +88,7 @@ export function importFootprint(ctx: Ctx, batch: BatchRow & { summary?: string |
     floorplans: countStamped(o, 'floorplans', b),
     leases: countStamped(o, 'leases', b),
     residents: countStamped(o, 'residents', b),
+    depositPositions: countStamped(o, 'deposit_positions', b),
     vendors: countStamped(o, 'vendors', b),
     charges: countStamped(o, 'charges', b),
     journalEntries: countStamped(o, 'journal_entries', b),
@@ -192,6 +194,22 @@ export function reverseImport(ctx: Ctx, batch: BatchRow & { summary?: string | n
       del('sessions', 'user_id=?', r.user_id);
       counts.portalLogins += del('users', 'id=? AND org_id=? AND import_batch_id=?', r.user_id, o, b);
     }
+
+    // Deposit positions, and the held figures they filled in.
+    //
+    // Restored by PROVENANCE, never by value. applyDeposits stamps
+    // `filled_lease` on the rows where it actually wrote a deposit onto an
+    // empty lease, and only those are put back — a lease that already carried
+    // the same figure before the import must keep it. Matching on the amount
+    // instead cannot tell those cases apart, and gets it wrong in the
+    // direction that destroys a real deposit.
+    for (const dp of q<{ lease_id: string | null; held_cents: number }>(
+      'SELECT lease_id, held_cents FROM deposit_positions WHERE org_id=? AND import_batch_id=? AND filled_lease=1', o, b,
+    )) {
+      if (!dp.lease_id) continue;
+      run('UPDATE leases SET deposit_cents=0 WHERE id=? AND org_id=? AND deposit_cents=?', dp.lease_id, o, dp.held_cents);
+    }
+    counts.depositPositions = del('deposit_positions', 'org_id=? AND import_batch_id=?', o, b);
 
     counts.units = del('units', 'org_id=? AND import_batch_id=?', o, b);
     counts.floorplans = del('floorplans', 'org_id=? AND import_batch_id=?', o, b);

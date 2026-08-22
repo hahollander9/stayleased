@@ -70,9 +70,11 @@ const SIGNATURES: Signature[] = [
   // ---- vendors ----
   { title: /vendor\s*(list|directory|ledger)/i, kind: 'vendors', report: 'Vendor List' },
 
+  // ---- deposits ----
+  { title: /security\s*deposit\s*(activity|summary|register|report)/i, kind: 'deposits', report: 'Security Deposit Activity' },
+  { title: /deposit\s*(activity|register|ledger|summary)/i, kind: 'deposits', report: 'Deposit Activity' },
+
   // ---- recognised, no importer yet: named honestly rather than mis-read ----
-  { title: /security\s*deposit\s*activity/i, kind: 'unknown', report: 'Security Deposit Activity',
-    unlocks: 'a deposit-by-deposit history; deposits held already arrive with the rent roll' },
   { title: /unit\s*availability(\s*details?)?/i, kind: 'unknown', report: 'Unit Availability',
     unlocks: 'make-ready dates and availability beyond what the rent roll carries' },
   { title: /unit\s*directory/i, kind: 'unknown', report: 'Unit Directory',
@@ -125,6 +127,17 @@ const VOCAB: Vocab[] = [
     [/(aging|0\s*-\s*30|31\s*-\s*60|61\s*-\s*90|90\+)/i, 2],
     [/(lease\s*(from|to)|move.?in)/i, -1],
   ] },
+  { kind: 'deposits', report: 'Deposit report', signals: [
+    // the shortfall column is what makes a deposit report a deposit report —
+    // a rent roll has a deposit column too, and must not be caught here
+    [/(delnq|delinquent)\s*deposit|deposit.*(delnq|delinquent)|prpd/i, 4],
+    [/deposit.*(on\s*hand|held|billed|forfeit)/i, 3],
+    [/(on\s*hand|forfeit)/i, 2],
+    [/deposit/i, 1],
+    [/^unit/i, 1],
+    [/(^rent$|market\s*rent|lease\s*(from|to|start|end))/i, -3],
+    [/(trade|category|specialty)/i, -3],
+  ] },
   { kind: 'vendors', report: 'Vendor list', signals: [
     [/(vendor|payee|supplier|contractor)/i, 3], [/(trade|category|specialty|service)/i, 2],
     [/(company|business)/i, 2], [/(phone|e.?mail|address|contact)/i, 1],
@@ -148,7 +161,7 @@ function scoreVocab(header: string[]): { v: Vocab; score: number; hits: string[]
   }).sort((a, b) => b.score - a.score);
 }
 
-const SUPPORTED = new Set<DocKind>(['rent_roll', 'residents', 'balances', 'vendors', 'lease_pdf']);
+const SUPPORTED = new Set<DocKind>(['rent_roll', 'residents', 'balances', 'vendors', 'deposits', 'lease_pdf']);
 
 function bannerOf(rows: string[][]): string {
   // report titles live in the first few rows, above the column headers

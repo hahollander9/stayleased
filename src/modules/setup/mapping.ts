@@ -7,7 +7,7 @@
  * system, and (when the live AI brain is configured) an LLM assist for the
  * stragglers. Humans confirm the mapping before anything is written. */
 
-export type ImportKind = 'rent_roll' | 'vendors' | 'residents' | 'balances';
+export type ImportKind = 'rent_roll' | 'vendors' | 'residents' | 'balances' | 'deposits';
 
 export interface FieldDef {
   key: string;
@@ -75,8 +75,68 @@ export const BALANCE_FIELDS: FieldDef[] = [
   { key: 'balance', label: 'Balance owed', required: true, synonyms: ['balance', 'balance due', 'amount', 'amount owed', 'past due', 'total due', 'open balance'], contains: ['balance', 'due', 'amount'] },
 ];
 
+/** Security-deposit positions.
+ *
+ * A deposit report is the only place the SHORTFALL is visible: the deposit a
+ * resident was charged, against what they actually paid. A rent roll carries
+ * `deposit` — one number, what is held — and so it cannot show that a current
+ * resident was billed $3,165 and paid $633. That gap is collectible money the
+ * operator has no other way to see, which is the whole reason this lane exists. */
+export const DEPOSIT_FIELDS: FieldDef[] = [
+  { key: 'unit', label: 'Unit number', required: true, synonyms: ['unit', 'unit number', 'apt', 'apartment', 'unit no'], contains: ['unit'] },
+  { key: 'tenant', label: 'Resident', synonyms: ['resident', 'tenant', 'name', 'resident name', 'tenant name'], contains: ['resident', 'tenant', 'name'] },
+  { key: 'source_ref', label: 'Resident ID (source system)', hint: 'the id the old system used — kept so its other reports can be tied to the same household', synonyms: ['resident code', 'tenant code', 'resident id', 'tenant id', 'tcode', 't code'], contains: ['code'] },
+  { key: 'deposit_billed', label: 'Deposit billed', synonyms: ['deposit billed', 'prior deposit billed', 'current dep billed', 'deposits billed', 'dep billed', 'amount billed'], contains: ['billed'] },
+  { key: 'deposit_held', label: 'Deposit on hand', synonyms: ['deposits on hand', 'deposit on hand', 'on hand', 'deposit held', 'deposits held', 'balance'], contains: ['on hand', 'held'] },
+  { key: 'deposit_shortfall', label: 'Deposit short (billed, not collected)', hint: 'often printed as "delinquent deposits" or "(prepaid)/delinquent"', synonyms: ['delinquent deposits', 'deposit delinquent', 'prpd delnq deposits', 'delnq deposits', 'deposit due'], contains: ['delnq', 'delinquent'] },
+  { key: 'deposit_forfeited', label: 'Deposit forfeited', synonyms: ['deposits forfeited', 'deposit forfeited', 'forfeited'], contains: ['forfeit'] },
+];
+
+/** Resolve a two-row ("stacked") header into one row of labels.
+ *
+ * Reports print headers across two rows — `Prior Deposit / Billed`,
+ * `Deposits / On Hand` — and which of the two `findHeaderRow` picks depends on
+ * which row happens to carry the words the vocabulary knows. Both outcomes
+ * occur in real exports, so both merges are tried and the one that maps more
+ * fields wins; if neither beats the plain row, the plain row stands.
+ *
+ * Getting this wrong is not cosmetic. On a Yardi deposit report the matcher
+ * lands on the CONTINUATION row, merges it with the first row of DATA, and the
+ * `(Prpd)/Delnq Deposits` column — the shortfall, the one number that report
+ * exists to carry — never maps at all. */
+export function resolveStackedHeader(
+  rows: string[][],
+  headerIdx: number,
+  kind: ImportKind,
+): { headers: string[]; consumesNextRow: boolean } {
+  const plain = (rows[headerIdx] || []).map((h) => String(h));
+  const below = rows.slice(headerIdx + 1).filter((r) => r.some((c) => String(c).trim() !== ''));
+  const count = (headers: string[], sample: string[][]): number =>
+    Object.values(autoMap(headers, kind, sample).cols).filter(Boolean).length;
+
+  let best = { headers: plain, consumesNextRow: false, score: count(plain, below.slice(0, 8)) };
+
+  const down = mergeStackedHeader(plain, rows[headerIdx + 1]);
+  if (down.merged) {
+    const s = count(down.headers, below.slice(1, 9));
+    if (s > best.score) best = { headers: down.headers, consumesNextRow: true, score: s };
+  }
+  if (headerIdx > 0 && !best.consumesNextRow) {
+    const up = mergeStackedHeader((rows[headerIdx - 1] || []).map((h) => String(h)), rows[headerIdx]);
+    if (up.merged) {
+      const s = count(up.headers, below.slice(0, 8));
+      if (s > best.score) best = { headers: up.headers, consumesNextRow: false, score: s };
+    }
+  }
+  return { headers: best.headers, consumesNextRow: best.consumesNextRow };
+}
+
 export function fieldsFor(kind: ImportKind): FieldDef[] {
-  return kind === 'vendors' ? VENDOR_FIELDS : kind === 'residents' ? RESIDENT_FIELDS : kind === 'balances' ? BALANCE_FIELDS : RENT_ROLL_FIELDS;
+  return kind === 'vendors' ? VENDOR_FIELDS
+    : kind === 'residents' ? RESIDENT_FIELDS
+    : kind === 'balances' ? BALANCE_FIELDS
+    : kind === 'deposits' ? DEPOSIT_FIELDS
+    : RENT_ROLL_FIELDS;
 }
 
 // ---------- competitor presets (header signatures → instant mapping) ----------
@@ -159,6 +219,12 @@ export interface Mapping {
   sourceProperty?: PropertyBanner;
   /** every charge code the file used and what the reader decided it means */
   codeNature?: Record<string, ChargeNature>;
+  /** other batches cut from the same upload (one file, several kinds of data) */
+  siblings?: { id: string; kind: string; rows: number }[];
+  /** data the reader found and understood that no importer can store yet —
+   * named on screen rather than dropped, because "we read it and cannot keep
+   * it" is a true sentence an operator can act on and silence is not */
+  alsoFound?: { what: string; unlocks: string }[];
 }
 
 /** Score a header against a field. exact synonym 3 · contains 2 · fuzzy 1. */
