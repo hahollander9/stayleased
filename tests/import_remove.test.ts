@@ -2,11 +2,11 @@ import { test, before } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { db, q1, insert, val, run, ROOT } from '../src/lib/db.ts';
+import { db, q1, insert, val, run } from '../src/lib/db.ts';
 import { id } from '../src/lib/ids.ts';
 import { nowIso } from '../src/lib/dates.ts';
 import { hashPassword, sysCtx } from '../src/lib/auth.ts';
-import { putFile } from '../src/lib/files.ts';
+import { putFile, filesDir } from '../src/lib/files.ts';
 import { ensureCoa } from '../src/modules/m9_accounting/coa.ts';
 import { trialBalance } from '../src/modules/m9_accounting/service.ts';
 import { autoMap } from '../src/modules/setup/mapping.ts';
@@ -202,7 +202,7 @@ test('removing a lease-PDF upload deletes the stored PDFs — rows and bytes', a
   const pdf = Buffer.from('%PDF-1.4\nfake lease\n%%EOF\n');
   const a = putFile(ctx, pdf, { name: 'lease-a.pdf', mime: 'application/pdf', entity: 'import', visibility: 'staff' });
   const b = putFile(ctx, pdf, { name: 'lease-b.pdf', mime: 'application/pdf', entity: 'import', visibility: 'staff' });
-  const blob = (fid: string): string => join(ROOT, 'data', 'files', fid + '.bin');
+  const blob = (fid: string): string => join(filesDir(), fid + '.bin');
   assert.ok(existsSync(blob(a.id)) && existsSync(blob(b.id)), 'blobs written by putFile');
 
   const batch = mkBatch({
@@ -426,7 +426,7 @@ test('a rent roll imported INTO an existing property removes its rows, not the b
 
 test('the original document is kept on upload, openable from review and record, and removed with the upload', async () => {
   const csv = 'Vendor Name,Trade,Email,Phone\nAce Plumbing,Plumbing,ace@imprm.test,555-0101\nVolt Electric,Electrical,volt@imprm.test,555-0102\n';
-  const blob = (fid: string): string => join(ROOT, 'data', 'files', fid + '.bin');
+  const blob = (fid: string): string => join(filesDir(), fid + '.bin');
 
   const { base, close } = await startTestServer();
   let fileId = '';
