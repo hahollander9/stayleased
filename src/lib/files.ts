@@ -1,8 +1,8 @@
 import { createHash } from 'node:crypto';
 import { writeFileSync, readFileSync, mkdirSync, existsSync, rmSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname } from 'node:path';
 import { insert, q1, run } from './db.ts';
-import { ROOT } from './db.ts';
+import { dbPath } from './db.ts';
 import { id } from './ids.ts';
 import { nowIso } from './dates.ts';
 import type { Ctx } from './auth.ts';
@@ -25,11 +25,30 @@ export interface FileRow {
   created_at: string;
 }
 
-function dir(): string {
-  const d = join(ROOT, 'data', 'files');
+/** Where stored bytes live: **beside the database**, never inside the app.
+ *
+ * This was `ROOT/data/files` — a path relative to the code — while production
+ * points `STAYLEASED_DB` at `/data/stayleased.db` on a Render persistent disk.
+ * The two are different filesystems. The database survived every deploy; the
+ * blobs did not, because Render replaces the container image on each one. So
+ * every uploaded original was destroyed on the next push to main while its
+ * `files` row lived on, and the review screen's "Open the original file"
+ * quietly became "Not on file" — indistinguishable, to the operator, from an
+ * upload that predated originals being kept at all. `render.yaml` already said
+ * it: customer data lives on the disk, not the image. The database honored
+ * that; the file store did not.
+ *
+ * Deriving from `dbPath()` fixes it in the only way that cannot drift: bytes
+ * follow their rows onto whatever disk the database is on. `/data/…` in
+ * production; unchanged (`ROOT/data/files`) for local dev and tests, whose
+ * databases already sit in `data/`. */
+export function filesDir(): string {
+  const d = join(dirname(dbPath()), 'files');
   mkdirSync(d, { recursive: true });
   return d;
 }
+
+const dir = filesDir;
 
 /** The only content types we ever serve inline in the browser. SVG is
  * deliberately absent — it can carry <script>/onload and would execute in the
@@ -188,7 +207,7 @@ export function deleteFiles(fileIds: string[]): number {
 }
 
 /* A global "delete every blob with no row" sweep used to live here. It is
- * unsafe by construction: every database in a checkout shares data/files, so
+ * unsafe by construction: databases in one directory share its file store, so
  * sweeping while pointed at one database unlinks bytes owned by rows in
  * another (verified: running it against a scratch db removed every blob
  * data/e2e.db still referenced). The file store has no database affinity, so
