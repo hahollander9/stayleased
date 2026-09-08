@@ -9,10 +9,9 @@ import { trialBalance } from '../src/modules/m9_accounting/service.ts';
 import { autoMap } from '../src/modules/setup/mapping.ts';
 import { applyRentRoll, type BatchRow } from '../src/modules/setup/import_apply.ts';
 import { clearOrgData, deleteProperty } from '../src/modules/m2_portfolio/service.ts';
-import { putFile } from '../src/lib/files.ts';
+import { putFile, filesDir } from '../src/lib/files.ts';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import { ROOT } from '../src/lib/db.ts';
 import { startTestServer, loginAs, get, post } from './harness.ts';
 
 /** Org-level "clear all portfolio data" — the onboarding loop's reset. Every
@@ -144,7 +143,7 @@ test('clearing purges stored bytes too — not just the rows pointing at them', 
   // a signed lease attached to the property, and a Migration Center upload
   const signed = putFile(ctx, Buffer.from('%PDF-1.4 signed lease'), { name: 'signed.pdf', mime: 'application/pdf', entity: 'lease', entityId: lease.id });
   const upload = putFile(ctx, Buffer.from('%PDF-1.4 uploaded'), { name: 'upload.pdf', mime: 'application/pdf', entity: 'import' });
-  const blob = (fid: string): string => join(ROOT, 'data', 'files', fid + '.bin');
+  const blob = (fid: string): string => join(filesDir(), fid + '.bin');
   assert.ok(existsSync(blob(signed.id)) && existsSync(blob(upload.id)));
 
   clearOrgData(ctx);
@@ -190,7 +189,7 @@ test('deleting a single property takes its stored bytes with it', () => {
   const ctx = sysCtx(orgId, AS_OF);
   const lease = q1<{ id: string }>('SELECT id FROM leases WHERE property_id=?', pid)!;
   const f = putFile(ctx, Buffer.from('%PDF-1.4 lease'), { name: 'lease.pdf', mime: 'application/pdf', entity: 'lease', entityId: lease.id });
-  const blob = join(ROOT, 'data', 'files', f.id + '.bin');
+  const blob = join(filesDir(), f.id + '.bin');
   assert.ok(existsSync(blob));
 
   const { counts } = deleteProperty(ctx, pid);

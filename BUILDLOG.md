@@ -1579,3 +1579,47 @@ it predates this build and belongs to the app shell, not to these cards.
 Gates: `tsc --noEmit` clean · unit 468/468 · seeded e2e setup·clientready·workingmodel·
 goldenpath·smoke 30/30. `tests/ai_classify.test.ts` pin updated in this commit: "Security
 Deposit Activity" is no longer in the refused list, because it now has a lane.
+
+## 2026-08-22 — Uploaded originals were on the wrong disk, and a deploy took them
+
+Henry, looking at a review screen: *"open original file isnt available if the file isnt on the
+computer?"*
+
+The answer to the question as asked is no — an upload is copied into StayLeased's own store and
+served from the server, so the operator's machine stops mattering the moment it lands. But
+checking that turned up why the button really goes quiet, and it is worse.
+
+`files.ts` stored bytes at `join(ROOT, 'data', 'files')` — a path relative to the **code**.
+Production runs `STAYLEASED_DB=/data/stayleased.db` on a Render persistent disk, and the
+Dockerfile's `WORKDIR` is `/app`. Two different filesystems. The database sat on the disk and
+survived; the blobs sat in the container image, and Render replaces that on every deploy. With
+auto-deploy on, **every uploaded original was destroyed by the next push to main**, while its
+`files` row and `import_batches.source_file_id` lived on pointing at nothing.
+
+What kept it quiet is the failure mode, not the failure. `getFile` checks `existsSync` and
+returns null, so a destroyed document renders as "Not on file" — which is exactly how a batch
+uploaded *before* originals were kept renders. There is no error, no log line, and no way for
+the operator to tell a file that was never saved from one that was deleted underneath them. The
+review screen's entire safety argument is "check the read against the source", and the source
+had been silently removed.
+
+`render.yaml` already stated the rule in a comment — *customer data lives on the disk, not the
+image*. The database honored it; the file store never did.
+
+Fixed by deriving the store from the database rather than from the code: `filesDir()` is
+`dirname(dbPath()) + '/files'`. Bytes follow their rows onto whatever disk the rows are on —
+`/data/files` in production, and unchanged at `ROOT/data/files` for local dev and both suites,
+whose databases already live in `data/`. The same literal was duplicated across four test files,
+which is the root-cause class rather than an inconvenience, so they now import the one accessor
+and the assumption exists in a single place.
+
+`tests/files_store.test.ts` pins the invariant as a relationship rather than a path: wherever
+the database is, the bytes are beside it — including the exact production shape, an absolute
+`/data/stayleased.db` resolving to `/data/files`.
+
+**Not recovered, and not recoverable:** anything uploaded to stayleased.com before this ships is
+already gone from any deploy that has happened since. Those batches will show "Not on file" and
+offer to re-attach, which is the honest state and the only one available.
+
+Gates: `tsc --noEmit` clean · unit 472/472 · seeded e2e smoke·setup·portal·clientready·goldenpath
+31/31.

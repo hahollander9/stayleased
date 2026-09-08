@@ -1,4 +1,5 @@
-import { db, q1, insert, ROOT } from '../src/lib/db.ts';
+import { db, q1, insert } from '../src/lib/db.ts';
+import { filesDir } from '../src/lib/files.ts';
 import { id, token } from '../src/lib/ids.ts';
 import { nowIso } from '../src/lib/dates.ts';
 import { hashPassword } from '../src/lib/auth.ts';
@@ -71,8 +72,8 @@ export function fixtureTwoOrgs(): TwoOrgs {
     id: fid, org_id: a.org, name: 'secret-a.txt', mime: 'text/plain', size: 3, sha256: 'x',
     entity: null, entity_id: null, visibility: 'staff', owner_user_id: null, created_by: a.userId, created_at: nowIso(),
   });
-  mkdirSync(join(ROOT, 'data', 'files'), { recursive: true });
-  writeFileSync(join(ROOT, 'data', 'files', fid + '.bin'), 'AAA');
+  mkdirSync(filesDir(), { recursive: true });
+  writeFileSync(join(filesDir(), fid + '.bin'), 'AAA');
   return {
     orgA: a.org, orgB: b.org, propA: a.prop, propB: b.prop,
     adminA: 'admin@iso-a.test', adminB: 'admin@iso-b.test',
