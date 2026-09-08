@@ -116,6 +116,136 @@
     }
   });
 
+  // ---------- sortable tables ----------
+  //
+  // Progressive enhancement over the markup tbl() already emits: no JS and the
+  // table is still a table, just in the order the server chose. A header is a
+  // real <button>, so it is tabbable and announced; aria-sort on the <th>
+  // carries the state to a screen reader.
+  //
+  // Three states per column, because two is a trap: asc, desc, then back to the
+  // order the page shipped. That original order is frequently meaningful — a
+  // ledger is chronological, a queue is prioritized — and a sorter with no way
+  // home silently destroys it until the operator reloads.
+
+  // Read a cell as a value, not as text. Money, percentages, dates and plain
+  // numbers all arrive as strings, and comparing them as strings puts $1,000
+  // before $9 and 10/02 before 9/30. An explicit data-sort on the cell wins,
+  // which is how a column with no readable text can still order itself.
+  function cellValue(td, numeric) {
+    if (!td) return { n: null, s: '' };
+    var explicit = td.getAttribute('data-sort');
+    var raw = explicit !== null ? explicit : (td.textContent || '');
+    var s = raw.replace(/\s+/g, ' ').trim();
+    if (!s || s === '—' || s === '–' || s === '-') return { n: null, s: '' };
+
+    // (1,234.56) is accounting notation for negative
+    var neg = /^\(.*\)$/.test(s);
+    var bare = s.replace(/^\(|\)$/g, '');
+    // strip currency symbols, thousands separators, trailing units
+    var cleaned = bare.replace(/[$£€,\s]/g, '').replace(/%$/, '');
+    if (/^[+-]?\d*\.?\d+$/.test(cleaned)) {
+      var n = parseFloat(cleaned);
+      return { n: neg ? -n : n, s: s.toLowerCase() };
+    }
+    // dates: ISO first (sorts correctly as text anyway, but be explicit), then
+    // anything Date can read. Guarded so "12 units" is not read as a year.
+    if (/^\d{4}-\d{2}-\d{2}/.test(s) || /^[A-Z][a-z]{2} \d{1,2}, \d{4}$/.test(s) || /^\d{1,2}\/\d{1,2}\/\d{2,4}$/.test(s)) {
+      var d = Date.parse(s);
+      if (!isNaN(d)) return { n: d, s: s.toLowerCase() };
+    }
+    // a numeric column whose cell is not a number sorts last, never as 0
+    return { n: numeric ? null : null, s: s.toLowerCase() };
+  }
+
+  function sortTable(table, idx, dir) {
+    var tbody = table.tBodies[0];
+    if (!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.rows);
+    // remember the order the server sent, once, so it can be restored
+    rows.forEach(function (tr, i) {
+      if (tr.getAttribute('data-ord') === null) tr.setAttribute('data-ord', String(i));
+    });
+    if (dir === null) {
+      rows.sort(function (a, b) {
+        return (+a.getAttribute('data-ord')) - (+b.getAttribute('data-ord'));
+      });
+    } else {
+      var th = table.tHead && table.tHead.rows[0] ? table.tHead.rows[0].cells[idx] : null;
+      var numeric = !!(th && th.hasAttribute('data-num'));
+      var sgn = dir === 'desc' ? -1 : 1;
+      rows.sort(function (a, b) {
+        var av = cellValue(a.cells[idx], numeric);
+        var bv = cellValue(b.cells[idx], numeric);
+        // blanks sink to the bottom in both directions: an empty cell is a
+        // missing value, and a missing value is not "the smallest one"
+        var ae = av.n === null && !av.s;
+        var be = bv.n === null && !bv.s;
+        if (ae !== be) return ae ? 1 : -1;
+        var r;
+        if (av.n !== null && bv.n !== null) r = av.n - bv.n;
+        else r = av.s.localeCompare(bv.s, undefined, { numeric: true, sensitivity: 'base' });
+        // stable: equal values keep the order the server chose
+        if (r === 0) return (+a.getAttribute('data-ord')) - (+b.getAttribute('data-ord'));
+        return sgn * r;
+      });
+    }
+    var frag = document.createDocumentFragment();
+    rows.forEach(function (tr) { frag.appendChild(tr); });
+    tbody.appendChild(frag);
+
+    var heads = table.tHead && table.tHead.rows[0] ? table.tHead.rows[0].cells : [];
+    for (var i = 0; i < heads.length; i++) {
+      if (i === idx && dir) heads[i].setAttribute('aria-sort', dir === 'desc' ? 'descending' : 'ascending');
+      else heads[i].removeAttribute('aria-sort');
+    }
+  }
+
+  // A table showing ONE PAGE of a longer list can only order the rows it was
+  // handed. Sorting those and leaving the header looking like every other
+  // sorted column would claim an ordering over the whole list that does not
+  // exist — the reader has no way to know the top row is not the real maximum.
+  // pager() marks itself with data-pages when there is more than one, so the
+  // disclaimer appears exactly where it is true and nowhere else.
+  function scopeNote(table) {
+    var wrap = table.closest('.tbl-wrap');
+    var host = wrap && wrap.parentNode;
+    var pgr = host && host.querySelector ? host.querySelector('.pager[data-pages]') : null;
+    if (!pgr || !host) return;
+    // beside the wrapper, never inside it: .tbl-wrap scrolls horizontally, and
+    // a disclaimer that scrolls out of view with a wide table is not a
+    // disclaimer
+    var note = host.querySelector(':scope > .tbl-scope');
+    if (!note) {
+      note = document.createElement('p');
+      note.className = 'tbl-scope';
+      host.insertBefore(note, wrap.nextSibling);
+    }
+    var rows = table.tBodies[0] ? table.tBodies[0].rows.length : 0;
+    var total = parseInt(pgr.getAttribute('data-total') || '0', 10);
+    note.textContent = 'Sorted the ' + rows + ' rows on this page, not all '
+      + (total ? total.toLocaleString('en-US') : '') + ' records.';
+  }
+  function clearScopeNote(table) {
+    var wrap = table.closest('.tbl-wrap');
+    var host = wrap && wrap.parentNode;
+    var note = host && host.querySelector(':scope > .tbl-scope');
+    if (note) note.remove();
+  }
+
+  document.addEventListener('click', function (e) {
+    var btn = e.target.closest('button[data-sort]');
+    if (!btn) return;
+    var th = btn.closest('th');
+    var table = btn.closest('table[data-sortable]');
+    if (!th || !table) return;
+    var idx = Array.prototype.indexOf.call(th.parentNode.cells, th);
+    var cur = th.getAttribute('aria-sort');
+    var next = cur === 'ascending' ? 'desc' : cur === 'descending' ? null : 'asc';
+    sortTable(table, idx, next);
+    if (next) scopeNote(table); else clearScopeNote(table);
+  });
+
   // auto-submit forms (property switcher, filters)
   document.addEventListener('change', function (e) {
     var f = e.target.closest('form[data-autosubmit]');

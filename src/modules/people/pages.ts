@@ -9,7 +9,7 @@ import { fmtDate, diffDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, select, registerNav, registerSearch,
-  historyPanel, pager, emptyState, input, viewBar, rememberDensity, type Density,
+  historyPanel, pager, emptyState, input, viewBar, rememberDensity, type Density, type Col,
 } from '../../ui/ui.ts';
 import { leaseLedger, leaseBalance } from '../m8_receivables/service.ts';
 
@@ -123,25 +123,6 @@ function residentListRows(ctx: Ctx, rq: Rq): { rows: any[]; sort: ResidentSort |
   return { rows, sort, dir, query };
 }
 
-/** tbl() with per-column aria-sort — same markup/classes as ui.ts tbl()
- * (tbl-wrap, data-href row links, num cells), which cannot carry attributes
- * on a <th>. Kept local to the residents list. */
-function sortableTbl(
-  cols: { label: Child; num?: boolean; ariaSort?: 'ascending' | 'descending' }[],
-  rows: { cells: Child[]; href?: string }[],
-  empty: string,
-  density: Density = 'roomy',
-): Raw {
-  if (!rows.length) return html`<div class="empty"><div class="e-title">${empty}</div></div>`;
-  return html`<div class="tbl-wrap"><table class="tbl ${density === 'tight' ? 'tight' : ''}">
-    <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}" ${c.ariaSort ? raw(`aria-sort="${c.ariaSort}"`) : ''}>${c.label}</th>`)}</tr></thead>
-    <tbody>${rows.map(
-      (row) =>
-        html`<tr ${row.href ? raw(`data-href="${esc(row.href)}" tabindex="0"`) : ''}>${row.cells.map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}">${cell}</td>`)}</tr>`,
-    )}</tbody>
-  </table></div>`;
-}
-
 export function routes(r: Router): void {
   // ---------- residents ----------
   r.get('/residents', requirePerm('residents:view'), (rq) => {
@@ -187,19 +168,23 @@ export function routes(r: Router): void {
       sp.set('dir', sort === key && dir === 'asc' ? 'desc' : 'asc');
       return `/residents?${sp}`;
     };
-    const head = (key: ResidentSort, label: string, num?: boolean): { label: Child; num?: boolean; ariaSort?: 'ascending' | 'descending' } => ({
+    // Server-sorted, because this list is paginated: ordering has to cover all
+    // 366 residents, not the 50 on screen. tbl() renders the header as a link
+    // and stands its in-page sorter down when any column carries an href.
+    const head = (key: ResidentSort, label: string, num?: boolean): Col => ({
       num,
-      ariaSort: sort === key ? (dir === 'asc' ? 'ascending' : 'descending') : undefined,
-      label: html`<a href="${sortHref(key)}">${label}${sort === key ? html`<span aria-hidden="true"> ${dir === 'asc' ? '▲' : '▼'}</span>` : ''}</a>`,
+      label,
+      href: sortHref(key),
+      sorted: sort === key ? dir : undefined,
     });
     const csvSp = new URLSearchParams(rq.query);
     csvSp.delete('page');
     csvSp.delete('per');
     const csvQs = csvSp.toString();
 
-    const peopleTable = (): Raw => sortableTbl(
+    const peopleTable = (): Raw => tbl(
       [head('name', 'Resident'), head('unit', 'Unit'), head('property', 'Property'), head('role', 'On the lease'),
-       { label: 'Lease' }, head('balance', 'Household balance', true)],
+       { label: 'Lease', nosort: true }, head('balance', 'Household balance', true)],
       pageRows.map((x) => {
         const bal = balance(x.lease_id);
         const shared = x.role !== 'primary';
@@ -215,8 +200,7 @@ export function routes(r: Router): void {
           ],
         };
       }),
-      'No residents match.',
-      dens,
+      { empty: 'No residents match.', density: dens },
     );
 
     const householdTable = (): Raw => tbl(
