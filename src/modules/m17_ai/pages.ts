@@ -14,6 +14,10 @@ import { AGENTS, decideAction, autonomyFor, aiEnabled, type AgentKey, type Auton
 import { handleLeadInbound, draftCollectionsOutreach, draftRenewalOutreach, evaluateCounter, triageRequest, setAiHooksLive } from './agents.ts';
 import { analyzeNewCalls, callRollup } from './analysis.ts';
 import { askStayLeased , askSmart , askPanelContext , type AskAnswer } from './ask.ts';
+import { getOp } from './ops.ts';
+import { propose } from './framework.ts';
+import type { PendingAction } from './act.ts';
+import './ops_catalog.ts'; // registers every operation Ask can perform
 import { generateListing, generateTemplateDraft, generateReviewResponse } from './content.ts';
 
 /** M17 screens: AI Activity (approval queue + full audit + autonomy dials),
@@ -353,10 +357,85 @@ export function routes(r: Router): void {
     )}</div>`)}
     ${when(answer.links.length, () => html`<div class="aichat-links">${answer.links.map((l) => html`<a class="btn btn-sm btn-ghost" href="${l.href}">${l.label}</a>`)}</div>`)}`;
 
-  r.get('/ask', requirePerm('ai:view'), (rq) => {
+  /** What Ask is about to do, and the button that does it.
+   *
+   * The preview is the whole basis on which a person says yes, so it leads
+   * with the specific figures rather than a restatement of the request. A
+   * blocker means the card offers no button at all — an action that cannot run
+   * must not present one and fail on click. */
+  const actionCard = (a: PendingAction): ReturnType<typeof html> => html`
+    <div class="ask-act ask-act-${a.risk}">
+      <div class="aa-head">
+        <b>${a.opName}</b>
+        ${when(a.risk === 'money', () => html`<span class="pill warn">moves money</span>`)}
+        ${when(a.risk === 'admin', () => html`<span class="pill warn">changes access</span>`)}
+      </div>
+      <p class="aa-sum">${a.preview.summary}</p>
+      ${when(a.resolved.length, () => html`<dl class="aa-res">${a.resolved.map((r) => html`<dt>${r.label}</dt><dd>${r.value}</dd>`)}</dl>`)}
+      ${when(a.preview.changes.length, () => html`<dl class="aa-changes">${a.preview.changes.map((c) => html`<dt>${c.label}</dt><dd>${c.value}</dd>`)}</dl>`)}
+      ${a.preview.warnings.map((w) => html`<p class="aa-warn">${w}</p>`)}
+      ${a.preview.blockers.length
+        ? html`${a.preview.blockers.map((b) => html`<p class="aa-block">${b}</p>`)}
+               <p class="aa-foot">Nothing was changed.</p>`
+        : html`<form method="post" action="/ask/act" class="aa-form">
+            <input type="hidden" name="op" value="${a.opKey}" />
+            <input type="hidden" name="args" value="${JSON.stringify(a.args)}" />
+            <button class="btn btn-primary" type="submit">${a.opName}</button>
+            <span class="aa-foot">Nothing has changed yet. Confirming records this in AI Activity with your name on it.</span>
+          </form>`}
+    </div>`;
+
+  /** Confirm: propose it, approve it, execute it — through the same audited
+   * path an agent's action takes. Ask gets no shortcut around the queue; it
+   * just fills it in one step because a person is standing right there. */
+  r.post('/ask/act', requirePerm('ai:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const op = getOp(String(rq.body.op || ''));
+    if (!op) return redirect('/ask', 'That action is no longer available.', 'err');
+    if (!can(ctx, op.perm)) return redirect('/ask', `${op.name} is outside your role’s access.`, 'err');
+    let args: Record<string, string | number | boolean | null> = {};
+    try {
+      const parsed = JSON.parse(String(rq.body.args || '{}'));
+      if (parsed && typeof parsed === 'object') args = parsed;
+    } catch { return redirect('/ask', 'That action could not be read back.', 'err'); }
+
+    // Re-previewed at the moment of confirming, never trusted from the form:
+    // the world can move between the plan and the click (the fee gets waived,
+    // the lease ends), and the blockers are what stop a stale action landing.
+    const pre = op.preview(ctx, args);
+    if (pre.blockers.length) return redirect('/ask', pre.blockers.join(' '), 'err');
+
+    try {
+      // The click IS the decision, so proposing executes: `ask` carries no
+      // autonomy dial, and framework.propose runs an auto action immediately.
+      // Deliberately no decideAction afterwards — the row is already settled,
+      // and calling it would throw "already decided" AFTER the money moved,
+      // reporting a completed action as a failure.
+      const { id: actionId, status } = propose(ctx, {
+        agent: 'ask', title: op.name,
+        input: { op: op.key, args },
+        output: { kind: `op.${op.key}`, args },
+        confidence: 0.99,
+        rationale: `Confirmed in Ask StayLeased by ${ctx.userName}: ${pre.summary}`,
+      });
+      if (status !== 'auto_executed') {
+        // the global kill switch forces every proposal to draft — Ask is no
+        // exception, and the honest answer is that it is waiting, not done
+        return redirect('/ai', 'AI is paused by the kill switch — this is held in the approval queue until it is switched back on.', 'err');
+      }
+      const done = q1<{ result: string }>('SELECT result FROM ai_actions WHERE id=? AND org_id=?', actionId, ctx.orgId);
+      return redirect('/ask', done?.result || `${op.name} done.`);
+    } catch (e) {
+      return redirect('/ask', `Could not complete that: ${(e as Error).message}`, 'err');
+    }
+  });
+
+  r.get('/ask', requirePerm('ai:view'), async (rq) => {
     const ctx = rq.ctx as Ctx;
     const question = (rq.query.get('q') || '').slice(0, 200);
-    const answer = question ? askStayLeased(ctx, question) : null;
+    // askSmart, not askStayLeased: the page and the panel must answer the same
+    // sentence the same way, and only askSmart can read one as an instruction
+    const answer = question ? await askSmart(ctx, question) : null;
     const st = llmStatus();
     const pc = askPanelContext(ctx, '/ask');
     const chips = pc.scope ? pc.chips : ASK_SAMPLES;
@@ -383,7 +462,7 @@ export function routes(r: Router): void {
                 <div class="aichat-msg agent"><div class="aichat-bubble">
                   <div class="aichat-title">${answer!.title} <span class="badge violet">${answer!.matched}</span></div>
                   <div class="aichat-summary">${answer!.summary}</div>
-                  ${answerBody(answer!)}
+                  ${answer!.action ? actionCard(answer!.action) : answerBody(answer!)}
                 </div></div>`)}
             </div>
             <div class="aichat-chips" id="aichat-chips">
@@ -425,7 +504,8 @@ export function routes(r: Router): void {
       summary: a.summary,
       matched: a.matched,
       live: a.live,
-      extraHtml: a.table || a.links.length ? answerBody(a).s : null,
+      extraHtml: a.action ? actionCard(a.action).s
+        : a.table || a.links.length ? answerBody(a).s : null,
     });
   });
 

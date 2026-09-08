@@ -1440,6 +1440,29 @@ svg.chart g.ct:hover .ctdot { r: 4.6px; }
 .aichat-table { margin-top: 10px; overflow-x: auto; border: 1px solid var(--line-2); border-radius: 10px; background: var(--surface); }
 .aichat-table .tbl { margin: 0; }
 .aichat-links { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 10px; }
+
+/* ---------- what Ask is about to DO ----------
+   Deliberately not a chat bubble. This is the moment a sentence becomes a
+   ledger entry, so it reads as a form: the figures in a definition list the
+   eye can scan down, warnings before the button, and a money action carrying
+   a visible weight the read answers never have. */
+.ask-act { margin-top: 10px; border: 1px solid var(--line); border-radius: var(--r-md, 10px); padding: 12px 14px; background: rgba(255,255,255,.02); }
+.ask-act-money { border-color: rgba(245, 158, 11, .45); }
+.ask-act-admin { border-color: rgba(239, 68, 68, .40); }
+.aa-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.aa-sum { margin: 0 0 10px; }
+.aa-res, .aa-changes {
+  display: grid; grid-template-columns: minmax(9rem, auto) 1fr; gap: 3px 14px;
+  margin: 0 0 10px; font-size: 12.5px;
+}
+.aa-res dt, .aa-changes dt { color: var(--muted); }
+.aa-res dd, .aa-changes dd { margin: 0; font-variant-numeric: tabular-nums; }
+.aa-changes dd { font-weight: 600; }
+.aa-warn { margin: 0 0 8px; font-size: 12.5px; color: var(--warn); }
+.aa-block { margin: 0 0 8px; font-size: 12.5px; color: var(--bad); }
+.aa-form { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 0; }
+.aa-foot { margin: 0; font-size: 11.5px; color: var(--muted); }
+[data-theme="light"] .ask-act { background: rgba(13, 25, 48, .02); }
 .aichat-extra { opacity: 0; transform: translateY(5px); transition: opacity .35s ease, transform .35s ease; }
 .aichat-extra.vis { opacity: 1; transform: translateY(0); }
 

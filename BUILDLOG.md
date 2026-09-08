@@ -1678,3 +1678,62 @@ for nothing.
 Gates: `tsc --noEmit` clean · unit 472/472 · seeded e2e tablesort·smoke·clientready·
 workingmodel·goldenpath·accounting·facilities·crm 46/46, plus homepage·seo·navmenus 21/21 for
 the theme.css change.
+
+## 2026-09-08 — Ask StayLeased can do the thing, not just describe it
+
+Henry: *"the ask stayleased should be able to act and not just read data. For example be able
+to do functions like this: finalize disposition for bhatt household and any and all other
+functions that you would be able to do by hand in stayleased."*
+
+Ask could read the whole portfolio and change nothing. It would find the Bhatt household's
+balance and then name the screen to go to. Meanwhile `finalizeDeposit(ctx, leaseId, …)` had
+been sitting in `m8_receivables/payments.ts` the whole time with no way for Ask to reach it.
+
+**It proposes; it does not execute.** The `ai_actions` framework already existed and is good —
+proposal row, executor, autonomy dials, global kill switch, audit trail, human decision. Ask
+now files into exactly that. There is no second write path with weaker supervision than the
+first, because a sentence is a far easier thing to get wrong than a form with a submit button.
+
+**An operation is a registration, not a prompt.** `ops.ts` holds a registry; `registerOp` binds
+an operation to the service function the equivalent screen calls, takes the permission that
+screen takes, and registers its executor in the same breath — so nothing is reachable by Ask
+without being executable through the audited path, and the catalog cannot drift from what the
+code can do. Twelve operations ship across all four areas Henry asked for: deposits, charges,
+late-fee waivers, payments; notices, contact corrections, renewal offers; work orders create/
+assign/re-prioritise/close; and the business-date clock. Adding the thirteenth is one call.
+
+**The model's whole job is to pick one operation and fill its parameters.** It never sees a
+table, an id, or SQL. `planFromAnswer` — the trust boundary, and a pure function so every rule
+is provable — drops an invented operation, coerces each parameter to its declared type, refuses
+an amount or date it cannot read rather than defaulting it to zero, asks for a missing required
+parameter instead of inventing one, and refuses an operation outside the asker's role even when
+the model names it (the catalog is permission-filtered first, so it should never have been
+suggested).
+
+**A reference matching two things matches nothing.** "The Bhatt household" is a search, and the
+fixture has a Bhatt and a Bhatt-Rao. Resolving that to whichever sorted first would finalize a
+stranger's deposit, so every resolver refuses ambiguity and hands back the candidates. Several
+tenancies on one unit — the ordinary move-out shape — still resolve, because that is one
+household.
+
+**Instructions are read BEFORE the read handlers.** "Charge the Bhatt household $50 for the
+damaged balance rail" contains the word "balance" and the delinquency handler would have
+answered it with a report: the operator reads a table, believes the charge is posted, and it is
+not. A command answered as a query is worse than a command refused, so a deterministic
+imperative gate runs first.
+
+Every action previews itself with the real figures before anyone confirms — "applies $1,057.00
+of the $1,450.00 held, refunds $393.00", not "applies the deposit" — and a preview with a
+blocker renders no button at all rather than one that fails on click. The preview is re-computed
+at the moment of confirming, never trusted from the form, because the world moves between the
+plan and the click.
+
+**One bug found by the tests, and it was the dangerous kind.** `propose()` gives the `ask` agent
+autonomy `auto` (it carries no dial), so proposing EXECUTES. The confirm route then called
+`decideAction`, which threw "action already decided" — after the money had moved. The operator
+would have seen a failure for an action that succeeded. The route now proposes and reads the
+result, and treats a non-executed status as the kill switch holding it, which is the only way
+that can happen.
+
+Gates: `tsc --noEmit` clean · unit 487/487 (15 new) · seeded e2e ai·askdock·smoke·clientready·
+goldenpath·accounting·facilities 37/37.
