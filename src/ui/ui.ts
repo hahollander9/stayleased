@@ -522,17 +522,69 @@ export interface Col {
   label: Child;
   num?: boolean;
   w?: string;
+  /** Opt this column out of sorting. For columns that are not data — a row's
+   * action buttons, a checkbox, an icon — where an ordering would mean nothing. */
+  nosort?: boolean;
+  /** Server-sorted tables only: where clicking this header goes. Setting it on
+   * any column hands the whole table to the server and stands the in-page
+   * sorter down, so a paginated list orders its FULL set rather than the page. */
+  href?: string;
+  /** Server-sorted tables only: the direction currently applied to this column. */
+  sorted?: 'asc' | 'desc';
 }
 export interface TblRow {
   cells: Child[];
   href?: string;
 }
-export function tbl(cols: Col[], rows: TblRow[], opts?: { empty?: string; foot?: Child[]; density?: Density }): Raw {
+
+/** The table.
+ *
+ * Every header sorts, everywhere, without its call site asking for it — there
+ * are 163 of these and a feature the operator has to be granted table by table
+ * is a feature most tables will never have. So sorting is the default and
+ * `nosort` is the opt-out.
+ *
+ * Two mechanisms, and which one runs is a question about honesty rather than
+ * taste. A table showing everything it has can be ordered in the page, and the
+ * result is complete and correct. A table showing ONE PAGE of a longer list
+ * cannot: sorting the fifty rows in front of you and presenting it as "sorted
+ * by balance" is the same class of error as a column footer that does not sum
+ * its column (#75) — it looks authoritative and is not. Such a list either
+ * hands sorting to the server (`Col.href`, which orders the whole set, as the
+ * residents roster does) or discloses the page scope — which `pager()` and the
+ * in-page sorter arrange between themselves, so no call site has to remember. */
+export function tbl(
+  cols: Col[],
+  rows: TblRow[],
+  opts?: {
+    empty?: string;
+    foot?: Child[];
+    density?: Density;
+    /** false where row order IS the content and re-ordering would destroy it */
+    sort?: false;
+  },
+): Raw {
   if (!rows.length) {
     return html`<div class="empty"><div class="e-title">${opts?.empty || 'Nothing here yet'}</div></div>`;
   }
-  return html`<div class="tbl-wrap"><table class="tbl ${opts?.density === 'tight' ? 'tight' : ''}">
-    <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}" ${c.w ? raw(`style="width:${c.w}"`) : ''}>${c.label}</th>`)}</tr></thead>
+  const server = cols.some((c) => c.href);
+  const sortable = opts?.sort !== false && !server;
+  const head = (c: Col): Raw => {
+    if (c.href) {
+      const next = c.sorted === 'asc' ? 'descending' : 'ascending';
+      return html`<a class="th-sort" href="${c.href}" aria-label="Sort by ${c.label} ${raw(next)}">${c.label}<span class="th-caret" aria-hidden="true"></span></a>`;
+    }
+    if (!sortable || c.nosort) return html`${c.label}`;
+    // a button, not a bare click handler: it is reachable by keyboard and
+    // announced as an control rather than as decoration
+    return html`<button type="button" class="th-sort" data-sort>${c.label}<span class="th-caret" aria-hidden="true"></span></button>`;
+  };
+  return html`<div class="tbl-wrap"><table class="tbl ${opts?.density === 'tight' ? 'tight' : ''}"
+      ${sortable ? raw('data-sortable') : ''}>
+    <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}${c.href || (sortable && !c.nosort) ? ' th-sortable' : ''}"
+      ${c.sorted ? raw(`aria-sort="${c.sorted === 'asc' ? 'ascending' : 'descending'}"`) : ''}
+      ${c.num ? raw('data-num') : ''}
+      ${c.w ? raw(`style="width:${c.w}"`) : ''}>${head(c)}</th>`)}</tr></thead>
     <tbody>${rows.map(
       (row) =>
         html`<tr ${row.href ? raw(`data-href="${esc(row.href)}" tabindex="0"`) : ''}>${row.cells.map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}">${cell}</td>`)}</tr>`,
@@ -607,6 +659,12 @@ export function viewBar(
   </div>`;
 }
 
+/** The pager, and the one thing that makes a sortable table honest.
+ *
+ * `data-pages` is read by the in-page sorter: a table that shows one page of a
+ * longer list can only order the rows it was given, and saying so is the
+ * difference between a useful control and a misleading one. A single-page
+ * pager carries no marker, because there is nothing to disclaim. */
 export function pager(r: Rq, total: number, perPage = 50): Raw {
   const page = Math.max(1, parseInt(r.query.get('page') || '1', 10) || 1);
   const pages = Math.max(1, Math.ceil(total / perPage));
@@ -624,7 +682,7 @@ export function pager(r: Rq, total: number, perPage = 50): Raw {
     nums.push(p === page ? html`<span class="cur">${p}</span>` : html`<a href="${link(p)}">${p}</a>`);
     prev = p;
   }
-  return html`<div class="pager">${total} records · page ${nums} ${page < pages ? html`<a href="${link(page + 1)}">Next →</a>` : null}</div>`;
+  return html`<div class="pager" ${raw(`data-pages="${pages}" data-total="${total}"`)}>${total} records · page ${nums} ${page < pages ? html`<a href="${link(page + 1)}">Next →</a>` : null}</div>`;
 }
 
 const STATUS_TONE: Record<string, string> = {

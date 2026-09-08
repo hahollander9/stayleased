@@ -1623,3 +1623,58 @@ offer to re-attach, which is the honest state and the only one available.
 
 Gates: `tsc --noEmit` clean · unit 472/472 · seeded e2e smoke·setup·portal·clientready·goldenpath
 31/31.
+
+## 2026-09-08 — Every table sorts from its header, and the paginated ones admit what they sorted
+
+Henry: *"under any table view able to click the header and sort the data that way."*
+
+**Any** is the load-bearing word. There are 163 `tbl()` call sites across 25 files, and a
+feature that has to be granted table by table is a feature most tables will never have. So
+sorting became a property of the renderer: `tbl()` emits a real `<button>` in every header,
+`nosort` is the opt-out for columns that are not data (actions, checkboxes), and `sort: false`
+is the opt-out for tables where row order IS the content. No call site changed.
+
+The sorter lives in `app.js` as progressive enhancement — no JS and the table is still a table
+in the server's order. Three states per column, not two: ascending, descending, then back to
+the order the page shipped. The original order is often meaningful (a ledger is chronological,
+a queue is prioritized) and a sorter with no way home destroys it until the operator reloads.
+
+Cells are read as VALUES, never as text. `$1,000.00` sorts above `$9.00` as a string, and
+`(1,234.56)` is an accounting negative, not a positive with punctuation. Money, percentages,
+ISO and US dates, and plain numbers are parsed; anything else falls to a locale compare with
+numeric collation. Blank cells sink to the bottom in BOTH directions, because an empty cell is
+a missing value and a missing value is not the smallest one. Equal values keep the server's
+order, so the sort is stable.
+
+**The part that is about honesty rather than sorting.** A table showing one page of a longer
+list can only order that page. Sorting the 50 rows in front of you and leaving the header
+looking like any other sorted column claims a maximum that may sit ten pages away — the same
+class of error as a footer that does not sum its column (#75). Two answers, and which one
+applies is decided for the caller rather than by it:
+
+- Lists that already sort server-side keep doing so. `Col.href`/`Col.sorted` render the header
+  as a link and stand the in-page sorter down entirely, so the residents roster still orders
+  all 366 residents rather than the 50 on screen. This also retired `sortableTbl` in
+  `people/pages.ts` — a fork of `tbl()` that existed only because `Col` could not carry
+  `aria-sort`, and which would have drifted from the original the moment either changed.
+- Everything else that is paginated discloses it. `pager()` now stamps `data-pages`/`data-total`
+  when there is more than one page, and the sorter reads that and writes the disclaimer where
+  it is true and nowhere else: *"Sorted the 50 rows on this page, not all 27,724 records."* It
+  is removed again when the operator restores the original order. No per-page edit, so the
+  next paginated list gets it for free — which is the point, since hand-editing nine call
+  sites is how the tenth gets missed.
+
+Verified in a browser before writing the gate: 7 sortable headers on /properties with
+asc/desc/restore and `aria-sort` correct; the delinquency Total column ordering by amount; the
+audit log (555 pages, 27,724 records) disclosing its page scope and un-disclosing it on
+restore; /residents keeping its server links and NOT also running the in-page sorter. Two of my
+own defects fixed from that pass: the disclaimer printed `27724` without a thousands separator,
+and it was being appended inside `.tbl-wrap`, which scrolls horizontally — a disclaimer that
+scrolls out of view with a wide table is not a disclaimer.
+
+`e2e/tablesort.test.ts` pins the four behaviours worth guarding, on ordinary screens that asked
+for nothing.
+
+Gates: `tsc --noEmit` clean · unit 472/472 · seeded e2e tablesort·smoke·clientready·
+workingmodel·goldenpath·accounting·facilities·crm 46/46, plus homepage·seo·navmenus 21/21 for
+the theme.css change.
