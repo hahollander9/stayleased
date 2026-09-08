@@ -5,6 +5,7 @@ import { usd, parseUsd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { propFilter, can } from '../../lib/auth.ts';
 import { propose } from './framework.ts';
+import { planAction, type PendingAction } from './act.ts';
 import { agingRows } from '../m8_receivables/service.ts';
 import { receivablesStats } from '../m8_receivables/payments.ts';
 import { computeDayMetrics } from '../m14_reports/snapshots.ts';
@@ -350,12 +351,45 @@ function smallTalk(question: string): string | null {
 export interface SmartAnswer extends AskAnswer {
   live: boolean;
   conversational: boolean;
+  /** set when the question was an INSTRUCTION and an operation was planned —
+   * nothing has happened yet; the card carries the preview and the confirm */
+  action?: PendingAction;
 }
 
 /** Hybrid ask: pattern handlers first (tables, links, exact numbers); when
  * nothing matches, a grounded conversational answer — Claude when the key is
  * set, a friendly deterministic reply otherwise. Every answer is audited. */
 export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[] = []): Promise<SmartAnswer> {
+  // 0) an INSTRUCTION, before anything else.
+  //
+  // Order matters and is not a preference. "Charge the Bhatt household $50 for
+  // the damaged balance rail" contains the word "balance" and the delinquency
+  // handler would answer it with a report — the operator reads a table, thinks
+  // the charge is posted, and it is not. A command answered as a query is
+  // worse than a command refused.
+  const planned = await planAction(ctx, question).catch(() => null);
+  if (planned) {
+    propose(ctx, {
+      agent: 'ask', title: `Instruction: ${question.slice(0, 60)}`,
+      input: { question },
+      output: { kind: 'noop.analysis', matched: 'action.plan', summary: planned.kind === 'action' ? planned.preview.summary : planned.message },
+      confidence: 0.9,
+      rationale: planned.kind === 'action'
+        ? `Read as an instruction and matched to the “${planned.opName}” operation. Nothing has been written — the preview was computed and is waiting on a person.`
+        : `Read as an instruction but refused before anything was written: ${planned.message}`,
+    });
+    if (planned.kind === 'refusal') {
+      return {
+        title: 'I need one more thing', summary: planned.message, links: [], matched: 'action.refused',
+        live: true, conversational: false,
+      };
+    }
+    return {
+      title: planned.opName, summary: planned.preview.summary, links: [], matched: `action.${planned.opKey}`,
+      live: true, conversational: false, action: planned,
+    };
+  }
+
   // 1) structured handlers (authoritative, synchronous)
   for (const h of HANDLERS) {
     const hit = h(ctx, question);
