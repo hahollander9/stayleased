@@ -1737,3 +1737,80 @@ that can happen.
 
 Gates: `tsc --noEmit` clean · unit 487/487 (15 new) · seeded e2e ai·askdock·smoke·clientready·
 goldenpath·accounting·facilities 37/37.
+
+## 2026-09-10 — Ask StayLeased remembers, acts on standing behavior, and can be found
+
+Four things were wrong with Ask, and the first one was not "the transcript is short".
+
+**Memory reached only the lane that needed it least.** `askSmart` took a `history` argument and
+handed it to exactly one of its three lanes — the conversational one. The instruction lane and
+the data handlers never saw a word of it. So:
+
+```
+staff: finalize disposition for the Bhatt household
+Ask:   "Bhatt" matches 2 households: Bhatt — unit 201, Bhatt-Rao — unit 202. Say which one.
+staff: the one in 201
+Ask:   I didn't find a report for that phrasing…
+```
+
+The assistant asked a question and could not hear the answer. "the one in 201" is not an
+imperative sentence, so `looksLikeInstruction` dropped it, no handler matched it, and it fell
+through to small talk — while the operator, who had answered, believed they were understood.
+Same shape on the read side: "which units turn this month" then "what about next month" came
+back as prose, because the second sentence carries no topic of its own.
+
+And the transcript itself lived in the browser, where it died at four moments nobody would read
+as *forget what I asked*: a reload (the /ask page's own GET handler answered a deep-linked
+question with no history at all), closing the dock (which deleted it deliberately), walking to
+another page unpinned, and clicking "Full page" — which handed you a second, empty conversation
+beside the one you were having. Confirming an action redirected to `/ask`, which emptied it too.
+
+`ask_turns` is now the conversation: server-side, per user, one thread across every surface. A
+turn stores what it ESTABLISHED, not just what it said — the records it resolved, a clarification
+still waiting on an answer, a digest of the rows shown. `recallContext` flattens that for the
+next turn, later turns winning. Threads go stale after six hours, because "them" resolving
+against a household discussed yesterday is the failure this is meant to prevent.
+
+Answering "which one?" is deterministic and never re-enters the model: the reply is matched
+against the candidates Ask itself printed — by unit ("the one in 201"), by ordinal ("the first
+one"), by the distinguishing part of the name ("Bhatt-Rao") — and anything short of exactly one
+match leaves the question standing. Pronouns carry an entity forward only into a slot this turn
+left empty, never over a name the operator typed, and the confirm card says "from earlier in this
+conversation" so a carried household is visible before it is settled. Follow-ups splice onto the
+question they continue rather than being rewritten, so the handler reads its topic from the first
+and its modifier from the second; `matchProperty` now takes the LAST mention, which is what makes
+"and at Foundry?" mean Foundry.
+
+**It could act, but not on standing behavior.** Twelve operations each changed one record once.
+`ops_workflows.ts` adds three that change what happens from now on — a report on a cadence, an
+agent's autonomy dial, the global kill switch — and deliberately adds no new automation engine:
+each drives a surface that already exists (`saved_reports.schedule` run by the `report_delivery`
+job, the dials at `/ai?view=dials`, `ai_enabled`), so anything set up by sentence can be seen and
+undone from the screen that has always owned it, by someone who never used Ask.
+
+**The suggested prompts were the demo's, not the customer's.** They named Summit Ridge, Foundry
+and Cardinal — seed data. In a real org every one of those chips asked about a building that does
+not exist and answered with the fallback, which is what a new operator clicks first. Chips are
+now templates filled from the org's own portfolio, and a template that cannot be filled is
+dropped rather than rendered with its placeholder showing. A second row shows what Ask can DO;
+those fill the box and send nothing, because the household is the operator's to name and a chip
+that fired would either bake in a real resident's deposit or send a placeholder to be refused.
+`CAPABILITIES` and the staff system prompt were also still telling the model to "never claim to
+have taken an action" — written before Ask could take one.
+
+**And on a phone the Ask button was off the screen.** The brandbar ran to 652px inside a 390px
+viewport, which scrolled *every* page in the app sideways and put `.askbtn` at x=465. Hiding the
+labels was never enough: the wordmark, the property switcher and the date pill are intrinsically
+wide and none could shrink. On small screens the logo now stands in for the wordmark, the
+business date goes (it is on the dashboard, and in a live org it is just today), and the switcher
+gives up width first — a truncated building name is legible, an off-screen control is not. Every
+page measures 390/390 and the button sits at 259→302. ⌘J opens Ask from anywhere, and the button
+says so.
+
+Verified in a browser before the gates were written, which is how the mobile numbers above are
+measurements rather than estimates.
+
+BUILDLOG entry and DECISIONS #93–#96 appended against the current tail.
+
+Gates: `tsc --noEmit` clean · unit 502/502 (15 new) · seeded e2e askmemory·ai·askdock·smoke·
+navmenus 24/24, clientready·goldenpath·workingmodel·tablesort·crm 29/29.

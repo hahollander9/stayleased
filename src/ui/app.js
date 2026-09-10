@@ -548,9 +548,9 @@
   // require dismissing the answer. Pinning docks it beside the content and
   // carries it — with the conversation — across navigations.
   (function () {
-    var dock = null, thread = null, chipsEl = null, form = null, inp = null, sendBtn = null, pinBtn = null;
-    var history = [], busy = false, loaded = false, pinned = false;
-    var PIN_KEY = 'sl_ask_pinned', HIST_KEY = 'sl_ask_history';
+    var dock = null, thread = null, chipsEl = null, doesEl = null, form = null, inp = null, sendBtn = null, pinBtn = null;
+    var tid = '', busy = false, loaded = false, pinned = false;
+    var PIN_KEY = 'sl_ask_pinned';
     var PIN_SVG = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 17v5"/><path d="M9 10.8V4h6v6.8l2.5 3.2H6.5z"/></svg>';
 
     function el(tag, cls, text) {
@@ -598,15 +598,24 @@
       pinBtn.type = 'button';
       pinBtn.innerHTML = PIN_SVG;
       pinBtn.addEventListener('click', function () { setPinned(!pinned); });
+      // Closing no longer forgets, so forgetting needs its own control.
+      var fresh = el('button', 'askdock-new');
+      fresh.type = 'button';
+      fresh.title = 'Start a new conversation';
+      fresh.setAttribute('aria-label', fresh.title);
+      fresh.innerHTML = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>';
+      fresh.addEventListener('click', startNew);
       var x = el('button', 'askdock-close');
       x.type = 'button';
       x.setAttribute('aria-label', 'Close');
       x.innerHTML = '&times;';
       x.addEventListener('click', close);
-      head.appendChild(orb); head.appendChild(ttl); head.appendChild(full); head.appendChild(pinBtn); head.appendChild(x);
+      head.appendChild(orb); head.appendChild(ttl); head.appendChild(full);
+      head.appendChild(fresh); head.appendChild(pinBtn); head.appendChild(x);
       thread = el('div', 'aichat-thread');
       thread.setAttribute('aria-live', 'polite');
       chipsEl = el('div', 'aichat-chips');
+      doesEl = el('div', 'aichat-does');
       form = el('form', 'aichat-form');
       inp = el('input');
       inp.placeholder = 'Ask about where you are…';
@@ -617,7 +626,8 @@
       sendBtn.setAttribute('aria-label', 'Send');
       sendBtn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>';
       form.appendChild(inp); form.appendChild(sendBtn);
-      panel.appendChild(head); panel.appendChild(thread); panel.appendChild(chipsEl); panel.appendChild(form);
+      panel.appendChild(head); panel.appendChild(thread); panel.appendChild(chipsEl);
+      panel.appendChild(doesEl); panel.appendChild(form);
       dock.appendChild(panel);
       document.body.appendChild(dock);
 
@@ -630,6 +640,43 @@
       chipsEl.addEventListener('click', function (e) {
         var c = e.target.closest('.aichat-chip');
         if (c && !busy) ask(c.textContent);
+      });
+      // An action example is half a sentence: it fills the box and waits for
+      // the operator to name the household or the unit. Sending it as-is could
+      // only ever be refused.
+      doesEl.addEventListener('click', function (e) {
+        var c = e.target.closest('[data-fill]');
+        if (!c) return;
+        inp.value = c.getAttribute('data-fill') || '';
+        inp.focus();
+        inp.setSelectionRange(inp.value.length, inp.value.length);
+      });
+      // Confirming an action answers inside the panel. It used to submit a
+      // form, which navigated away from the page the operator was reading and
+      // dropped the conversation on the floor.
+      thread.addEventListener('submit', function (e) {
+        var f = e.target.closest('form[data-ask-act]');
+        if (!f) return;
+        e.preventDefault();
+        var btn = f.querySelector('button');
+        if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+        var body = new URLSearchParams(new FormData(f));
+        body.set('json', '1');
+        fetch('/ask/act', {
+          method: 'POST',
+          headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
+          body: body.toString()
+        }).then(function (r) { return r.json(); }).then(function (d) {
+          var card = f.closest('.ask-act');
+          if (card) card.classList.add(d.ok ? 'done' : 'failed');
+          f.remove();
+          var b = bubble('agent');
+          b.parentNode.className += ' result';
+          b.textContent = d.summary || (d.ok ? 'Done.' : 'That did not go through.');
+          scrollDown();
+        }).catch(function () {
+          if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
+        });
       });
       document.addEventListener('keydown', function (e) {
         // Escape closes a floating panel. A pinned one is part of the layout,
@@ -658,42 +705,66 @@
       try { sessionStorage.setItem(PIN_KEY, pinned ? '1' : '0'); } catch (err) { /* private mode */ }
     }
 
-    /** The conversation follows the pin across page loads. Without this,
-     * "keep it open while I visit other pages" would hand you an open panel
-     * that had forgotten everything you just asked it. */
-    function saveHistory() {
-      if (!pinned) return;
-      try { sessionStorage.setItem(HIST_KEY, JSON.stringify(history.slice(-12))); } catch (err) { /* quota */ }
-    }
-    function restoreHistory() {
-      var saved = [];
-      try { saved = JSON.parse(sessionStorage.getItem(HIST_KEY) || '[]'); } catch (err) { saved = []; }
-      if (!saved.length || !Array.isArray(saved)) return false;
-      saved.forEach(function (m) {
-        history.push(m);
-        bubble(m.role === 'you' ? 'you' : 'agent').textContent = m.text || '';
-      });
-      return true;
+    /** The conversation lives on the server, so this only has to fetch it.
+     *
+     * What that buys is everywhere the old sessionStorage copy died: a reload,
+     * a close, the jump to the full page, a second tab. It also means the
+     * panel and /ask are the same conversation rather than two that each
+     * half-remember what you said. */
+    function startNew() {
+      fetch('/ask/new', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
+        body: 'json=1'
+      }).then(function (r) { return r.json(); }).then(function (d) {
+        tid = d.threadId || '';
+        thread.innerHTML = '';
+        loaded = false;
+        hydrate();
+        if (inp) inp.focus();
+      }).catch(function () { /* leave the conversation as it is */ });
     }
 
     function hydrate() {
       if (loaded) return;
       loaded = true;
-      var resumed = restoreHistory();
-      // The scope line and the suggested questions are about the page you are
-      // on NOW, so they refresh on every navigation even when the panel and
-      // its conversation carried over.
-      fetch('/ask/panel.json?path=' + encodeURIComponent(location.pathname), { headers: { 'Accept': 'application/json' } })
+      // Two fetches, deliberately not merged: the thread is the operator's
+      // conversation wherever they left it, while the scope line and the
+      // suggestions are about the page they are on NOW and change under it.
+      var resumed = false;
+      fetch('/ask/thread.json' + (tid ? '?thread=' + encodeURIComponent(tid) : ''), { headers: { 'Accept': 'application/json' } })
         .then(function (r) { return r.json(); })
         .then(function (d) {
-          dock.querySelector('.askdock-scope').textContent = d.scope ? 'Scoped to ' + d.scope : 'Portfolio-wide';
-          if (!resumed) bubble('agent').textContent = d.greeting || 'Ask me about your portfolio.';
-          chipsEl.innerHTML = '';
-          (d.chips || []).forEach(function (c) {
-            var b = el('button', 'aichat-chip', c);
-            b.type = 'button';
-            chipsEl.appendChild(b);
+          tid = d.threadId || tid;
+          (d.turns || []).forEach(function (m) {
+            resumed = true;
+            bubble(m.role === 'you' ? 'you' : 'agent').textContent = m.text || '';
           });
+        })
+        .catch(function () { /* an unreachable thread is an empty one */ })
+        .then(function () {
+          return fetch('/ask/panel.json?path=' + encodeURIComponent(location.pathname), { headers: { 'Accept': 'application/json' } })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              dock.querySelector('.askdock-scope').textContent = d.scope ? 'Scoped to ' + d.scope : 'Portfolio-wide';
+              if (!resumed) bubble('agent').textContent = d.greeting || 'Ask me about your portfolio.';
+              chipsEl.innerHTML = '';
+              (d.chips || []).forEach(function (c) {
+                var b = el('button', 'aichat-chip', c);
+                b.type = 'button';
+                chipsEl.appendChild(b);
+              });
+              doesEl.innerHTML = '';
+              if ((d.actions || []).length) {
+                doesEl.appendChild(el('span', 'aichat-does-lead', 'I can also do things —'));
+                d.actions.forEach(function (a) {
+                  var b = el('button', 'aichat-chip act', String(a).trim() + '…');
+                  b.type = 'button';
+                  b.setAttribute('data-fill', a);
+                  doesEl.appendChild(b);
+                });
+              }
+            });
         })
         .catch(function () { if (!resumed) bubble('agent').textContent = 'Ask me about your portfolio.'; });
     }
@@ -701,15 +772,15 @@
     function ask(q) {
       if (busy) return;
       bubble('you').textContent = q;
-      history.push({ role: 'you', text: q });
       setBusy(true);
       var wait = bubble('agent');
       wait.innerHTML = '<span class="aichat-typing"><i></i><i></i><i></i></span>';
       fetch('/ask.json', {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
-        body: 'q=' + encodeURIComponent(q) + '&history=' + encodeURIComponent(JSON.stringify(history.slice(-8))),
+        body: 'q=' + encodeURIComponent(q) + '&thread=' + encodeURIComponent(tid),
       }).then(function (r) { return r.json(); }).then(function (d) {
+        if (d.threadId) tid = d.threadId;
         wait.innerHTML = '';
         if (d.title) {
           var t = el('div', 'aichat-title', d.title);
@@ -722,15 +793,12 @@
           ex.innerHTML = d.extraHtml;
           wait.appendChild(ex);
         }
-        history.push({ role: 'agent', text: d.summary || '' });
-        saveHistory();
         setBusy(false);
         scrollDown();
       }).catch(function () {
         wait.textContent = 'Something went wrong — try again.';
         setBusy(false);
       });
-      saveHistory();
     }
 
     function open(opts) {
@@ -747,7 +815,10 @@
       // Closing is a decision to stop; it should not come back on the next
       // page. Unpinning here is what makes the close button mean "close".
       if (pinned) setPinned(false);
-      try { sessionStorage.removeItem(HIST_KEY); } catch (err) { /* private mode */ }
+      // The conversation is NOT deleted. Closing a panel means "I am done
+      // looking", not "forget what I asked" — and it used to mean both, so
+      // reopening handed you an assistant with no idea who you had just been
+      // talking about. Forgetting has its own button.
     }
 
     document.addEventListener('click', function (e) {
@@ -756,6 +827,21 @@
       if (e.metaKey || e.ctrlKey || e.shiftKey) return; // let new-tab clicks through
       if (location.pathname === '/ask') return; // already on the full page
       e.preventDefault();
+      if (dock && dock.classList.contains('open') && !pinned) { close(); return; }
+      open();
+    });
+
+    // A shortcut, because the fastest way to ask is not to go looking for the
+    // button. ⌘K is the command palette; ⌘J is free and adjacent to it.
+    document.addEventListener('keydown', function (e) {
+      if (!(e.metaKey || e.ctrlKey) || e.key.toLowerCase() !== 'j') return;
+      if (!document.querySelector('[data-ask-open]')) return; // no ai:view
+      e.preventDefault();
+      if (location.pathname === '/ask') {
+        var box = document.getElementById('aichat-input');
+        if (box) box.focus();
+        return;
+      }
       if (dock && dock.classList.contains('open') && !pinned) { close(); return; }
       open();
     });
