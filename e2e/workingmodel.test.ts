@@ -175,7 +175,11 @@ test('gate: live org fences — no simulator, honest connections, no sim leads',
   assert.match(conn, /Platform status/);
   assert.match(conn, /Working now/);
   assert.match(conn, /Coming soon/i);
-  assert.match(conn, /Payments/);
+  // Pinned as "Resident payments" rather than "Payments": the operator's OWN
+  // subscription is billed through Stripe for real, so the rail that is still
+  // simulated has to name whose money it is about.
+  assert.match(conn, /Resident payments/);
+  assert.match(conn, /subscription is billed/i, 'and the page says the other one is real');
   assert.match(conn, /File import|upload/i);
 
   // the AI connection test runs a real round-trip and reports honestly

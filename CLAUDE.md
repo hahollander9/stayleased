@@ -51,7 +51,8 @@ two regression tests that force the losing race. There is no known flake; a red 
 - `src/modules/m1–m19` — admin, portfolio (+property delete), CRM/leasing, marketing site
   (m4), leases, portal, receivables, accounting, facilities, pricing, reports, comms,
   procurement, AI (m17: agents, Ask, LLM plumbing), scoring (m19: deterministic scorers,
-  shadow-first). `src/modules/setup/` — the Migration Center import pipeline (see below).
+  shadow-first), billing (m20: what the OPERATOR pays StayLeased — per-unit meter, Stripe).
+  `src/modules/setup/` — the Migration Center import pipeline (see below).
 - `src/modules/m4_marketing/` — homepage.ts (the argument, 01→12 bands), features.ts
   (page catalog + legal), chrome.ts (nav/footer/SEO helpers/GA), styles.ts, public.ts
   (property sites, robots, sitemap), ask.ts (public AI chat, separate token budget).
@@ -132,8 +133,16 @@ GitHub `hahollander9/stayleased` @ main → Render auto-deploy → https://stayl
 (bare domain is canonical; `STAYLEASED_SITE_ORIGIN` overrides). Prod env:
 `STAYLEASED_DB=/data/stayleased.db`, `STAYLEASED_SIGNUP_CODE`, `ANTHROPIC_API_KEY`
 (+`STAYLEASED_AI_MODEL`), optional `STAYLEASED_GA_ID` (GA4 — everything about it is OFF
-until this is set). Live orgs are fenced from sim jobs; external rails are simulated and
-disclosed in-product. `.github/workflows/ci.yml` is restored and green-gating every push and
+until this is set), optional `STAYLEASED_STRIPE_SECRET_KEY` + `STAYLEASED_STRIPE_WEBHOOK_SECRET`
+(billing is inert without them; `STAYLEASED_BILLING_UNIT_PRICE_CENTS` defaults to 600 = $6/unit,
+and only sets the price for NEW accounts — existing ones keep the price on their own row).
+Stripe's endpoint is `POST /webhooks/stripe`: `customer.subscription.*`, `invoice.paid`,
+`invoice.payment_failed`, `invoice.finalized`. It is the ONE unauthenticated route in the app —
+the signature is its authentication, verified over `Rq.rawBody` (DECISIONS #99), and no card
+field may ever be added to m20 (#98). Live orgs are fenced from sim jobs. Every RESIDENT-facing
+external rail is still simulated and disclosed in-product; Stripe is the first real one and is
+deliberately not resident-facing — it bills the operator for StayLeased and touches nothing a
+resident pays. `.github/workflows/ci.yml` is restored and green-gating every push and
 PR (typecheck + unit, then the seeded e2e suite). It was once lost to a web-UI upload because
 dot-directories do not survive them — which is why nothing under `.github/` ever travels that
 way.

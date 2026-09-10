@@ -2224,3 +2224,73 @@ CREATE TABLE IF NOT EXISTS ask_turns (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_askturns ON ask_turns(org_id, user_id, thread_id, created_at);
+
+-- ---------------------------------------------------------------- billing ---
+-- What the operator pays StayLeased. Distinct from everything else in this
+-- schema, which is what a RESIDENT pays the operator.
+--
+-- The price is stored per account, not read from configuration at render time,
+-- because a customer's price is a promise made on the day they signed. Moving
+-- the global default must never silently re-price anyone already on the books;
+-- changing an existing account's price has to be a deliberate write to that
+-- account's row, visible in the audit log.
+CREATE TABLE IF NOT EXISTS billing_accounts (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL UNIQUE REFERENCES orgs(id),
+  -- early_access: the org is not billed and no charge is ever attempted. This
+  -- is the default, because the offer already made to early partners is free.
+  status TEXT NOT NULL DEFAULT 'early_access', -- early_access | active | past_due | canceled
+  unit_price_cents INTEGER NOT NULL,
+  minimum_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'usd',
+  -- Stripe's side of the relationship. Null until an org is actually billed;
+  -- an early-access org has no customer record at Stripe at all.
+  stripe_customer_id TEXT,
+  stripe_subscription_id TEXT,
+  stripe_price_id TEXT,
+  current_period_start TEXT,
+  current_period_end TEXT,
+  -- the unit count last SENT to Stripe, so a drift between the meter and what
+  -- is being charged is detectable rather than assumed away
+  billed_units INTEGER NOT NULL DEFAULT 0,
+  cancel_at_period_end INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS billing_invoices (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL REFERENCES orgs(id),
+  stripe_invoice_id TEXT UNIQUE,
+  number TEXT,
+  status TEXT NOT NULL, -- draft | open | paid | uncollectible | void
+  period_start TEXT,
+  period_end TEXT,
+  units INTEGER,
+  unit_price_cents INTEGER,
+  subtotal_cents INTEGER NOT NULL DEFAULT 0,
+  total_cents INTEGER NOT NULL DEFAULT 0,
+  amount_paid_cents INTEGER NOT NULL DEFAULT 0,
+  currency TEXT NOT NULL DEFAULT 'usd',
+  hosted_url TEXT,   -- Stripe-hosted invoice page; we never render card data
+  pdf_url TEXT,
+  issued_at TEXT,
+  paid_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_billinginv ON billing_invoices(org_id, issued_at);
+
+-- Every webhook Stripe delivers, recorded before it is acted on. Stripe retries
+-- on any non-2xx and can deliver the same event twice on its own, so the id is
+-- the idempotency key: a replayed event is a no-op rather than a second charge
+-- reflected in our books.
+CREATE TABLE IF NOT EXISTS billing_events (
+  id TEXT PRIMARY KEY,          -- Stripe's event id (evt_…)
+  org_id TEXT,                  -- resolved from the customer, when we can
+  type TEXT NOT NULL,
+  payload TEXT NOT NULL,
+  handled INTEGER NOT NULL DEFAULT 0,
+  note TEXT,
+  received_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_billingevt ON billing_events(received_at);

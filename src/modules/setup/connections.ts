@@ -46,12 +46,18 @@ function rails(ctx: Ctx): Rail[] {
       status: 'live', href: '/admin/api',
     },
     {
-      key: 'payments', name: 'Payments (ACH & cards)',
+      key: 'payments', name: 'Resident payments (ACH & cards)',
       desc: live
-        ? 'Real money movement (Stripe) is not connected yet — payment screens run on the built-in simulator. Join the waitlist and we\'ll onboard your accounts as the rail opens.'
+        ? 'Real money movement is not connected yet — resident payment screens run on the built-in simulator. Join the waitlist and we\'ll onboard your accounts as the rail opens.'
         : 'Running on the deterministic payments simulator — settlements, NSFs and deposits all behave like the real rail, with no real money.',
       status: live ? 'waitlist' : 'simulated',
-      note: live ? 'Never treat simulated receipts as real funds.' : undefined,
+      // Named as RESIDENT payments, and the distinction spelled out, because
+      // your own subscription IS charged through Stripe: without this line,
+      // "Stripe is not connected" on this page and a Stripe-backed billing page
+      // two clicks away read as a contradiction.
+      note: live
+        ? 'Never treat simulated receipts as real funds. Separately: your own StayLeased subscription is billed for real — see Billing.'
+        : 'Your own StayLeased subscription is billed separately, and for real — see Billing.',
     },
     {
       key: 'bank', name: 'Bank feeds (Plaid)',
