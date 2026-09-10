@@ -2202,3 +2202,25 @@ CREATE TABLE IF NOT EXISTS lead_assessments (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS ux_lead_assess ON lead_assessments(lead_id, as_of_date);
 CREATE INDEX IF NOT EXISTS ix_lead_assess_org ON lead_assessments(org_id, as_of_date);
+
+-- Ask StayLeased conversation memory (M17.7). The thread lives on the server,
+-- not in the browser, because every browser-side store this replaced died at a
+-- moment the operator did not choose: a reload, a close, a click on "Full
+-- page", a second device. An assistant that forgets mid-sentence cannot be
+-- asked a follow-up, and a clarifying question it cannot hear the answer to is
+-- worse than one it never asked.
+CREATE TABLE IF NOT EXISTS ask_turns (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  role TEXT NOT NULL,                   -- you | agent
+  text TEXT NOT NULL,
+  matched TEXT,                         -- which lane answered, for the badge and for recall
+  -- what the turn ESTABLISHED, so the next turn can build on it: entities that
+  -- were resolved, a clarification still waiting on an answer, a digest of the
+  -- table that was shown. Never the whole answer — enough to continue.
+  context TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_askturns ON ask_turns(org_id, user_id, thread_id, created_at);

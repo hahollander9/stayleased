@@ -14,10 +14,12 @@ import { AGENTS, decideAction, autonomyFor, aiEnabled, type AgentKey, type Auton
 import { handleLeadInbound, draftCollectionsOutreach, draftRenewalOutreach, evaluateCounter, triageRequest, setAiHooksLive } from './agents.ts';
 import { analyzeNewCalls, callRollup } from './analysis.ts';
 import { askStayLeased , askSmart , askPanelContext , type AskAnswer } from './ask.ts';
+import { currentThread, newThread, recall, remember } from './memory.ts';
 import { getOp } from './ops.ts';
 import { propose } from './framework.ts';
 import type { PendingAction } from './act.ts';
-import './ops_catalog.ts'; // registers every operation Ask can perform
+import './ops_catalog.ts';   // one-shot operations: money, leasing, maintenance
+import './ops_workflows.ts'; // standing behavior: report cadences, agent dials
 import { generateListing, generateTemplateDraft, generateReviewResponse } from './content.ts';
 
 /** M17 screens: AI Activity (approval queue + full audit + autonomy dials),
@@ -343,10 +345,6 @@ export function routes(r: Router): void {
 
   // ---------- Ask StayLeased ----------
   // shared renderer: a structured answer as chat-bubble content
-  const ASK_SAMPLES = [
-    'delinquency over $500 at Summit Ridge', 'which units turn this month', 'occupancy at Foundry',
-    'collection rate last month', 'open work orders at Cardinal', 'top vendor spend',
-  ];
   const answerBody = (answer: AskAnswer): ReturnType<typeof html> => html`
     ${when(answer.table, () => html`<div class="aichat-table">${tbl(
       answer.table!.cols.map((c) => ({ label: c })),
@@ -363,7 +361,7 @@ export function routes(r: Router): void {
    * with the specific figures rather than a restatement of the request. A
    * blocker means the card offers no button at all — an action that cannot run
    * must not present one and fail on click. */
-  const actionCard = (a: PendingAction): ReturnType<typeof html> => html`
+  const actionCard = (a: PendingAction, threadId: string): ReturnType<typeof html> => html`
     <div class="ask-act ask-act-${a.risk}">
       <div class="aa-head">
         <b>${a.opName}</b>
@@ -377,9 +375,10 @@ export function routes(r: Router): void {
       ${a.preview.blockers.length
         ? html`${a.preview.blockers.map((b) => html`<p class="aa-block">${b}</p>`)}
                <p class="aa-foot">Nothing was changed.</p>`
-        : html`<form method="post" action="/ask/act" class="aa-form">
+        : html`<form method="post" action="/ask/act" class="aa-form" data-ask-act>
             <input type="hidden" name="op" value="${a.opKey}" />
             <input type="hidden" name="args" value="${JSON.stringify(a.args)}" />
+            <input type="hidden" name="thread" value="${threadId}" />
             <button class="btn btn-primary" type="submit">${a.opName}</button>
             <span class="aa-foot">Nothing has changed yet. Confirming records this in AI Activity with your name on it.</span>
           </form>`}
@@ -390,20 +389,37 @@ export function routes(r: Router): void {
    * just fills it in one step because a person is standing right there. */
   r.post('/ask/act', requirePerm('ai:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const keepThread = String(rq.body.thread || '').slice(0, 40);
+    const back = keepThread ? `/ask?thread=${keepThread}` : '/ask';
     const op = getOp(String(rq.body.op || ''));
-    if (!op) return redirect('/ask', 'That action is no longer available.', 'err');
-    if (!can(ctx, op.perm)) return redirect('/ask', `${op.name} is outside your role’s access.`, 'err');
+    if (!op) return redirect(back, 'That action is no longer available.', 'err');
+    if (!can(ctx, op.perm)) return redirect(back, `${op.name} is outside your role’s access.`, 'err');
     let args: Record<string, string | number | boolean | null> = {};
     try {
       const parsed = JSON.parse(String(rq.body.args || '{}'));
       if (parsed && typeof parsed === 'object') args = parsed;
-    } catch { return redirect('/ask', 'That action could not be read back.', 'err'); }
+    } catch { return redirect(back, 'That action could not be read back.', 'err'); }
 
     // Re-previewed at the moment of confirming, never trusted from the form:
     // the world can move between the plan and the click (the fee gets waived,
     // the lease ends), and the blockers are what stop a stale action landing.
     const pre = op.preview(ctx, args);
-    if (pre.blockers.length) return redirect('/ask', pre.blockers.join(' '), 'err');
+    if (pre.blockers.length) return redirect(back, pre.blockers.join(' '), 'err');
+
+    // Where the answer goes. The old route always redirected to /ask, which
+    // reloaded the page with an empty thread — you confirmed an action and the
+    // conversation that led to it vanished, replaced by a flash message. It is
+    // now a turn IN the thread, and the fetch caller never leaves the page.
+    const thread = String(rq.body.thread || '').slice(0, 40) || currentThread(ctx);
+    // The chat surfaces confirm with fetch and say so; a plain form POST (no
+    // JavaScript) still gets a redirect, and now back into its own thread.
+    const wantsJson = String(rq.body.json || '') === '1';
+    const outcome = (text: string, ok: boolean): ReturnType<typeof jsonRes> | ReturnType<typeof redirect> => {
+      remember(ctx, thread, 'agent', text, ok ? `did.${op.key}` : 'action.failed');
+      return wantsJson
+        ? jsonRes({ ok, summary: text, threadId: thread })
+        : redirect(`/ask?thread=${thread}`, text, ok ? undefined : 'err');
+    };
 
     try {
       // The click IS the decision, so proposing executes: `ask` carries no
@@ -421,24 +437,29 @@ export function routes(r: Router): void {
       if (status !== 'auto_executed') {
         // the global kill switch forces every proposal to draft — Ask is no
         // exception, and the honest answer is that it is waiting, not done
-        return redirect('/ai', 'AI is paused by the kill switch — this is held in the approval queue until it is switched back on.', 'err');
+        return outcome('AI is paused by the kill switch — this is held in the approval queue until it is switched back on.', false);
       }
       const done = q1<{ result: string }>('SELECT result FROM ai_actions WHERE id=? AND org_id=?', actionId, ctx.orgId);
-      return redirect('/ask', done?.result || `${op.name} done.`);
+      return outcome(done?.result || `${op.name} done.`, true);
     } catch (e) {
-      return redirect('/ask', `Could not complete that: ${(e as Error).message}`, 'err');
+      return outcome(`Could not complete that: ${(e as Error).message}`, false);
     }
   });
 
   r.get('/ask', requirePerm('ai:view'), async (rq) => {
     const ctx = rq.ctx as Ctx;
     const question = (rq.query.get('q') || '').slice(0, 200);
+    // The conversation this page is showing: the one named in the URL (a
+    // confirm redirect, a "new conversation"), otherwise whichever one this
+    // user is already in — which is how the dock's thread is on screen when
+    // they click "Full page" instead of the page starting empty.
+    const thread = (rq.query.get('thread') || '').slice(0, 40) || currentThread(ctx);
+    const prior = recall(ctx, thread, 20);
     // askSmart, not askStayLeased: the page and the panel must answer the same
     // sentence the same way, and only askSmart can read one as an instruction
-    const answer = question ? await askSmart(ctx, question) : null;
+    const answer = question ? await askSmart(ctx, question, thread) : null;
     const st = llmStatus();
     const pc = askPanelContext(ctx, '/ask');
-    const chips = pc.scope ? pc.chips : ASK_SAMPLES;
     return shell(rq, {
       title: 'Ask StayLeased',
       active: '/ask',
@@ -452,24 +473,35 @@ export function routes(r: Router): void {
             </div>
             ${when(pc.scope, () => html`<span class="badge info">Scoped to ${pc.scope}</span>`)}
             <span class="aichat-brain ${st.live ? 'live' : ''}"><i></i>${st.live ? `Live · ${st.model}` : 'Built-in engine'}</span>
+            ${when(prior.length, () => html`
+              <form method="post" action="/ask/new" class="aichat-new">
+                <button class="btn btn-sm btn-ghost" type="submit">New conversation</button>
+              </form>`)}
           </div>
 
           <div class="aichat-panel">
-            <div class="aichat-thread" id="aichat-thread" aria-live="polite">
-              <div class="aichat-msg agent"><div class="aichat-bubble">${pc.greeting}</div></div>
+            <div class="aichat-thread" id="aichat-thread" aria-live="polite" data-thread="${thread}">
+              ${when(!prior.length, () => html`<div class="aichat-msg agent"><div class="aichat-bubble">${pc.greeting}</div></div>`)}
+              ${prior.map((t) => html`
+                <div class="aichat-msg ${t.role}"><div class="aichat-bubble">${t.text}</div></div>`)}
               ${when(answer, () => html`
                 <div class="aichat-msg you"><div class="aichat-bubble">${question}</div></div>
                 <div class="aichat-msg agent"><div class="aichat-bubble">
                   <div class="aichat-title">${answer!.title} <span class="badge violet">${answer!.matched}</span></div>
                   <div class="aichat-summary">${answer!.summary}</div>
-                  ${answer!.action ? actionCard(answer!.action) : answerBody(answer!)}
+                  ${answer!.action ? actionCard(answer!.action, thread) : answerBody(answer!)}
                 </div></div>`)}
             </div>
             <div class="aichat-chips" id="aichat-chips">
-              ${chips.map((c) => html`<button type="button" class="aichat-chip">${c}</button>`)}
+              ${pc.chips.map((c) => html`<button type="button" class="aichat-chip">${c}</button>`)}
             </div>
+            ${when(pc.actions.length, () => html`
+              <div class="aichat-does" id="aichat-does">
+                <span class="aichat-does-lead">I can also do things —</span>
+                ${pc.actions.map((a) => html`<button type="button" class="aichat-chip act" data-fill="${a}">${a.trim()}…</button>`)}
+              </div>`)}
             <form class="aichat-form" id="aichat-form" autocomplete="off">
-              <input id="aichat-input" name="q" placeholder="Ask anything about your portfolio…" maxlength="300" aria-label="Ask StayLeased" autofocus />
+              <input id="aichat-input" name="q" placeholder="Ask a question, or tell me to do something…" maxlength="300" aria-label="Ask StayLeased" autofocus />
               <button class="aichat-send" type="submit" aria-label="Send">${raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>')}</button>
             </form>
           </div>
@@ -489,24 +521,45 @@ export function routes(r: Router): void {
   });
 
   // fetch endpoint behind the same permission — structured or conversational
+  //
+  // The conversation is NOT posted up from the browser any more. It lives in
+  // ask_turns keyed to this user, which is what lets the same thread be in
+  // front of them in the dock, on the full page, after a reload, and after
+  // confirming an action — four places the old client-side array was emptied.
   r.post('/ask.json', requirePerm('ai:view'), async (rq) => {
     const ctx = rq.ctx as Ctx;
     const question = String(rq.body.q || '').trim().slice(0, 300);
-    if (question.length < 1) return jsonRes({ summary: 'Ask me anything about your portfolio.', links: [], matched: 'noop', live: false });
-    let history: { role: 'you' | 'agent'; text: string }[] = [];
-    try {
-      const rawH = JSON.parse(String(rq.body.history || '[]'));
-      if (Array.isArray(rawH)) history = rawH.slice(-8).map((t: any) => ({ role: t?.role === 'you' ? 'you' as const : 'agent' as const, text: String(t?.text || '').slice(0, 300) })).filter((t) => t.text);
-    } catch { /* ignore */ }
-    const a = await askSmart(ctx, question, history);
+    const thread = String(rq.body.thread || '').slice(0, 40) || currentThread(ctx);
+    if (question.length < 1) {
+      return jsonRes({ summary: 'Ask me anything about your portfolio.', links: [], matched: 'noop', live: false, threadId: thread });
+    }
+    const a = await askSmart(ctx, question, thread);
     return jsonRes({
       title: a.conversational ? null : a.title,
       summary: a.summary,
       matched: a.matched,
       live: a.live,
-      extraHtml: a.action ? actionCard(a.action).s
+      threadId: a.threadId,
+      extraHtml: a.action ? actionCard(a.action, a.threadId).s
         : a.table || a.links.length ? answerBody(a).s : null,
     });
+  });
+
+  // The whole conversation, so any surface can pick it up mid-thread.
+  r.get('/ask/thread.json', requirePerm('ai:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const thread = String(rq.query.get('thread') || '') || currentThread(ctx);
+    return jsonRes({
+      threadId: thread,
+      turns: recall(ctx, thread, 20).map((t) => ({ role: t.role, text: t.text, matched: t.matched })),
+    });
+  });
+
+  // Forgetting is an explicit act now that closing a panel is not one.
+  r.post('/ask/new', requirePerm('ai:view'), (rq) => {
+    const tid = newThread();
+    if (String(rq.body.json || '') === '1') return jsonRes({ threadId: tid });
+    return redirect(`/ask?thread=${tid}`);
   });
 
   // ---------- Essentials content studio ----------
@@ -568,7 +621,12 @@ export function routes(r: Router): void {
   });
 }
 
-// client for the Ask chat page: fetch + typewriter + history (no framework)
+// client for the Ask chat page: fetch + typewriter (no framework)
+//
+// It no longer keeps the conversation. The thread is server-side and this
+// only carries its id, which is what makes a reload, a click on "Full page"
+// and a confirmed action all land back in the same conversation instead of
+// three empty ones.
 const ASK_CHAT_JS = `
 (function () {
   'use strict';
@@ -577,14 +635,9 @@ const ASK_CHAT_JS = `
   var form = document.getElementById('aichat-form');
   var input = document.getElementById('aichat-input');
   var chips = document.getElementById('aichat-chips');
+  var does = document.getElementById('aichat-does');
   if (!thread || !form || !input) return;
-  var hist = [];
-  // seed history from server-rendered bubbles (deep-linked ?q=)
-  Array.prototype.forEach.call(thread.querySelectorAll('.aichat-msg'), function (m) {
-    var role = m.classList.contains('you') ? 'you' : 'agent';
-    var t = (m.textContent || '').trim().slice(0, 300);
-    if (t) hist.push({ role: role, text: t });
-  });
+  var tid = thread.getAttribute('data-thread') || '';
   var busy = false;
   var panel = thread.closest('.aichat-panel');
   function setBusy(on) {
@@ -619,16 +672,15 @@ const ASK_CHAT_JS = `
     fetch('/ask.json', {
       method: 'POST',
       headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
-      body: 'q=' + encodeURIComponent(q) + '&history=' + encodeURIComponent(JSON.stringify(hist.slice(-8))),
+      body: 'q=' + encodeURIComponent(q) + '&thread=' + encodeURIComponent(tid),
     }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.threadId) { tid = d.threadId; thread.setAttribute('data-thread', tid); }
       b.innerHTML = '';
       if (d.title) {
         var t = document.createElement('div'); t.className = 'aichat-title'; t.textContent = d.title;
         b.appendChild(t);
       }
       var sum = document.createElement('div'); sum.className = 'aichat-summary'; b.appendChild(sum);
-      hist.push({ role: 'you', text: q });
-      hist.push({ role: 'agent', text: (d.summary || '').slice(0, 300) });
       typeText(sum, d.summary || 'Hmm — nothing came back. Try again?', function () {
         if (d.extraHtml) {
           var ex = document.createElement('div'); ex.className = 'aichat-extra'; ex.innerHTML = d.extraHtml;
@@ -656,6 +708,40 @@ const ASK_CHAT_JS = `
   if (chips) chips.addEventListener('click', function (e) {
     var c = e.target.closest('.aichat-chip'); if (!c) return;
     ask(c.textContent.trim());
+  });
+  // An action example fills the box and waits. It is half a sentence — the
+  // household or the unit is the operator's to name — so sending it would only
+  // ever produce a refusal.
+  if (does) does.addEventListener('click', function (e) {
+    var c = e.target.closest('[data-fill]'); if (!c) return;
+    input.value = c.getAttribute('data-fill') || '';
+    input.focus();
+    input.setSelectionRange(input.value.length, input.value.length);
+  });
+  // Confirming an action used to navigate: the page reloaded and the
+  // conversation that led to the action was gone, replaced by a flash message.
+  // It now answers in the thread it came from.
+  thread.addEventListener('submit', function (e) {
+    var f = e.target.closest('form[data-ask-act]'); if (!f) return;
+    e.preventDefault();
+    var btn = f.querySelector('button');
+    if (btn) { btn.disabled = true; btn.textContent = 'Working…'; }
+    var body = new URLSearchParams(new FormData(f));
+    body.set('json', '1');
+    fetch('/ask/act', {
+      method: 'POST',
+      headers: { 'content-type': 'application/x-www-form-urlencoded', 'origin': location.origin },
+      body: body.toString(),
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      var card = f.closest('.ask-act');
+      if (card) card.classList.add(d.ok ? 'done' : 'failed');
+      f.remove();
+      var b = bubble('agent');
+      b.className += ' result';
+      typeText(b, d.summary || (d.ok ? 'Done.' : 'That did not go through.'));
+    }).catch(function () {
+      if (btn) { btn.disabled = false; btn.textContent = 'Try again'; }
+    });
   });
 })();
 `;

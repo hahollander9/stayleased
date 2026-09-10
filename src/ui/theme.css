@@ -1314,8 +1314,23 @@ svg.chart path.ct { transform-box: fill-box; transform-origin: 50% 50%; animatio
   .grid.cols-2, .grid.cols-3, .grid.cols-4, .form-grid { grid-template-columns: 1fr; }
   .searchbtn { min-width: 0; }
   .searchbtn .stext, .askbtn .stext, .bizdate .bd-label { display: none; }
-  .brandbar { padding: 0 10px; gap: 8px; }
-  .prop-switch select { max-width: 130px; }
+  /* The bar used to run to 652px inside a 390px screen, which scrolled EVERY
+     page sideways and pushed the Ask button clean off the right edge — the one
+     control this release is about making easy to reach. Hiding the labels was
+     not enough because the wordmark, the switcher and the date pill are all
+     intrinsically wide and none of them could shrink.
+
+     So on a phone: the logo stands in for the wordmark (it still links home),
+     the business date goes — it is on the dashboard and in the simulator, and
+     in a live org it is just today — and the property switcher gives up width
+     first, because a truncated building name is legible and an off-screen
+     control is not. */
+  .brandbar { padding: 0 10px; gap: 6px; min-width: 0; }
+  .brandbar > * { flex-shrink: 0; }
+  .brand .brand-name { display: none; }
+  .bizdate { display: none; }
+  .prop-switch { min-width: 0; flex-shrink: 1; }
+  .prop-switch select { max-width: 100%; min-width: 60px; }
 }
 
 /* ---------- chart hover tooltips ---------- */
@@ -1806,3 +1821,50 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
 .mapping-details > summary:hover, .lane-details > summary:hover { color: var(--ink-2); }
 .lane-details { margin-top: 14px; }
 .lane-details > summary { font-weight: 600; }
+
+/* ---------- Ask: the things it can DO ----------
+   A separate row from the question chips, and it reads differently on purpose.
+   A question chip fires on click; these fill the box and wait, because the
+   household or the unit is the operator's to name. Same shape, quieter — a
+   suggestion of a sentence rather than a sentence. */
+.aichat-does {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 7px;
+  padding: 0 18px 12px; background: var(--surface);
+}
+.aichat-does-lead { font: 600 11.5px/1 var(--font); color: var(--muted); }
+.aichat-chip.act {
+  border-style: dashed; color: var(--muted);
+  background: none;
+}
+.aichat-chip.act:hover {
+  border-style: solid; border-color: rgba(52, 211, 153, .5); color: #6ee7b7;
+  background: rgba(16, 185, 129, .08); box-shadow: 0 4px 14px rgba(16, 185, 129, .2);
+}
+.askdock .aichat-does { padding: 8px 12px 0; flex: none; }
+@media (max-width: 720px) { .aichat-does { padding-left: 12px; padding-right: 12px; } }
+
+/* new conversation — closing the panel no longer forgets, so forgetting is
+   its own control rather than a side effect of leaving */
+.askdock-new {
+  width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--line);
+  background: none; color: var(--muted); cursor: pointer; flex: none;
+  display: grid; place-items: center; transition: color .15s ease, border-color .15s ease;
+}
+.askdock-new:hover { color: var(--ink); border-color: rgba(96, 165, 250, .45); }
+.aichat-new { display: inline; }
+
+/* an action that has been carried out: the card stays as the record of what
+   was confirmed, with the button gone and the outcome in the thread below */
+.ask-act.done { border-color: rgba(52, 211, 153, .45); opacity: .78; }
+.ask-act.failed { border-color: rgba(239, 68, 68, .45); opacity: .78; }
+.aichat-msg.result .aichat-bubble { border-color: rgba(52, 211, 153, .35); }
+
+/* the shortcut, stated on the button — the fastest way to ask is not to go
+   looking for it. Hidden with the label on small screens, where there is no
+   keyboard to press it with. */
+.askbtn .askkbd {
+  background: rgba(255, 255, 255, .18); border: 1px solid rgba(255, 255, 255, .25);
+  border-radius: 4px; padding: 0 4px; font: 600 10.5px/1.5 var(--font); color: #fff;
+  letter-spacing: .02em;
+}
+@media (max-width: 720px) { .askbtn .askkbd { display: none; } }

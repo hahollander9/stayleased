@@ -6,6 +6,10 @@ import type { Ctx } from '../../lib/auth.ts';
 import { propFilter, can } from '../../lib/auth.ts';
 import { propose } from './framework.ts';
 import { planAction, type PendingAction } from './act.ts';
+import {
+  currentThread, recallContext, remember, looksLikeFollowUp, spliceFollowUp,
+  type Recall, type TurnContext,
+} from './memory.ts';
 import { agingRows } from '../m8_receivables/service.ts';
 import { receivablesStats } from '../m8_receivables/payments.ts';
 import { computeDayMetrics } from '../m14_reports/snapshots.ts';
@@ -23,15 +27,29 @@ export interface AskAnswer {
   matched: string; // which handler answered
 }
 
+/** The property a question names.
+ *
+ * The LAST mention wins, not the first. A follow-up is spliced onto the
+ * question it continues ("occupancy at Foundry" + "what about Summit Ridge"),
+ * so the newer name is the one the operator is asking about now — reading the
+ * earlier one would answer the question they had already had answered. */
 function matchProperty(ctx: Ctx, question: string): { id: string; name: string } | null {
   const pf = propFilter(ctx, 'id');
   const props = q<any>(`SELECT id, name, slug FROM properties WHERE org_id=?${pf.sql}`, ctx.orgId, ...pf.params);
   const ql = question.toLowerCase();
+  let best: { id: string; name: string } | null = null;
+  let bestAt = -1;
   for (const p of props) {
-    const words = String(p.name).toLowerCase().split(/\s+/).filter((w: string) => w.length > 3);
-    if (words.some((w: string) => ql.includes(w)) || ql.includes(p.slug)) return p;
+    const terms = [
+      ...String(p.name).toLowerCase().split(/\s+/).filter((w: string) => w.length > 3),
+      String(p.slug || '').toLowerCase(),
+    ].filter(Boolean);
+    for (const t of terms) {
+      const at = ql.lastIndexOf(t);
+      if (at >= 0 && at > bestAt) { bestAt = at; best = p; }
+    }
   }
-  return null;
+  return best;
 }
 
 /** The property a question is about: a name in the question wins; otherwise
@@ -312,8 +330,6 @@ export function askStayLeased(ctx: Ctx, question: string): AskAnswer {
 // follow-ups, and anything the handlers don't match get a grounded
 // conversational answer instead of a cold fallback.
 
-export interface AskChatTurn { role: 'you' | 'agent'; text: string }
-
 function orgFactsBlock(ctx: Ctx): string {
   const n = (sql: string, ...p: unknown[]): number => val<number>(sql, ...p) || 0;
   const units = n('SELECT COUNT(*) FROM units WHERE org_id=?', ctx.orgId);
@@ -331,10 +347,10 @@ function orgFactsBlock(ctx: Ctx): string {
 - maintenance: ${openWos} open work orders`;
 }
 
-const CAPABILITIES = `Things I can pull live from your data (type them like this): "delinquency over $500 at <property>", "which units turn this month", "occupancy at <property>", "collection rate last month", "open work orders", "top vendor spend".`;
+const CAPABILITIES = `Things I can pull live from your data (type them like this): "delinquency over $500 at <property>", "which units turn this month", "occupancy at <property>", "collection rate last month", "open work orders", "top vendor spend". I can also DO things — "finalize disposition for <household>", "waive the late fee on unit <number>", "open a work order for a leaking faucet in <unit>", "email me the aged receivables report every Monday" — each one previewed with the real figures and applied only when you confirm.`;
 
 const STAFF_SYSTEM = `You are "Ask StayLeased", the in-app assistant for a property-management platform, talking to a STAFF member of one company. You have a FACTS block with live portfolio figures and a list of structured questions the system answers with full tables.
-Rules: 1–3 sentences, under 70 words, warm and plain, no markdown. Use ONLY numbers from FACTS — never invent figures, names, or records. If they greet you or ask what you can do, introduce yourself briefly and point at example questions. If they ask something needing data you don't have in FACTS, suggest the closest structured phrasing from the capabilities list or the Reports section. Never claim to have taken an action.`;
+Rules: 1–3 sentences, under 70 words, warm and plain, no markdown. Use ONLY numbers from FACTS — never invent figures, names, or records. If they greet you or ask what you can do, introduce yourself briefly and point at example questions. If they ask something needing data you don't have in FACTS, suggest the closest structured phrasing from the capabilities list or the Reports section. Never claim to have taken an action: you can PROPOSE one, and a proposal always shows the operator a preview and waits for their confirmation. If they ask you to do something, say you will set it up for them to confirm — never that it is done.`;
 
 function smallTalk(question: string): string | null {
   const s = question.toLowerCase().trim();
@@ -354,12 +370,40 @@ export interface SmartAnswer extends AskAnswer {
   /** set when the question was an INSTRUCTION and an operation was planned —
    * nothing has happened yet; the card carries the preview and the confirm */
   action?: PendingAction;
+  /** the conversation this answer belongs to, so the caller can keep asking */
+  threadId: string;
+}
+
+/** A compact record of the rows an answer put on screen.
+ *
+ * Kept small on purpose: enough for "which of those owes the most" to be about
+ * the thing the operator is looking at, not so much that the transcript
+ * becomes the table. */
+function digest(a: AskAnswer): TurnContext['table'] {
+  if (!a.table) return undefined;
+  return {
+    cols: a.table.cols,
+    rows: a.table.rows.slice(0, 10).map((r) => r.map((c) => String(c).slice(0, 60))),
+  };
 }
 
 /** Hybrid ask: pattern handlers first (tables, links, exact numbers); when
  * nothing matches, a grounded conversational answer — Claude when the key is
- * set, a friendly deterministic reply otherwise. Every answer is audited. */
-export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[] = []): Promise<SmartAnswer> {
+ * set, a friendly deterministic reply otherwise. Every answer is audited.
+ *
+ * `threadId` is the conversation. It is server-side and per user, so the same
+ * thread is in front of you on the /ask page, in the dock, after a reload, and
+ * after confirming an action — every one of which used to empty it. */
+export async function askSmart(ctx: Ctx, question: string, threadId?: string): Promise<SmartAnswer> {
+  const tid = threadId || currentThread(ctx);
+  const rc = recallContext(ctx, tid);
+  remember(ctx, tid, 'you', question);
+
+  const reply = (a: Omit<SmartAnswer, 'threadId'>, context?: TurnContext): SmartAnswer => {
+    remember(ctx, tid, 'agent', a.summary, a.matched, context);
+    return { ...a, threadId: tid };
+  };
+
   // 0) an INSTRUCTION, before anything else.
   //
   // Order matters and is not a preference. "Charge the Bhatt household $50 for
@@ -367,7 +411,11 @@ export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[
   // handler would answer it with a report — the operator reads a table, thinks
   // the charge is posted, and it is not. A command answered as a query is
   // worse than a command refused.
-  const planned = await planAction(ctx, question).catch(() => null);
+  //
+  // `rc` is what makes a conversation possible here rather than a sequence of
+  // unrelated commands: an answer to "which Bhatt?" is resolved against the
+  // candidates Ask itself offered, and "charge them $50" has a referent.
+  const planned = await planAction(ctx, question, rc).catch(() => null);
   if (planned) {
     propose(ctx, {
       agent: 'ask', title: `Instruction: ${question.slice(0, 60)}`,
@@ -379,32 +427,41 @@ export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[
         : `Read as an instruction but refused before anything was written: ${planned.message}`,
     });
     if (planned.kind === 'refusal') {
-      return {
+      return reply({
         title: 'I need one more thing', summary: planned.message, links: [], matched: 'action.refused',
         live: true, conversational: false,
-      };
+      }, { pending: planned.pending });
     }
-    return {
+    return reply({
       title: planned.opName, summary: planned.preview.summary, links: [], matched: `action.${planned.opKey}`,
       live: true, conversational: false, action: planned,
-    };
+    }, { entities: planned.entities });
   }
 
   // 1) structured handlers (authoritative, synchronous)
-  for (const h of HANDLERS) {
-    const hit = h(ctx, question);
-    if (hit) {
+  //
+  // Tried twice: once on what was typed, and once on the last question spliced
+  // with it. "which units turn this month" then "what about next month" is a
+  // data question both times, and answering the second with prose because the
+  // sentence alone carries no topic is the assistant losing the thread.
+  const spliced = !rc.pending && rc.lastQuestion && looksLikeFollowUp(question)
+    ? spliceFollowUp(rc.lastQuestion, question)
+    : null;
+  for (const text of spliced ? [question, spliced] : [question]) {
+    for (const h of HANDLERS) {
+      const hit = h(ctx, text);
+      if (!hit) continue;
       // Analytical phrasing ("why…", "what's driving…") gets the story, not
       // just the snapshot: a deterministic causal analysis leads the answer,
       // the live model may rephrase it, and the table stays for receipts.
       let final = hit;
       let live = false;
-      const explain = ANALYTICAL.test(question) ? EXPLAINERS[hit.matched] : undefined;
+      const explain = ANALYTICAL.test(text) ? EXPLAINERS[hit.matched] : undefined;
       if (explain) {
-        const why = explain(ctx, contextProperty(ctx, question));
+        const why = explain(ctx, contextProperty(ctx, text));
         const polished = await llmGenerate({
           system: STAFF_SYSTEM,
-          prompt: `${orgFactsBlock(ctx)}\n\nDeterministic analysis (authoritative — keep every number exactly):\n${why}\n\nStaff asked: "${question}"\n\nRewrite the analysis as a warm 2–3 sentence answer.`,
+          prompt: `${orgFactsBlock(ctx)}\n\nDeterministic analysis (authoritative — keep every number exactly):\n${why}\n\nStaff asked: "${text}"\n\nRewrite the analysis as a warm 2–3 sentence answer.`,
           fallback: why,
           maxTokens: 220,
         });
@@ -413,21 +470,34 @@ export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[
       }
       propose(ctx, {
         agent: 'ask', title: `Q: ${question.slice(0, 70)}`,
-        input: { question }, output: { kind: 'noop.analysis', matched: final.matched, summary: final.summary }, confidence: 0.95,
+        input: { question, resolved: text === question ? undefined : text },
+        output: { kind: 'noop.analysis', matched: final.matched, summary: final.summary }, confidence: 0.95,
         rationale: explain
           ? `Analytical question → the “${hit.matched}” explainer reconstructed the 30-day story from point-in-time metrics and lease dates; numbers are deterministic, phrasing ${live ? 'polished by the live model' : 'deterministic'}.`
-          : `Matched the “${hit.matched}” data handler and answered from live records within the asker's permissions.`,
+          : text === question
+            ? `Matched the “${hit.matched}” data handler and answered from live records within the asker's permissions.`
+            : `Read as a follow-up to “${rc.lastQuestion}” and answered as “${text}” with the “${hit.matched}” handler.`,
       });
-      return { ...final, live, conversational: false };
+      const prop = contextProperty(ctx, text);
+      return reply({ ...final, live, conversational: false }, {
+        table: digest(final),
+        scope: prop ? { id: prop.id, name: prop.name } : null,
+        entities: prop ? { property: { id: prop.id, label: prop.name } } : undefined,
+      });
     }
   }
 
   // 2) conversational: small talk fallback, then Claude with org facts
   const canned = smallTalk(question) || `I didn't find a report for that phrasing. ${CAPABILITIES}`;
-  const transcript = history.slice(-8).map((t) => `${t.role === 'you' ? 'Staff' : 'You'}: ${t.text}`).join('\n');
+  const transcript = rc.turns.slice(-8).map((t) => `${t.role === 'you' ? 'Staff' : 'You'}: ${t.text}`).join('\n');
+  // The rows last shown travel with the transcript, so "which of those owes
+  // the most" is a question about what is on screen rather than a fresh one.
+  const shown = rc.table
+    ? `\n\nRows currently on screen (${rc.table.cols.join(' · ')}):\n${rc.table.rows.map((r) => r.join(' · ')).join('\n')}`
+    : '';
   const res = await llmGenerate({
     system: STAFF_SYSTEM,
-    prompt: `${orgFactsBlock(ctx)}\n\nCapabilities: ${CAPABILITIES}\n\n${transcript ? 'Conversation so far:\n' + transcript + '\n\n' : ''}Staff asks: "${question}"\n\nAnswer:`,
+    prompt: `${orgFactsBlock(ctx)}\n\nCapabilities: ${CAPABILITIES}${shown}\n\n${transcript ? 'Conversation so far:\n' + transcript + '\n\n' : ''}Staff asks: "${question}"\n\nAnswer:`,
     fallback: canned,
     maxTokens: 220,
   });
@@ -436,13 +506,15 @@ export async function askSmart(ctx: Ctx, question: string, history: AskChatTurn[
     agent: 'ask', title: `Q: ${question.slice(0, 70)}`,
     input: { question }, output: { kind: 'noop.analysis', matched: res.live ? 'conversation' : 'smalltalk', summary }, confidence: 0.7,
     rationale: res.live
-      ? 'No data handler matched → conversational answer from the live model, grounded only in the FACTS block (it may not invent figures).'
+      ? 'No data handler matched → conversational answer from the live model, grounded only in the FACTS block and the rows already on screen (it may not invent figures).'
       : 'No data handler matched and no live model is configured → deterministic conversational reply pointing at the structured questions.',
   });
-  return {
+  return reply({
     title: 'Ask StayLeased', summary, links: [], matched: res.live ? 'conversation' : 'smalltalk',
     live: res.live, conversational: true,
-  };
+  // The table stays in context across a conversational turn: a follow-up about
+  // the rows must not be the thing that forgets them.
+  }, { table: rc.table || undefined });
 }
 
 export function askBrainLive(): boolean {
@@ -451,26 +523,67 @@ export function askBrainLive(): boolean {
 
 // ---------- context for the everywhere-panel (and the /ask page) ----------
 
-/** Suggested questions by app area. Each phrasing hits a structured handler
- * so a click always lands a real table, not a fallback. Unnamed questions
- * scope to the current property automatically via contextProperty. */
+/** Suggested questions by app area, as TEMPLATES.
+ *
+ * `<property>` is filled from the org's own portfolio at render time. The
+ * previous list named Summit Ridge, Foundry and Cardinal — the demo seed's
+ * properties — so in a real customer's org every one of those chips asked
+ * about a building that does not exist and came back with the fallback. A
+ * suggestion the product cannot answer is worse than no suggestion: it is the
+ * first thing a new operator clicks. */
 const SECTION_CHIPS: [RegExp, string[]][] = [
   [/^\/(leads|tours|leasing|funnel|applications|syndication|cms|hub\/leasing)/, [
-    'which units turn this month', 'occupancy right now', 'pricing recommendations', 'vacancy and exposure']],
+    'which units turn this month', 'occupancy at <property>', 'pricing recommendations', 'vacancy and exposure']],
   [/^\/(residents|leases|renewals|hub\/residents|inbox|comms)/, [
     'which leases end next month', 'delinquency over $500', 'collection rate this month', 'occupancy right now']],
   [/^\/(receivables|delinquency|deposits|gl|banking|payables|budgets|close|statements|utilities|hub\/financials)/, [
-    'collection rate last month', 'delinquency over $500', 'top vendor spend', 'which leases end this month']],
+    'collection rate last month', 'delinquency over $500 at <property>', 'top vendor spend', 'which leases end this month']],
   [/^\/(workorders|turns|dispatch|inspections|pm\b|inventory|purchasing|vendors|facilities|hub\/operations)/, [
     'open work orders', 'which units turn this month', 'top vendor spend', 'occupancy right now']],
   [/^\/(properties|units|map|insurance|hub\/property)/, [
-    'occupancy right now', 'vacancy and exposure', 'open work orders', 'which units turn this month']],
+    'occupancy at <property>', 'vacancy and exposure', 'open work orders', 'which units turn this month']],
+];
+
+const DEFAULT_CHIPS = [
+  'occupancy right now', 'delinquency over $500 at <property>',
+  'which units turn this month', 'collection rate last month',
+];
+
+/** What Ask can be TOLD to do, by permission.
+ *
+ * These are prefills, not questions: clicking one puts the sentence in the box
+ * with the part you must supply left for you, and sends nothing. An action
+ * chip that fired on click would either need a real household baked into it —
+ * suggesting, in a panel, that this specific person's deposit be settled — or
+ * would send a placeholder and be refused. Neither is a suggestion; both are a
+ * worse first impression than showing the shape and waiting. */
+const ACTION_HINTS: [string, string][] = [
+  ['latefees:waive', 'waive the late fee on unit '],
+  ['deposits:manage', 'finalize disposition for '],
+  ['workorders:manage', 'open a work order for '],
+  ['reports:view', 'email me the aged receivables report every Monday'],
 ];
 
 export interface AskPanelContext {
   scope: string | null; // property name when answers are scoped
   greeting: string;
   chips: string[];
+  /** sentences to prefill the box with, for the things Ask can do */
+  actions: string[];
+}
+
+/** A property name to put in the examples: where the operator is standing, or
+ * failing that the largest building in the portfolio. Real either way — the
+ * examples have to be things this org can actually answer. */
+function exampleProperty(ctx: Ctx, current: { id: string; name: string } | null): string | null {
+  if (current) return current.name;
+  const pf = propFilter(ctx, 'p.id');
+  const row = q1<{ name: string }>(
+    `SELECT p.name, COUNT(u.id) AS n FROM properties p LEFT JOIN units u ON u.property_id=p.id
+      WHERE p.org_id=?${pf.sql} GROUP BY p.id ORDER BY n DESC, p.name LIMIT 1`,
+    ctx.orgId, ...pf.params,
+  );
+  return row?.name || null;
 }
 
 /** What the Ask panel opens with: a greeting grounded in live figures for
@@ -494,9 +607,20 @@ export function askPanelContext(ctx: Ctx, path: string): AskPanelContext {
     const units = val<number>('SELECT COUNT(*) FROM units WHERE org_id=?', ctx.orgId) || 0;
     const occ = val<number>(`SELECT COUNT(*) FROM units WHERE org_id=? AND status='occupied'`, ctx.orgId) || 0;
     const owed = ledger ? agingRows(ctx, {}).reduce((s, a) => s + a.balance, 0) : 0;
-    greeting = `Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: ${units ? `${Math.round((occ / units) * 1000) / 10}% occupied` : 'no units yet'}${ledger ? `, ${usd(owed)} outstanding right now` : ''}. Name any property to zoom in.`;
+    greeting = `Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: ${units ? `${Math.round((occ / units) * 1000) / 10}% occupied` : 'no units yet'}${ledger ? `, ${usd(owed)} outstanding right now` : ''}. Name any property to zoom in, or tell me to do something and I'll show you the change before it lands.`;
   }
-  const chips = SECTION_CHIPS.find(([re]) => re.test(path))?.[1]
-    || ['occupancy right now', 'delinquency over $500', 'which units turn this month', 'collection rate last month'];
-  return { scope: prop?.name || null, greeting, chips };
+
+  const example = exampleProperty(ctx, prop);
+  const chips = (SECTION_CHIPS.find(([re]) => re.test(path))?.[1] || DEFAULT_CHIPS)
+    // A template naming a property the org does not have is dropped rather
+    // than rendered with the placeholder showing.
+    .map((c) => (c.includes('<property>') ? (example ? c.replace('<property>', example) : null) : c))
+    .filter((c): c is string => !!c);
+
+  return {
+    scope: prop?.name || null,
+    greeting,
+    chips,
+    actions: ACTION_HINTS.filter(([perm]) => can(ctx, perm)).map(([, text]) => text).slice(0, 3),
+  };
 }
