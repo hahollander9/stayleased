@@ -1814,3 +1814,75 @@ BUILDLOG entry and DECISIONS #93–#96 appended against the current tail.
 
 Gates: `tsc --noEmit` clean · unit 502/502 (15 new) · seeded e2e askmemory·ai·askdock·smoke·
 navmenus 24/24, clientready·goldenpath·workingmodel·tablesort·crm 29/29.
+
+## 2026-09-10 — Billing: what the operator pays, with the arithmetic on the page
+
+Everything in this schema until now was money a RESIDENT owes an operator. This is the other
+direction, and the first place the company charges anyone.
+
+**The pricing model, as found.** The homepage publishes "Early access — Free, invitation
+required"; the only dollar figure on the band is $300–800/mo for *what it replaces*. Nothing in
+the app knew about a plan: `orgs` had no price, seat or status column, and the one
+`billing_start_date` in the schema is resident rent, unrelated. So the price was a decision, not
+a lookup — Henry set it at **$6.00 per unit per month, no minimum**, with early-access orgs
+staying unbilled and the page showing what they *would* pay. Flagged at the time and repeated
+here: at $6/unit a 50-unit building pays $300 and a 100-unit pays $600, which lands inside the
+$300–800 the homepage cites as legacy spend. The price is deliberate; the comparison band is
+worth revisiting separately.
+
+**The design idea is one sentence: the bill shows its working.** Every other number in this
+product can be checked — the import reconciles to the source report's own summary page, each
+agent action carries its rationale, the ledger balances. A total rendered as one figure would be
+the only number in the application asking to be taken on faith, and it is the one where being
+wrong costs the customer money. So the page reads as an argument rather than a dashboard:
+`394 units × $6.00 = $2,364.00`, then the per-property table that produces the 394, on the page
+rather than behind a disclosure. The e2e test adds the rows up and asserts they equal the billed
+count, because that is exactly what an operator does.
+
+**Metering is every unit, vacant or occupied.** Billing only on occupancy would drop the price
+precisely when a vacancy makes the software most useful, and "every unit" is the number an
+operator can take from their own property list without knowing how we count.
+
+**Stripe is real, and card data never touches this server.** Checkout to start, the Billing
+Portal to manage, the hosted invoice to pay — three redirects, no card field anywhere in this
+codebase, which is what keeps the application out of PCI scope entirely. Raw HTTPS, no SDK, like
+the Anthropic adapter: this repo runs on one dependency and a billing integration is the last
+place to take on a transitive tree. Everything is inert until `STAYLEASED_STRIPE_SECRET_KEY` is
+set — the page says so plainly and renders no checkout button rather than one that fails on
+click.
+
+**The webhook is the one deliberately unauthenticated route in the app**, because Stripe carries
+no session. The signature is therefore the whole authentication, and it is verified over the raw
+bytes (`Rq.rawBody`, kept for JSON only — a parse and re-serialize verifies against nothing),
+constant-time, with a replay window, accepting multiple `v1` signatures for secret rotation.
+Stripe's event id is the idempotency key: a redelivery returns without touching anything, which
+is tested by replaying a handled `subscription.updated` carrying `status: canceled` and asserting
+the live plan survives it.
+
+`billed_units` records what was last sent to Stripe, so drift between the meter and the
+subscription is shown on the page with a button to fix it, rather than reconciled silently in a
+job. The price lives on the account row, not in config at render time: moving the global default
+must never re-price anyone already on the books.
+
+Verified in a browser at both widths before the gates were written, which caught the lead
+paragraph in the flush "count" card running to the card border — `.card-body.flush` gives up its
+padding for the table, and a note above it needs it back.
+
+BUILDLOG entry and DECISIONS #97–#99 appended against the current tail.
+
+One copy change outside the module, and its pin moved in the same commit. The Connections page
+said "Payments (ACH & cards) — real money movement (Stripe) is not connected yet", which is still
+true of RESIDENT payments and now reads as a contradiction two clicks from a Stripe-backed
+billing page. It is "Resident payments" now, and says the operator's own subscription is billed
+for real. `workingmodel.test.ts` pinned `/Payments/`; it pins `/Resident payments/` plus the
+subscription line, which is the distinction actually worth guarding.
+
+Gates: `tsc --noEmit` clean · unit 522/522 (20 new) · seeded e2e billing·smoke·navmenus·setup
+22/22, workingmodel 7/7, clientready·goldenpath·askmemory green · design detector clean on the
+new page and styles.
+
+**Deploy note:** three new environment variables, all optional and all off by default —
+`STAYLEASED_STRIPE_SECRET_KEY`, `STAYLEASED_STRIPE_WEBHOOK_SECRET`, and
+`STAYLEASED_BILLING_UNIT_PRICE_CENTS` (defaults to 600). The webhook endpoint to register with
+Stripe is `POST /webhooks/stripe`, subscribed to `customer.subscription.*`, `invoice.paid`,
+`invoice.payment_failed` and `invoice.finalized`.

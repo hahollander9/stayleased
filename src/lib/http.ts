@@ -22,6 +22,13 @@ export interface Rq {
   params: Record<string, string>;
   query: URLSearchParams;
   body: Record<string, any>;
+  /** The exact bytes of a JSON body, kept only for that content type.
+   *
+   * A webhook signature is computed over the payload as sent, so a parse and
+   * re-serialize — different key order, different number formatting — verifies
+   * against nothing. Only JSON carries this: form posts have no signatures and
+   * multipart bodies are files, which there is no reason to hold twice. */
+  rawBody?: Buffer;
   uploads: Upload[];
   cookies: Record<string, string>;
   ip: string;
@@ -311,6 +318,7 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: AppOption
         r.body = fields;
         r.uploads = uploads;
       } else if (ctype.includes('application/json')) {
+        r.rawBody = bodyBuf;
         try {
           r.body = bodyBuf.length ? JSON.parse(bodyBuf.toString('utf8')) : {};
         } catch {

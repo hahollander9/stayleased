@@ -400,6 +400,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
             <div class="menu-head">${ctx.userName}<br /><span class="muted">${ctx.userEmail}</span></div>
             <hr />
             ${when(can(ctx, 'admin:settings'), () => html`<a href="/admin/settings">Org settings</a>`)}
+            ${when(can(ctx, 'admin:billing'), () => html`<a href="/admin/billing">Billing</a>`)}
             <a href="/me">My profile</a>
             <hr />
             ${APPEARANCE}

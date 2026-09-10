@@ -438,6 +438,9 @@ small, .small { font-size: 12px; }
 .card > .card-head h2 { flex: 1; font-size: 13px; text-transform: uppercase; letter-spacing: .07em; color: var(--ink-2); font-family: var(--font); font-weight: 700; }
 .card > .card-body { padding: 14px 16px; }
 .card > .card-body.flush { padding: 0; }
+/* A flush card gives up its padding so a table can meet the card edge; a note
+   that leads such a table still needs it, or the sentence runs to the border. */
+.card > .card-body.flush > .flush-note { padding: 12px 16px 2px; margin: 0; }
 .grid { display: grid; gap: 14px; }
 .grid.cols-2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .grid.cols-3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -1868,3 +1871,52 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
   letter-spacing: .02em;
 }
 @media (max-width: 720px) { .askbtn .askkbd { display: none; } }
+
+/* ---------- Billing: the statement ----------
+   The one number in this product that costs the customer money if it is wrong,
+   so it is presented the way every other number here is: with its working
+   shown. The multiplication is the composition — count, price, result on one
+   line — rather than a total with the arithmetic filed somewhere behind it.
+   The per-property table underneath is evidence, not a detail view. */
+.bill {
+  display: grid; grid-template-columns: 1fr auto; gap: 20px 32px; align-items: center;
+  border: 1px solid var(--line); border-radius: var(--r-md, 12px);
+  background: linear-gradient(180deg, var(--surface-2), var(--surface));
+  padding: 20px 24px; margin-bottom: 16px;
+}
+.bill-state { min-width: 0; }
+.bill-state p { margin: 8px 0 0; color: var(--ink-2); font-size: 13px; max-width: 62ch; line-height: 1.55; }
+.bill-sum { text-align: right; }
+
+/* the working, at a size that reads as arithmetic rather than as a stat */
+.bill-calc {
+  display: flex; align-items: baseline; justify-content: flex-end; flex-wrap: wrap; gap: 0 7px;
+  color: var(--muted); font-size: 14px;
+}
+.bill-calc .bc-n { color: var(--ink-2); font-weight: 650; font-variant-numeric: tabular-nums; }
+.bill-calc .bc-op { color: var(--faint); padding: 0 2px; }
+
+.bill-total {
+  display: flex; align-items: baseline; justify-content: flex-end; gap: 8px; margin-top: 4px;
+}
+.bill-total .bt-eq { color: var(--faint); font-size: 22px; font-weight: 400; }
+.bill-total .bt-amt {
+  font-family: var(--display, inherit); font-size: 40px; font-weight: 700;
+  letter-spacing: -.03em; color: var(--ink); font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+.bill-total .bt-per { color: var(--muted); font-size: 13px; font-weight: 600; }
+.bill-note { margin: 8px 0 0; color: var(--muted); font-size: 12.5px; }
+
+@media (max-width: 720px) {
+  .bill { grid-template-columns: 1fr; gap: 16px; padding: 16px; }
+  .bill-sum { text-align: left; }
+  .bill-calc, .bill-total { justify-content: flex-start; }
+  .bill-total .bt-amt { font-size: 34px; }
+}
+
+/* a callout that carries an action keeps it on the same line where it fits */
+.callout .inline-form { display: inline; margin-left: 6px; }
+.callout .inline-form .btn { vertical-align: baseline; }
+
+[data-theme="light"] .bill { background: linear-gradient(180deg, #fff, var(--surface)); }

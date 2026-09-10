@@ -25,7 +25,7 @@ export type Role = (typeof ROLES)[number];
 /** Full permission catalog, grouped by module. */
 export const PERMISSIONS: Record<string, string[]> = {
   dashboard: ['view'],
-  admin: ['org', 'staff', 'settings', 'audit', 'jobs', 'api', 'impersonate', 'platform'],
+  admin: ['org', 'staff', 'settings', 'audit', 'jobs', 'api', 'impersonate', 'billing', 'platform'],
   properties: ['view', 'manage'],
   units: ['view', 'manage'],
   leasing: ['view', 'manage', 'center'], // leads, guest cards, tours, quotes
