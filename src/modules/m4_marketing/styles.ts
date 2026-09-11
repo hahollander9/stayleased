@@ -497,17 +497,45 @@ html[data-theme="dark"] .mk-dark { background: #0D1A13; border-top: 1px solid rg
 .mk-gov h4 { font-size: 14px; margin-bottom: 6px; color: var(--ink); font-weight: 640; }
 .mk-gov p { font-size: 12.5px; color: var(--mut); }
 
-/* pricing */
-.mk-price-row { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; max-width: 880px; }
+/* pricing
+   The band used to run two equal cards: the early-access offer beside a legacy
+   software cost range. The largest number on StayLeased's own pricing section
+   therefore belonged to a competitor — and the layered-cost argument it made is
+   already made, better, by the comparison table further up the page. The price
+   is the subject now, and it is the biggest thing here. */
+.mk-price-row { display: grid; grid-template-columns: 1.2fr .8fr; gap: 18px; max-width: 920px; align-items: start; }
 .mk-price { position: relative; background: var(--card); border: 1px solid var(--line-2); border-radius: 16px; padding: 32px; box-shadow: 0 1px 2px rgba(19,21,25,.05), 0 14px 34px -18px rgba(19,21,25,.22); transition: transform .2s var(--ease), box-shadow .2s ease; }
-.mk-price:first-child { border: 2px solid var(--accent); }
-.mk-price:first-child::before { content: 'Early access'; position: absolute; top: -12px; left: 28px; font-size: 10.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #fff; background: var(--grad); border-radius: 999px; padding: 4px 12px; }
+.mk-price-main { border: 2px solid var(--accent); }
 .mk-price:hover { transform: translateY(-2px); box-shadow: 0 16px 34px -22px rgba(20,18,14,.35); }
 .mk-price-tag { font-size: 11.5px; font-weight: 650; letter-spacing: .13em; text-transform: uppercase; color: var(--mut); margin-bottom: 10px; }
 .mk-price-big { font-size: 46px; font-weight: 500; letter-spacing: -.02em; margin-bottom: 8px; font-family: var(--display); color: var(--ink); }
 .mk-price-big span { font-size: 15px; font-weight: 500; color: var(--mut); font-family: 'InterVar', sans-serif; }
 .mk-price p { color: var(--ink2); font-size: 14.5px; margin-bottom: 14px; }
-@media (max-width: 980px) { .mk-price-row { grid-template-columns: 1fr; } }
+
+/* the price itself: one figure, at a size that says it is the answer */
+.mk-price-main .mk-price-big {
+  display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap;
+  font-size: 82px; font-weight: 600; letter-spacing: -.045em; line-height: .95; margin-bottom: 14px;
+}
+.mk-price-main .mk-price-big .mk-pd { font-size: 40px; font-weight: 500; letter-spacing: -.02em; align-self: flex-start; margin-top: .12em; color: var(--ink); font-family: var(--display); }
+/* letter-spacing in em computes against THIS element's font-size and then
+   inherits as that absolute length: -.045em of 82px is -3.7px, which lands on
+   the 15.5px label and overlaps its letters into a smear. Reset, don't rescale. */
+.mk-price-main .mk-price-big span:not(.mk-pd) {
+  font-size: 15.5px; font-weight: 600; color: var(--mut);
+  letter-spacing: normal; font-family: 'InterVar', sans-serif; align-self: flex-end; padding-bottom: .28em;
+}
+.mk-price-eg { font-size: 15px; }
+.mk-price-eg b { color: var(--ink); font-weight: 650; }
+
+.mk-price-now-head { font-family: var(--display); font-size: 25px; font-weight: 560; letter-spacing: -.02em; color: var(--ink); margin-bottom: 10px; line-height: 1.15; }
+.mk-price-now p { font-size: 14px; }
+
+@media (max-width: 980px) {
+  .mk-price-row { grid-template-columns: 1fr; }
+  .mk-price-main .mk-price-big { font-size: 64px; }
+  .mk-price-main .mk-price-big .mk-pd { font-size: 32px; }
+}
 
 /* walkthrough */
 .mk-two-col { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: start; }

@@ -248,9 +248,15 @@ test('gate: AI Activity shows every action; dials render with guardrails; autono
 
   await mgr.goto(`${base}/ai?view=dials`);
   const dials = (await mgr.textContent('.content')) || '';
-  assert.match(dials, /Hard guardrails/);
+  // Card renamed from "Hard guardrails (not configurable)" to say what it is
+  // for in the operator's terms; the promises themselves are the pin.
+  assert.match(dials, /What no dial can switch off/);
   assert.match(dials, /never threatens/);
-  assert.match(dials, /never commits below the approved matrix band/);
+  assert.match(dials, /never commits below your matrix/);
+  // and the three settings are laid out as an ordered scale, not a paragraph
+  assert.match(dials, /Draft only/);
+  assert.match(dials, /Approve to send/);
+  assert.match(dials, /Autonomous/);
 
   // payments draft-only: approving marks reviewed without sending
   const { q1 } = await import('../src/lib/db.ts');

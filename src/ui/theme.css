@@ -1920,3 +1920,113 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
 .callout .inline-form .btn { vertical-align: baseline; }
 
 [data-theme="light"] .bill { background: linear-gradient(180deg, #fff, var(--surface)); }
+
+/* ---------- Autonomy: the ladder and the dial ----------
+   This is the screen where an operator decides how much the AI may do without
+   them. The three answers are an ordered scale of delegation, and both the old
+   treatments flattened that: a run-on paragraph explaining all three at once,
+   and a native <select> per cell that made "autonomous" look exactly like
+   "draft only". Position carries the meaning here, so the controls show it. */
+
+/* the three settings, in order, gaining weight as they hand over more */
+.ladder { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 16px; }
+.rung {
+  display: flex; gap: 12px; padding: 14px 16px;
+  border: 1px solid var(--line); border-radius: var(--r-md, 12px);
+  background: var(--surface);
+}
+.rung-step {
+  flex: none; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center; font: 700 11px/1 var(--font);
+  background: rgba(154, 170, 196, .14); color: var(--muted); border: 1px solid var(--line);
+}
+.rung-body { min-width: 0; }
+.rung-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.rung-head b { font-size: 13.5px; color: var(--ink); letter-spacing: -.01em; }
+.rung-who { font: 600 11px/1.4 var(--font); color: var(--muted); }
+.rung p { margin: 5px 0 0; font-size: 12.5px; line-height: 1.5; color: var(--ink-2); }
+
+/* each rung takes the colour its dial position uses, so the legend and the
+   grid below it are the same language */
+.rung-approve { border-color: rgba(96, 165, 250, .3); }
+.rung-approve .rung-step { background: var(--info-soft); color: #bfdbfe; border-color: rgba(96, 165, 250, .35); }
+.rung-auto { border-color: rgba(52, 211, 153, .32); }
+.rung-auto .rung-step { background: var(--accent-soft); color: var(--accent-ink); border-color: rgba(52, 211, 153, .38); }
+
+@media (max-width: 860px) { .ladder { grid-template-columns: 1fr; } }
+
+/* the dial: a segmented control, because the position is the information */
+.dial-form { margin: 0; }
+/* No track fill. `--surface-3` is one of the hard-coded dark surfaces with no
+   light-theme override, and using it here painted a dark blob into a light
+   table — with the UNSELECTED options reading heavier than the selected one,
+   which is exactly backwards for a control whose whole job is showing which
+   position it is in. The group is a hairline; only the selection is filled. */
+.dial {
+  display: inline-flex; padding: 2px; gap: 2px; border-radius: 999px;
+  border: 1px solid var(--line); background: none;
+}
+.dial-opt { position: relative; cursor: pointer; }
+.dial-opt input {
+  position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer;
+  /* the input still receives focus and keyboard, so the control is operable
+     without a pointer; the ring below is drawn on the visible label */
+}
+.dial-opt span {
+  display: block; padding: 4px 10px; border-radius: 999px;
+  font: 650 11.5px/1.5 var(--font); color: var(--muted); white-space: nowrap;
+  transition: background .15s ease, color .15s ease;
+}
+.dial-opt:hover span { color: var(--ink-2); background: rgba(154, 170, 196, .1); }
+.dial-opt input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.dial-opt.on span { background: rgba(154, 170, 196, .18); color: var(--ink); }
+/* the selected position colours the whole control, so a grid of these can be
+   scanned for "where did I grant autonomy" without reading a single label */
+.dial.lv-approve { border-color: rgba(96, 165, 250, .35); }
+.dial.lv-approve .dial-opt.on span { background: var(--info-soft); color: #bfdbfe; }
+.dial.lv-auto { border-color: rgba(52, 211, 153, .4); background: var(--accent-soft); }
+.dial.lv-auto .dial-opt.on span { background: var(--accent-soft); color: var(--accent-ink); }
+
+/* read-only: same colour language, no control */
+.dial-ro {
+  display: inline-block; padding: 4px 11px; border-radius: 999px;
+  font: 650 11.5px/1.5 var(--font); border: 1px solid var(--line);
+  background: rgba(154, 170, 196, .14); color: var(--ink-2);
+}
+.dial-ro.lv-approve { border-color: rgba(96, 165, 250, .35); background: var(--info-soft); color: #bfdbfe; }
+.dial-ro.lv-auto { border-color: rgba(52, 211, 153, .4); background: var(--accent-soft); color: var(--accent-ink); }
+
+/* the grid itself.
+   The agent cell is a row header for screen readers, which means it inherits
+   the column-header styling — uppercase, 10.5px, and nowrap, the last of which
+   ran the agent's description straight across the dials beside it. All four are
+   reset here: it is a heading semantically, body copy visually. */
+.dialgrid { table-layout: fixed; }
+.dialgrid th[scope="row"] {
+  text-align: left; font-weight: 500; text-transform: none; letter-spacing: normal;
+  font-size: 13px; white-space: normal; background: none; color: var(--ink-2);
+  width: 34%; vertical-align: middle;
+}
+.dialgrid th[scope="row"] b { display: block; color: var(--ink); font-size: 13px; font-weight: 650; }
+.dialgrid th[scope="row"] .small { display: block; margin-top: 2px; line-height: 1.45; }
+.dialgrid td { vertical-align: middle; }
+/* the dial needs its own width; the agent column takes what is left */
+.dialgrid thead th:not([scope="row"]) { width: auto; }
+.dial-lede { padding: 12px 16px 2px; margin: 0; }
+.dial-foot { padding: 10px 16px; margin: 0; }
+
+/* the honest headline count: how much has actually been handed over */
+.dial-count { font: 650 11.5px/1 var(--font); color: var(--muted); }
+.dial-count.on { color: var(--accent-ink); }
+
+/* The blue inks are dark-theme values; light gets the darker `--info`, the same
+   way .badge.info and .callout.info already do. Without this the selected
+   "Approve" is pale blue on pale blue and fails contrast on a white card. */
+[data-theme="light"] .rung-approve .rung-step,
+[data-theme="light"] .dial.lv-approve .dial-opt.on span,
+[data-theme="light"] .dial-ro.lv-approve { color: var(--info); }
+
+.guardrails { display: grid; gap: 7px; }
+.guardrails li { line-height: 1.55; }
+.guardrails b { color: var(--ink); font-weight: 640; }
+

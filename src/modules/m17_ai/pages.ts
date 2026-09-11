@@ -121,7 +121,12 @@ export function routes(r: Router): void {
           <input type="hidden" name="view" value="${view}" />
           ${field('Agent', select('agent', AGENTS.map((a): [string, string] => [a.key, a.name]), agentF, { blank: 'All agents' }))}
         </form>
-        ${view === 'dials' ? dialsView(ctx, props, canApprove) : view === 'history' ? historyView(history) : queueView(pending, canApprove)}`,
+        ${view === 'dials'
+          // canConfigure, not canApprove: changing a dial is gated on
+          // ai:configure by the POST route, so passing the approval permission
+          // here handed a property manager controls that fail on click.
+          ? dialsView(ctx, props, canConfigure)
+          : view === 'history' ? historyView(history) : queueView(pending, canApprove)}`,
     });
   });
 
@@ -173,34 +178,107 @@ export function routes(r: Router): void {
     );
   }
 
+  /** The three settings, as a scale rather than a paragraph.
+   *
+   * This is the page where an operator decides how much the AI may do without
+   * them, and the three answers form an ordered scale of delegation — which a
+   * run-on sentence and a native <select> both flatten into "pick one of
+   * three". So the modes are laid out in order, each carrying the one sentence
+   * that actually distinguishes it: who sends. */
+  const LADDER: { key: Autonomy; name: string; who: string; body: string }[] = [
+    {
+      key: 'draft', name: 'Draft only', who: 'You send',
+      body: 'The agent writes it and stops. Approving marks it reviewed; a person still does the sending.',
+    },
+    {
+      key: 'approve', name: 'Approve to send', who: 'You click, it sends',
+      body: 'The draft waits in the queue. One click executes exactly what you read — nothing is rewritten after you approve it.',
+    },
+    {
+      key: 'auto', name: 'Autonomous', who: 'It sends, you review after',
+      body: 'Runs immediately, fully audited. Anything low-confidence still stops and waits, and the guardrails below hold regardless.',
+    },
+  ];
+
   function dialsView(ctx: Ctx, props: any[], canConfigure: boolean): ReturnType<typeof html> {
     const dialAgents = AGENTS.filter((a) => a.dial);
+    // What is actually delegated right now, counted across every agent and
+    // property. An operator's real question on this screen is "how much have I
+    // given away", and a grid of controls answers it only if you read all of it.
+    const cells = dialAgents.flatMap((a) => [null, ...props.map((p) => p.id)].map((pid) => autonomyFor(ctx, a.key, pid)));
+    const autos = cells.filter((c) => c === 'auto').length;
+
     return html`
-      ${card('How the dials work', html`<p><b>Draft-only</b> — the agent suggests; approving marks it reviewed and a human sends manually. <b>Approve-to-send</b> — one click executes exactly what you approved. <b>Autonomous</b> — executes immediately with a full audit trail; low-confidence items (like "I want to talk to a human") still hold for staff.</p>`)}
-      ${card('Org defaults + per-property overrides', html`
-        <table class="tbl"><thead><tr><th>Agent</th><th>Org default</th>${props.map((p) => html`<th>${p.name}</th>`)}</tr></thead>
-        <tbody>${dialAgents.map((a) => html`<tr>
-          <td><b>${a.name}</b><br /><span class="small muted">${a.describe}</span></td>
-          <td>${dialCell(ctx, a.key, null, canConfigure)}</td>
-          ${props.map((p) => html`<td>${dialCell(ctx, a.key, p.id, canConfigure)}</td>`)}
-        </tr>`)}</tbody></table>
-        ${when(!canConfigure, () => html`<p class="small muted">You can view the dials; changing them needs ai:configure.</p>`)}`)}
-      ${card('Hard guardrails (not configurable)', html`<ul>
-        <li>Payments AI never threatens — a banned-phrase filter scrubs drafts and every message embeds the dispute path.</li>
-        <li>Renewals AI never commits below the approved matrix band — out-of-band counters always escalate to the PM.</li>
-        <li>Maintenance AI can never <i>downgrade</i> an emergency — keyword escalation is unconditional.</li>
-        <li>Leasing AI hands off whenever a prospect asks for a human, even on autonomous.</li>
-        <li>Ask StayLeased is read-only and works within the same permissions as every screen.</li>
+      <section class="ladder" aria-label="What the three settings mean">
+        ${LADDER.map((m, i) => html`
+          <div class="rung rung-${m.key}">
+            <div class="rung-step" aria-hidden="true">${i + 1}</div>
+            <div class="rung-body">
+              <div class="rung-head"><b>${m.name}</b><span class="rung-who">${m.who}</span></div>
+              <p>${m.body}</p>
+            </div>
+          </div>`)}
+      </section>
+
+      ${card(
+        'Who may act without you',
+        html`
+          <p class="small muted dial-lede">Set per agent, and per property where a building needs to differ from the rest. Changes take effect on the next action and are themselves audited.</p>
+          <div class="tbl-wrap"><table class="tbl dialgrid">
+            <thead><tr>
+              <th scope="col">Agent</th>
+              <th scope="col">Org default</th>
+              ${props.map((p) => html`<th scope="col">${p.name}</th>`)}
+            </tr></thead>
+            <tbody>${dialAgents.map((a) => html`<tr>
+              <th scope="row"><b>${a.name}</b><span class="small muted">${a.describe}</span></th>
+              <td>${dialCell(ctx, a.key, null, canConfigure)}</td>
+              ${props.map((p) => html`<td>${dialCell(ctx, a.key, p.id, canConfigure)}</td>`)}
+            </tr>`)}</tbody>
+          </table></div>
+          ${when(!canConfigure, () => html`<p class="small muted dial-foot">You can see every dial here; changing one needs <code>ai:configure</code>.</p>`)}`,
+        {
+          flush: true,
+          actions: html`<span class="dial-count ${autos ? 'on' : ''}">${autos
+            ? `${autos} of ${cells.length} set to autonomous`
+            : 'Nothing runs autonomously'}</span>`,
+        },
+      )}
+
+      ${card('What no dial can switch off', html`<ul class="guardrails">
+        <li><b>Payments AI never threatens.</b> A banned-phrase filter scrubs every draft, and each message carries the dispute path.</li>
+        <li><b>Renewals AI never commits below your matrix.</b> An out-of-band counter escalates to the manager instead of being accepted.</li>
+        <li><b>Maintenance AI can never downgrade an emergency.</b> Keyword escalation is unconditional, on every setting.</li>
+        <li><b>Leasing AI hands off on request.</b> A prospect asking for a person gets one, even on autonomous.</li>
+        <li><b>Ask StayLeased shows you the change before it makes it.</b> It reads and acts within your own permissions, and every operation previews the exact figures and waits for your confirmation.</li>
       </ul>`)}`;
   }
 
+  const DIAL_LABEL: Record<Autonomy, string> = { draft: 'Draft', approve: 'Approve', auto: 'Auto' };
+
+  /** One dial.
+   *
+   * A segmented control rather than a <select>, because the three values are a
+   * scale and not an arbitrary list: the position IS the information, and it
+   * makes the grid scannable — you can see at a glance which buildings have
+   * been handed autonomy instead of reading every dropdown. Radios in a form
+   * that auto-submits, so it keeps working with no JavaScript. */
   function dialCell(ctx: Ctx, agent: AgentKey, propertyId: string | null, canConfigure: boolean): ReturnType<typeof html> {
     const current = autonomyFor(ctx, agent, propertyId);
-    if (!canConfigure) return statusBadge(current === 'auto' ? 'active' : current === 'approve' ? 'pending' : 'draft', current);
-    return html`<form method="post" action="/ai/dials" data-autosubmit>
+    const name = `dial-${agent}-${propertyId || 'org'}`;
+    if (!canConfigure) {
+      return html`<span class="dial dial-ro lv-${current}">${DIAL_LABEL[current]}</span>`;
+    }
+    return html`<form method="post" action="/ai/dials" data-autosubmit class="dial-form">
       <input type="hidden" name="agent" value="${agent}" />
       <input type="hidden" name="property" value="${propertyId || ''}" />
-      ${select('level', [['draft', 'draft-only'], ['approve', 'approve-to-send'], ['auto', 'autonomous']], current)}
+      <div class="dial lv-${current}" role="group" aria-label="${agent} autonomy">
+        ${(['draft', 'approve', 'auto'] as Autonomy[]).map((lv) => html`
+          <label class="dial-opt ${lv === current ? 'on' : ''}">
+            <input type="radio" name="level" value="${lv}" ${lv === current ? 'checked' : ''} />
+            <span>${DIAL_LABEL[lv]}</span>
+          </label>`)}
+      </div>
     </form>`;
   }
 

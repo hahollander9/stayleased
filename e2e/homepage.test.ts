@@ -52,6 +52,13 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   assert.match(body, /Governance and oversight\./);
   assert.match(body, /Built for independent operators/);
   assert.match(body, /Straightforward pricing/);
+  // The band states the actual price. "Pricing, published" is claimed in the
+  // verification band a few sections up, and for a while it was not true: the
+  // only figures here were "Free" and a competitor's $300-800 range, which was
+  // also the largest number on StayLeased's own pricing section.
+  assert.match(body, /per unit, per month/, 'the price is published, as the page claims');
+  assert.match(body, /A 48-unit building is/, 'and worked through on a real portfolio size');
+  assert.doesNotMatch(body, /\$300–800|\$300-800/, 'a rival price is not the headline figure here');
   assert.match(body, /Self-managing owners/);
   assert.match(body, /Equal Housing Opportunity/);
   // the platform suites (the Entrata-model taxonomy)
