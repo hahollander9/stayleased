@@ -375,23 +375,24 @@ ${mkHeader()}
   <div class="mk-wrap">
     <div class="mk-kicker">${kick('12', 'Pricing')}</div>
     <h2 class="mk-h2">Straightforward pricing.</h2>
-    <p class="mk-lead">No quotation process and no implementation fees.</p>
+    <p class="mk-lead">One published number, the same for everyone, billed on the units you manage.</p>
     <div class="mk-price-row">
-      <div class="mk-price">
-        <div class="mk-price-tag">Early access</div>
-        <div class="mk-price-big">Free</div>
-        <p>The complete platform for early-access partners. Records remain the operator’s property — export anytime. Invitation required.</p>
-        <a class="mk-btn mk-btn-solid" href="#walkthrough">Request an invitation</a>
-      </div>
-      <div class="mk-price">
-        <div class="mk-price-tag">What it replaces</div>
-        <div class="mk-price-big">$300–800<span>/mo</span></div>
-        <p>Typical monthly software spend for a small portfolio on legacy platforms.</p>
+      <div class="mk-price mk-price-main">
+        <div class="mk-price-tag">The price</div>
+        <div class="mk-price-big"><span class="mk-pd">$</span>6<span>per unit, per month</span></div>
+        <p class="mk-price-eg">A 48-unit building is <b>$288 a month</b>. No unit minimum, no implementation fee, no quotation process.</p>
         <ul class="mk-price-list">
-          <li>Platform subscription, priced per unit</li>
-          <li>Transaction and e-payment fees on top</li>
-          <li>AI, if offered at all, as a separate contract</li>
+          <li>Every module — leasing, maintenance, receivables, the books</li>
+          <li>Every AI agent, at no separate charge</li>
+          <li>True double-entry accounting, not a ledger view</li>
+          <li>Your records, exportable in open formats, whenever you want</li>
         </ul>
+      </div>
+      <div class="mk-price mk-price-now">
+        <div class="mk-price-tag">Right now</div>
+        <div class="mk-price-now-head">Free during early access</div>
+        <p>Invited partners run the complete platform at no charge while the product is in early access, at the price above when it ends — and are told before that happens.</p>
+        <a class="mk-btn mk-btn-solid" href="#walkthrough">Request an invitation</a>
       </div>
     </div>
   </div>

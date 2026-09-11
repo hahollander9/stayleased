@@ -1886,3 +1886,62 @@ new page and styles.
 `STAYLEASED_BILLING_UNIT_PRICE_CENTS` (defaults to 600). The webhook endpoint to register with
 Stripe is `POST /webhooks/stripe`, subscribed to `customer.subscription.*`, `invoice.paid`,
 `invoice.payment_failed` and `invoice.finalized`.
+
+## 2026-09-11 — The price is the subject; the autonomy dial looks like a dial
+
+Two screens, one theme: the thing the page exists to communicate was not the thing it showed.
+
+**The pricing band was advertising a competitor.** It ran two equal cards — "Early access / Free"
+beside "What it replaces / $300–800/mo" — which meant the largest number on StayLeased's own
+pricing section belonged to AppFolio. That was a problem before the billing build and a worse one
+after it: at $6/unit a 50-unit building pays $300 and a 100-unit pays $600, so the comparison had
+started arguing the other way. The layered-cost point it was making ("subscription, plus
+transaction fees, plus AI as a separate contract") is already made, better and in more detail, by
+the comparison table six bands up — so the card was duplicating an argument while undercutting a
+price.
+
+The band states the price now: **$6, per unit, per month**, at 82px, worked through on a real
+portfolio size ("a 48-unit building is $288 a month") because that is the number an operator can
+check against their own list — the same move the billing page makes. Beside it, early access as
+what is true *right now*, with the promise spelled out: free while invited, at the published
+price when that ends, and told before it happens. The verification band a few sections up has
+claimed "Pricing, published — on this page" for months; it is now true.
+
+Also retired: a hardcoded `::before` pill reading "Early access" bolted to `.mk-price:first-child`,
+which duplicated the card's own label and, once the first card became the price, said the wrong
+thing entirely.
+
+**The autonomy dials were the most consequential control in the product rendered as the most
+generic widget available.** Draft → approve → autonomous is an ordered scale of delegation, and
+both treatments flattened it: one run-on paragraph explaining all three at once, and a native
+`<select>` per cell in which "autonomous" looked exactly like "draft only". You could not answer
+"which buildings have I handed autonomy to" by looking at the grid — only by reading sixteen
+dropdowns.
+
+So: the three settings are a ladder, in order, each carrying the sentence that actually separates
+them (*who sends*). Each cell is a segmented control whose selected position carries a colour, so
+the grid is scannable; the card states the count outright — "2 of 16 set to autonomous" — because
+that is the operator's real question. Radios inside the existing auto-submit form, so it still
+works with no JavaScript, and the read-only view keeps the same colour language without controls.
+
+**Two real bugs found on the way, both caught by writing the test before believing the screen.**
+`dialsView` was passed `canApprove` rather than `canConfigure`, so a property manager — who has
+`ai:approve` but not `ai:configure` — was shown working dials that the POST route then rejected;
+a control that can only fail on click. And the guardrail list still promised "Ask StayLeased is
+read-only", written before Ask could act. A stale reassurance on the governance screen is worse
+than none: that is the page an operator reads to decide what to trust.
+
+Verified in both themes, which caught one of my own: the dial's track used `--surface-3`, one of
+the handful of hard-coded dark surfaces with no light-theme value, so in light mode the
+*unselected* options rendered heavier than the selected one. And the price label was garbled
+because `letter-spacing: -.045em` on an 82px parent computes to −3.7px and inherits as that
+absolute length onto a 15.5px child.
+
+Copy pins moved in the same commit: `homepage.test.ts` gains the published price and asserts a
+rival figure is *not* the headline here; `ai.test.ts` moves from `/Hard guardrails/` to
+`/What no dial can switch off/` plus the three setting names.
+
+BUILDLOG entry and DECISIONS #100–#102 appended against the current tail.
+
+Gates: `tsc --noEmit` clean · unit 522/522 · seeded e2e autonomy·ai·askdock·homepage·smoke 29/29,
+marketing batch green · design detector clean on every range touched.
