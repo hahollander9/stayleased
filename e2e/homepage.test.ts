@@ -48,9 +48,27 @@ test('gate: logged-out root serves the marketing homepage with every section', a
     body.indexOf('Nothing reaches a resident without sign-off') < body.indexOf('Built for the middle of the market'),
     'approval band precedes the segment band',
   );
-  assert.match(body, /Three levels of autonomy\./);
-  assert.match(body, /Governance and oversight\./);
-  assert.match(body, /Built for independent operators/);
+  // The supervision argument was three bands with three headlines ("Nothing
+  // reaches a resident…", "Three levels of autonomy.", "Governance and
+  // oversight.") making one point. It is one band now, so the pin moves from
+  // those headlines to the substance that had to survive the merge: the three
+  // levels, and the floor beneath them that no setting changes.
+  assert.match(body, /Three levels, set by you/);
+  assert.match(body, /What no setting can switch off/);
+  assert.match(body, /One control halts all AI activity instantly/);
+  assert.doesNotMatch(body, /Governance and oversight\./, 'the duplicate headline is gone, not relocated');
+  // Likewise the architecture claim and its evidence: "A different
+  // architecture." was a second headline over the comparison table.
+  assert.match(body, /Agents that work on the records, not beside them/);
+  assert.match(body, /Legacy platforms hold the records/, 'the table keeps its framing sentence');
+  // The audience band ("Built for independent operators.") moved off the
+  // homepage: all three segments have their own pages and are listed with
+  // descriptions in the "Who it's for" nav dropdown and the footer, so the band
+  // was a third copy. The pin is that they stay REACHABLE, not that the
+  // homepage restates them.
+  for (const seg of ['self-managing-owners', 'small-management-companies', 'growing-portfolios']) {
+    assert.ok(body.includes(`/for/${seg}`), `${seg} is still linked from the homepage`);
+  }
   assert.match(body, /Straightforward pricing/);
   // The band states the actual price. "Pricing, published" is claimed in the
   // verification band a few sections up, and for a while it was not true: the

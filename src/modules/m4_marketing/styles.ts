@@ -9,7 +9,7 @@
  * band boundary un-cropped — the wash is clipped by its own layer, never the
  * cards), the sourced evidence band (.mk-stats), the agent staff-roster
  * cards (.mk-agent), the verification band (.mk-verify), the restored dark
- * governance anchor band (.mk-dark), SVG check glyphs in the comparison
+ * SVG check glyphs in the comparison
  * table, and :focus-visible affordances. Motion doctrine (permanent):
  * NOTHING is scroll-scrubbed and nothing moves after its one-shot entrance
  * (typed stagger via --sd from chrome.ts); the only perpetual animation is
@@ -114,7 +114,11 @@ h4 { font-family: 'InterVar', sans-serif; }
 .mk-nav-cta { display: flex; gap: 14px; align-items: center; }
 
 /* burger + mobile menu */
-.mk-burger { display: none; flex-direction: column; justify-content: center; gap: 5px; width: 42px; height: 42px; padding: 10px; background: none; border: 0; cursor: pointer; }
+/* margin-left:auto, because what pushed the header's right-hand side right was
+   the flex:1 on .mk-menu — and the menu is display:none at the breakpoint where
+   the burger appears. Without this the burger lands beside the logo with a 30px
+   gap and 149px of empty header to its right. */
+.mk-burger { display: none; margin-left: auto; flex-direction: column; justify-content: center; gap: 5px; width: 42px; height: 42px; padding: 10px; background: none; border: 0; cursor: pointer; }
 .mk-burger span { display: block; height: 2px; border-radius: 2px; background: var(--ink); transition: transform .22s var(--ease), opacity .18s ease; }
 .mk-burger.active span:nth-child(1) { transform: translateY(7px) rotate(45deg); }
 .mk-burger.active span:nth-child(2) { opacity: 0; }
@@ -177,7 +181,7 @@ body.mk-mm-open { overflow: hidden; }
 
 /* hero vignettes — stylized product cards, layered like a desk */
 .mk-vigrow { display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px; align-items: start; margin: 60px auto -78px; position: relative; z-index: 2; padding-bottom: 8px; }
-.mk-hero + .mk-band { padding-top: 178px; }
+.mk-hero + .mk-band { padding-top: 92px; }
 .mk-vig { --vr: 0deg; --vy: 0px; background: var(--card); border: 1px solid var(--line-2); border-radius: 16px;
   /* v4: emerald-tinted depth + top edge-light — the cards read lit, not gray */
   box-shadow: inset 0 1px 0 rgba(255,255,255,.55), 0 2px 4px rgba(19,21,25,.06), 0 12px 24px -14px rgba(6,78,59,.18), 0 34px 68px -26px rgba(6,78,59,.32);
@@ -209,13 +213,13 @@ html[data-theme="dark"] .mk-vig-chip.warn { color: #E3B341; border-color: rgba(2
 @media (max-width: 980px) {
   .mk-vigrow { grid-template-columns: 1fr; margin: 40px auto 0; }
   .mk-vig, .mk-vig:first-child, .mk-vig:last-child { --vr: 0deg; --vy: 0px; transform: none; }
-  .mk-hero + .mk-band { padding-top: 96px; }
+  .mk-hero + .mk-band { padding-top: 58px; }
   .mk-vigrow { margin-bottom: 40px; }
 }
 
 /* product suites — the platform taxonomy, information-dense */
 .mk-suites { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-.mk-suite { display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: 16px; background: var(--card); padding: 28px; box-shadow: 0 1px 2px rgba(19,21,25,.05), 0 14px 34px -18px rgba(19,21,25,.22); transition: transform .18s var(--ease), box-shadow .18s ease; }
+.mk-suite { display: flex; flex-direction: column; border: 1px solid var(--line-2); border-radius: 16px; background: var(--card); padding: 20px; box-shadow: 0 1px 2px rgba(19,21,25,.05), 0 14px 34px -18px rgba(19,21,25,.22); transition: transform .18s var(--ease), box-shadow .18s ease; }
 .mk-suite:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(19,21,25,.05), 0 24px 48px -20px rgba(19,21,25,.28); }
 .mk-suite h3 { font-family: var(--display); font-size: 21px; font-weight: 640; letter-spacing: -.015em; color: var(--ink); margin-bottom: 12px; }
 .mk-suite ul { list-style: none; padding: 0; margin: 0 0 16px; display: grid; gap: 6px; flex: 1; }
@@ -291,7 +295,6 @@ h1, .mk-h2 { text-wrap: balance; }
  * and entry-triggered — nothing is scrubbed by scroll position, nothing
  * moves again after it lands (doctrine, permanent). */
 .mk-kn { display: inline-flex; align-items: center; font-variant-numeric: tabular-nums; color: var(--faint); font-weight: 700; letter-spacing: .08em; padding-right: 10px; margin-right: 10px; border-right: 1px solid var(--line); }
-.mk-dark .mk-kn { color: var(--mut); border-right-color: var(--line); }
 .mk-dot { color: var(--accent); }
 
 /* hero scroll cue — static affordance, springs only under the cursor */
@@ -361,12 +364,12 @@ html[data-theme="dark"] .mk-hero-clip::after { background-image: radial-gradient
 .mk-frame-feed em { font-style: normal; font-weight: 650; color: var(--ink); }
 
 /* sections — hairline-separated bands on one paper */
-.mk-band { position: relative; padding: 96px 0; }
+.mk-band { position: relative; padding: 58px 0; }
 .mk-band-alt { background: var(--paper-2); }
 .mk-band + .mk-band:not(.mk-band-alt) { border-top: 1px solid var(--line-2); }
-.mk-h2 { font-size: clamp(34px, 4vw, 54px); letter-spacing: -.03em; line-height: 1.04; font-weight: 640; max-width: 18em; color: var(--ink); }
-.mk-lead { font-size: 17px; color: var(--ink2); margin: 16px 0 42px; max-width: 44em; }
-.mk-band .mk-kicker { margin-bottom: 18px; }
+.mk-h2 { font-size: clamp(30px, 3.2vw, 44px); letter-spacing: -.03em; line-height: 1.06; font-weight: 640; max-width: 18em; color: var(--ink); }
+.mk-lead { font-size: 16.5px; color: var(--ink2); margin: 14px 0 28px; max-width: 44em; }
+.mk-band .mk-kicker { margin-bottom: 12px; }
 .mk-two { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
 .mk-plat { position: relative; border: 1px solid var(--line-2); background: var(--card); border-radius: 16px; padding: 32px; box-shadow: 0 1px 2px rgba(19,21,25,.05), 0 14px 34px -18px rgba(19,21,25,.22); transition: box-shadow .2s ease, transform .2s var(--ease); }
 .mk-plat:hover { transform: translateY(-3px); box-shadow: 0 2px 4px rgba(19,21,25,.05), 0 24px 48px -20px rgba(19,21,25,.28); }
@@ -398,7 +401,7 @@ html[data-theme="dark"] .mk-compare tbody tr:hover { background: rgba(110,231,18
   html[data-theme="dark"] .mk-compare td:first-child, html[data-theme="dark"] .mk-compare th:first-child { box-shadow: 6px 0 10px -6px rgba(0,0,0,.5); }
 }
 .mk-compare table { width: 100%; border-collapse: collapse; font-size: 14px; min-width: 720px; }
-.mk-compare th, .mk-compare td { padding: 14px 18px; text-align: left; border-bottom: 1px solid var(--line-2); }
+.mk-compare th, .mk-compare td { padding: 9px 16px; text-align: left; border-bottom: 1px solid var(--line-2); }
 .mk-compare tbody tr:last-child td { border-bottom: 0; }
 .mk-compare thead th { font-size: 12px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--mut); border-bottom: 1px solid var(--line); }
 .mk-compare td:first-child { color: var(--ink); font-weight: 550; max-width: 340px; }
@@ -467,25 +470,11 @@ html[data-theme="dark"] .mk-compare td.mkc-us, html[data-theme="dark"] .mk-compa
  * emerald glow (no drift — doctrine), and check-circle glyphs. In dark
  * theme the band sits one surface up from the page so it still reads as
  * an anchor. */
-.mk-dark { position: relative; background: #0A1A12; color: #E9F5EF; overflow: hidden;
-  --ink: #E9F5EF; --ink2: #C4D6CD; --mut: #8CA396; --faint: #5C7266;
-  --line: rgba(163,196,180,.17); --line-2: rgba(163,196,180,.09);
-  --accent: #6EE7B7; --card: rgba(163,196,180,.05); }
-html[data-theme="dark"] .mk-dark { background: #0D1A13; border-top: 1px solid rgba(163,196,180,.12); border-bottom: 1px solid rgba(163,196,180,.12); }
-.mk-dark::before { content: ''; position: absolute; left: 50%; top: -320px; width: 1100px; height: 640px; transform: translateX(-50%); pointer-events: none;
-  background: radial-gradient(50% 55% at 50% 50%, rgba(16,185,129,.13), transparent 70%); }
-/* v4 depth: a second, lower ember + a hairline top light so the band reads
- * as a lit room rather than a flat fill. Static — no motion. */
-.mk-dark::after { content: ''; position: absolute; right: -180px; bottom: -260px; width: 900px; height: 560px; pointer-events: none;
-  background: radial-gradient(48% 52% at 60% 60%, rgba(45,212,191,.07), transparent 72%); }
-.mk-dark { box-shadow: inset 0 1px 0 rgba(163,196,180,.08); }
-.mk-dark .mk-wrap { position: relative; }
-.mk-dark .mk-h2 { color: var(--ink); }
-.mk-dark .mk-lead { color: var(--ink2); }
-.mk-dark .mk-kicker { color: var(--accent); }
-@supports (-webkit-background-clip: text) {
-  .mk-dark .mk-kicker { background: linear-gradient(90deg, #2DD4BF, #6EE7B7); -webkit-background-clip: text; background-clip: text; color: transparent; }
-}
+/* The dark anchor band is gone: .mk-dark styled exactly one section — the
+   governance band — and that band merged into the approval band above it. Its
+   twelve rules, two radial glows and the gradient kicker had no remaining user
+   and were still shipping to every visitor. Removed with the band rather than
+   left behind in case something wants them later. */
 .mk-checks { display: grid; grid-template-columns: repeat(2, minmax(240px, 1fr)); gap: 14px 44px; list-style: none; padding: 0; margin: 0; max-width: 880px; }
 .mk-checks li { padding: 14px 4px 14px 34px; position: relative; font-size: 15px; color: var(--ink2); border-bottom: 1px solid var(--line-2); transition: color .16s ease; }
 .mk-checks li::before { content: ''; position: absolute; left: 0; top: 15px; width: 20px; height: 20px; background: var(--accent);
@@ -536,6 +525,40 @@ html[data-theme="dark"] .mk-dark { background: #0D1A13; border-top: 1px solid rg
   .mk-price-main .mk-price-big { font-size: 64px; }
   .mk-price-main .mk-price-big .mk-pd { font-size: 32px; }
 }
+
+/* the hero screenshot — the product, rather than a drawing of it */
+.mk-shotwrap { padding: 32px 40px 0; }
+.mk-shot { margin: 0; }
+/* Capped and faded rather than shown whole: the full screenshot runs past the
+   fold and its last row gets guillotined mid-text, which reads as a rendering
+   fault rather than a crop. Stopping it deliberately keeps the part that makes
+   the point — the header, the portfolio, the whole approval queue — and lets
+   the rest suggest depth instead of demanding scroll. */
+.mk-shot { position: relative; max-height: 470px; overflow: hidden; border-radius: 14px;
+  border: 1px solid var(--line); background: var(--card);
+  box-shadow: 0 2px 6px rgba(19,21,25,.06), 0 40px 80px -40px rgba(19,21,25,.45); }
+.mk-shot img { display: block; width: 100%; height: auto; }
+.mk-shot::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 120px;
+  background: linear-gradient(to bottom, transparent, var(--bg)); pointer-events: none;
+}
+.mk-shot-cap { margin-top: 14px; text-align: center; font-size: 13.5px; color: var(--mut); }
+@media (max-width: 760px) {
+  .mk-shotwrap { padding: 28px 16px 0; }
+  .mk-shot { border-radius: 10px; max-height: 320px; }
+}
+@media (prefers-reduced-motion: reduce) { .mk-shot { transition: none; } }
+
+/* supervision, continued: the levels and the floor under them, side by side,
+   where they used to be two more bands with their own headlines */
+.mk-gov2 { display: grid; grid-template-columns: 1.05fr .95fr; gap: 44px; margin-top: 52px; padding-top: 40px; border-top: 1px solid var(--line); }
+.mk-gov2-col > .mk-sm { margin: 4px 0 18px; font-size: 14px; color: var(--mut); }
+.mk-gov2 .mk-levels { margin-top: 0; }
+.mk-h3 { font-family: var(--display); font-size: 21px; font-weight: 560; letter-spacing: -.02em; color: var(--ink); }
+@media (max-width: 900px) { .mk-gov2 { grid-template-columns: 1fr; gap: 32px; } }
+
+/* the comparison table now sits under the claim it evidences */
+.mk-compare-lead { margin-top: 48px; padding-top: 38px; border-top: 1px solid var(--line); }
 
 /* walkthrough */
 .mk-two-col { display: grid; grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: start; }
