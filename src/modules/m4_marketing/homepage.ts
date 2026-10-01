@@ -167,25 +167,17 @@ ${mkHeader()}
       <a class="mk-scrollcue" href="#segment" aria-label="Continue to the next section"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></a>
     </div>
   </div>
-  <div class="mk-wrap mk-vigrow" aria-hidden="true">
-    <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">SR</span><div><b>Ask StayLeased</b><span>AI portfolio assistant</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
-      <div class="mk-vig-msg you">What's my occupancy?</div>
-      <div class="mk-vig-msg agent">Occupancy is 93.1% — 362 of 389 units, with 15 vacant-ready and 8 in turnover averaging 6 days to ready.</div>
-    </div>
-    <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">PA</span><div><b>Payments Agent</b><span>AI agent · demo portfolio</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
-      <div class="mk-vig-task"><i>✓</i>3 residents past due on rent</div>
-      <div class="mk-vig-task"><i>✓</i>Reminders drafted in the approved tone</div>
-      <div class="mk-vig-task"><i>✓</i>Payment plan prepared — Keller household</div>
-      <div class="mk-vig-task hold"><i>●</i>4 drafts queued<span class="mk-vig-chip warn">awaiting approval</span></div>
-    </div>
-    <div class="mk-vig">
-      <div class="mk-vig-head"><span class="mk-vig-av">MA</span><div><b>Maintenance Agent</b><span>AI triage · 2:14 am</span></div><span class="mk-vig-live"><i></i>DEMO</span></div>
-      <div class="mk-vig-msg you">"There's water pooling under my water heater."</div>
-      <div class="mk-vig-task"><i>✓</i>Not an emergency — triaged routine</div>
-      <div class="mk-vig-task hold"><i>●</i>Plumber dispatch drafted<span class="mk-vig-chip warn">awaiting approval</span></div>
-    </div>
+  <!-- The product, actually. This was three hand-built vignette cards
+       miming the app; a real screenshot of the real dashboard says the same
+       thing and is the same thing. It also answers "what IS this" in the first
+       viewport, which the copy alone took a full screen to do. -->
+  <div class="mk-wrap mk-shotwrap">
+    <figure class="mk-shot">
+      <img src="/assets/mk/hero-dashboard.png" width="1600" height="1030"
+        alt="The StayLeased dashboard: a portfolio of 394 units at 93.1% occupancy, with six AI drafts — a leasing reply, a renewal, a payment plan, a maintenance triage — waiting in an approval queue beside the live portfolio map."
+        loading="eager" decoding="async" />
+    </figure>
+    <p class="mk-shot-cap">The operator’s dashboard. Every AI draft waits here for approval.</p>
   </div>
 </section>
 
@@ -208,6 +200,34 @@ ${mkHeader()}
         <div class="mk-nta-actions"><span class="mk-nta-ok">✓ Approve</span><span class="mk-nta-edit">Edit</span><span class="mk-nta-skip">Reject</span></div>
       </div>
       <div class="mk-nta-note">Availability, pricing, and tour times come from the live system at the moment of drafting.</div>
+    </div>
+  </div>
+
+  <!-- The same argument, continued rather than restarted. These were two more
+       bands with their own headlines ("Three levels of autonomy", "Governance
+       and oversight"), which read as three separate promises about supervision
+       instead of one promise with its mechanism and its floor. -->
+  <div class="mk-wrap mk-gov2">
+    <div class="mk-gov2-col">
+      <h3 class="mk-h3">Three levels, set by you</h3>
+      <p class="mk-sm">Per property and per function; widened only by explicit authorization, narrowed at any time.</p>
+      <div class="mk-levels">
+        ${MODES.map((lv, i) => html`<div class="mk-level">
+          <div class="mk-level-cube">${raw(cube(i))}</div>
+          <div><div class="mk-level-head"><b>${lv.l}</b> · ${lv.name}</div><p>${lv.body}</p></div>
+        </div>`)}
+      </div>
+    </div>
+    <div class="mk-gov2-col">
+      <h3 class="mk-h3">What no setting can switch off</h3>
+      <p class="mk-sm">The floor under every level, enforced in code rather than by instruction.</p>
+      <ul class="mk-checks">
+        <li>Fair-housing guardrails enforced in code</li>
+        <li>Payment plans and concessions bounded by set limits</li>
+        <li>One control halts all AI activity instantly</li>
+        <li>Complete audit trail of every action, human or AI</li>
+        <li>Full data ownership — export anytime</li>
+      </ul>
     </div>
   </div>
 </section>
@@ -252,14 +272,11 @@ ${mkHeader()}
         <span class="mk-more">Learn more →</span>
       </a>`)}
     </div>
-  </div>
-</section>
 
-<section class="mk-band mk-band-alt" id="why">
-  <div class="mk-wrap">
-    <div class="mk-kicker">${kick('05', 'Architecture')}</div>
-    <h2 class="mk-h2">A different architecture.</h2>
-    <p class="mk-lead">Legacy platforms hold the records; the work stays manual. AI point tools automate one task and need a platform underneath. StayLeased is both layers in one system.</p>
+    <!-- The table was its own band under "A different architecture", which
+         restated the headline above it. It is the evidence for this claim, so
+         it sits under it. -->
+    <p class="mk-lead mk-compare-lead">Legacy platforms hold the records; the work stays manual. AI point tools automate one task and need a platform underneath. StayLeased is both layers in one system.</p>
     <div class="mk-compare">
       <table>
         <thead><tr><th scope="col"><span class="sr-only">Capability</span></th><th scope="col">Legacy platforms</th><th scope="col">AI point solutions</th><th scope="col" class="mkc-us">StayLeased</th></tr></thead>
@@ -280,7 +297,7 @@ ${mkHeader()}
 
 <section class="mk-band" id="how">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('06', 'Getting started')}</div>
+    <div class="mk-kicker">${kick('05', 'Getting started')}</div>
     <h2 class="mk-h2">Operational in an afternoon.</h2>
     <p class="mk-lead">Implementation is a data import, not a project.</p>
     <div class="mk-steps">
@@ -295,7 +312,7 @@ ${mkHeader()}
 <section class="mk-band mk-band-alt" id="ask">
   <div class="mk-wrap mk-ask-grid">
     <div class="mk-ask-copy">
-      <div class="mk-kicker mk-kicker-ai">${kick('07', 'Ask StayLeased')}${aiLive ? ' · powered by Claude' : ''}</div>
+      <div class="mk-kicker mk-kicker-ai">${kick('06', 'Ask StayLeased')}${aiLive ? ' · powered by Claude' : ''}</div>
       <h2 class="mk-h2">Operational questions, answered from the records.</h2>
       <p class="mk-lead">Occupancy, delinquency, expirations, work orders, vendor spend — answered from live portfolio data, every response logged.</p>
       <div class="mk-cta-row"><a class="mk-btn mk-btn-solid" href="#walkthrough">Book a live demo</a></div>
@@ -317,39 +334,9 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band" id="automation">
-  <div class="mk-wrap">
-    <div class="mk-kicker">${kick('08', 'Autonomy')}</div>
-    <h2 class="mk-h2">Three levels of autonomy.</h2>
-    <p class="mk-lead">Set per property and per function; expanded only by explicit authorization.</p>
-    <div class="mk-levels">
-      ${MODES.map((lv, i) => html`<div class="mk-level">
-        <div class="mk-level-cube">${raw(cube(i))}</div>
-        <div><div class="mk-level-head"><b>${lv.l}</b> · ${lv.name}</div><p>${lv.body}</p></div>
-      </div>`)}
-    </div>
-  </div>
-</section>
-
-<section class="mk-band mk-dark" id="governance">
-  <div class="mk-wrap">
-    <div class="mk-kicker">${kick('09', 'Governance')}</div>
-    <h2 class="mk-h2">Governance and oversight.</h2>
-    <p class="mk-lead">One governance framework for every agent. Every action — human or AI — on the record.</p>
-    <ul class="mk-checks">
-      <li>Fair-housing guardrails enforced in code</li>
-      <li>Payment plans and concessions bounded by set limits</li>
-      <li>Autonomy configured per property, per function</li>
-      <li>One control halts all AI activity instantly</li>
-      <li>Complete audit trail of every action</li>
-      <li>Full data ownership — export anytime</li>
-    </ul>
-  </div>
-</section>
-
 <section class="mk-band" id="verification">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('10', 'Verification')}</div>
+    <div class="mk-kicker">${kick('07', 'Verification')}</div>
     <h2 class="mk-h2">Verification, not claims.</h2>
     <p class="mk-lead">Software that asks to run a building should not ask for faith. Everything on this page can be checked directly.</p>
     <div class="mk-verify">
@@ -362,7 +349,7 @@ ${mkHeader()}
 
 <section class="mk-band mk-band-alt" id="solutions">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('11', 'Who it’s for')}</div>
+    <div class="mk-kicker">${kick('08', 'Who it’s for')}</div>
     <h2 class="mk-h2">Built for independent operators.</h2>
     <p class="mk-lead">Enterprise software is built for institutions. StayLeased is built for the owners and small firms that run most of America’s rental housing.</p>
     <div class="mk-grid3">
@@ -373,7 +360,7 @@ ${mkHeader()}
 
 <section class="mk-band" id="pricing">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('12', 'Pricing')}</div>
+    <div class="mk-kicker">${kick('09', 'Pricing')}</div>
     <h2 class="mk-h2">Straightforward pricing.</h2>
     <p class="mk-lead">One published number, the same for everyone, billed on the units you manage.</p>
     <div class="mk-price-row">

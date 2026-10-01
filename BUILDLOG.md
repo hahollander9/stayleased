@@ -1945,3 +1945,53 @@ BUILDLOG entry and DECISIONS #100–#102 appended against the current tail.
 
 Gates: `tsc --noEmit` clean · unit 522/522 · seeded e2e autonomy·ai·askdock·homepage·smoke 29/29,
 marketing batch green · design detector clean on every range touched.
+
+## 2026-10-01 — Homepage: one argument each, the real product, and a burger on the right
+
+**The hamburger was already last in the header and still sat beside the logo.** At 390px it ran
+`24→169` for the logo and `199→241` for the burger, leaving 149px of empty bar to its right. The
+element that pushes the header's right-hand side right is the desktop menu's `flex: 1`, and the
+menu is `display: none` at exactly the breakpoint where the burger appears — so the thing doing
+the pushing was gone whenever the burger was there. One `margin-left: auto`. It now sits at
+`324→366` of 390.
+
+**The page made two of its arguments three and two times.** Fifteen sections, 11,561px. Three
+bands each promised supervision — "Nothing reaches a resident without sign-off", "Three levels of
+autonomy", "Governance and oversight", 1,930px between them — and two explained the architecture:
+"Agents that work on the records, not beside them" and "A different architecture", 1,984px, the
+second a headline over the comparison table that restated the first.
+
+Merged, not cut. The approval band now carries the promise and its live draft card, then the three
+levels and the floor beneath them side by side — one argument with its mechanism and its limit,
+rather than three separate claims that supervision exists. The platform band carries the record,
+the suites, and the table that evidences them. Twelve sections. Every list, every check, every
+table row survives; the band numbering was resequenced 01→09 so it doesn't read as a page with
+pieces missing, and the e2e pin moved from the two retired headlines onto the content that had to
+survive the merge.
+
+**And there was no image on it at all** — zero `<img>` across 11,561px, while seven real product
+screenshots sat unused in `mk-assets/`, one of them already served at `/assets/mk/hero-dashboard.png`
+and referenced by nothing. The hero's three hand-built vignette cards were a drawing of the
+product; it now shows the product. Recaptured first, because the committed asset predated the
+green rebrand and the ⌘J shortcut — a hero screenshot of a build nobody can open is the kind of
+small untruth this repo's honesty gate exists to catch. Capped at 620px with a bottom fade: the
+full-height version guillotines its last row mid-text, which reads as a rendering fault rather
+than a crop.
+
+Net 10,961px — only 600px shorter, because the requested image costs ~500 of what the merge saved.
+The reduction that matters is three fewer headlines and two fewer arguments to parse, not the
+scrollbar.
+
+Removing the governance band orphaned `.mk-dark` completely: twelve rules, two radial glows and a
+gradient kicker styling exactly one section that no longer exists, still shipping to every
+visitor. Removed with the band.
+
+One near-miss worth recording: the first recapture pointed at `/dashboard`, which is not a route,
+and wrote a 404 page over the committed hero asset. Restored from git, then captured to the
+scratchpad and inspected before overwriting anything. Screenshots are the one artifact where a
+bad write looks like a successful one.
+
+BUILDLOG entry and DECISIONS #103–#104 appended against the current tail.
+
+Gates: `tsc --noEmit` clean · unit 522/522 · seeded e2e homeshape·homepage·mkpages·marketing·
+navmenus·rebrand·seo·smoke 50/50 · design detector clean on every range touched.
