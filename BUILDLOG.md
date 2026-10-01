@@ -1978,9 +1978,28 @@ small untruth this repo's honesty gate exists to catch. Capped at 620px with a b
 full-height version guillotines its last row mid-text, which reads as a rendering fault rather
 than a crop.
 
-Net 10,961px — only 600px shorter, because the requested image costs ~500 of what the merge saved.
-The reduction that matters is three fewer headlines and two fewer arguments to parse, not the
-scrollbar.
+Net 10,961px after the merge — only 600px shorter, because the image costs ~500 of what the merge
+saved. Henry's correction: **the point is the scrolling length.** Fair, and the merge alone did not
+deliver it, so a second pass went after height rather than argument count.
+
+The page's single largest consumer of height was its own padding: 96px top and bottom on every
+band (178 on the first) is ~3,000px across eleven bands before a word of content, and a 54px
+display scale with a 42px trough under every lead is a magazine measure on a page carrying twelve
+of them. Padding to 58, first band to 92, h2 clamp to 44, lead margin to 28, kicker to 12, card
+padding 28→20, comparison rows 14→9, hero image cap 620→470. **1,900px, no content removed.**
+
+Then the audience band: three cards whose segments each have a page and are already listed, with
+descriptions, in the "Who it's for" nav dropdown and again in the footer — a third copy. Moved
+off; its `SOLUTIONS` data went with it, and the pin became "the three segments stay reachable"
+rather than "the homepage restates them".
+
+**11,561px across 15 sections → 8,925px across 11.** 23% shorter, four sections fewer, every
+argument still on the page.
+
+The FAQ band was removed in the same pass and then put back: `HOME_FAQ` feeds the page's FAQPage
+JSON-LD, and the SEO doctrine is explicit that schema mirrors what is rendered. Dropping the band
+would have left structured data describing content no visitor could see — the exact thing the rule
+forbids. It stays, with every item collapsed rather than the first one open.
 
 Removing the governance band orphaned `.mk-dark` completely: twelve rules, two radial glows and a
 gradient kicker styling exactly one section that no longer exists, still shipping to every

@@ -61,7 +61,14 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   // architecture." was a second headline over the comparison table.
   assert.match(body, /Agents that work on the records, not beside them/);
   assert.match(body, /Legacy platforms hold the records/, 'the table keeps its framing sentence');
-  assert.match(body, /Built for independent operators/);
+  // The audience band ("Built for independent operators.") moved off the
+  // homepage: all three segments have their own pages and are listed with
+  // descriptions in the "Who it's for" nav dropdown and the footer, so the band
+  // was a third copy. The pin is that they stay REACHABLE, not that the
+  // homepage restates them.
+  for (const seg of ['self-managing-owners', 'small-management-companies', 'growing-portfolios']) {
+    assert.ok(body.includes(`/for/${seg}`), `${seg} is still linked from the homepage`);
+  }
   assert.match(body, /Straightforward pricing/);
   // The band states the actual price. "Pricing, published" is claimed in the
   // verification band a few sections up, and for a while it was not true: the

@@ -84,17 +84,6 @@ const VERIFY: { head: string; body: string; href?: string }[] = [
   { head: 'Every action on the audit trail', body: 'Human or AI — logged, attributed, reviewable.' },
 ];
 
-const SOLUTIONS: { name: string; body: string }[] = [
-  { name: 'Self-managing owners', body: 'Full operating coverage, every decision retained.' },
-  { name: 'Small management companies', body: 'Every property in one system, owner-ready financials.' },
-  { name: 'Growing portfolios', body: 'Add buildings without adding headcount.' },
-];
-
-/** Homepage FAQ (2026-08-12). Every answer restates claims already made and
- * pinned elsewhere on the site — approval default, real double-entry, the
- * afternoon import, early-access pricing, staged-rollout honesty — so the
- * FAQPage schema introduces no new claims to defend. Register: operator
- * language, no invented customers or metrics. */
 const HOME_FAQ: { q: string; a: string }[] = [
   { q: 'What does the AI send without a human seeing it first?', a: 'Nothing, by default. Every agent drafts into an approval queue — Approve, Edit, or Reject — and autonomy is granted per task type, within set limits, only when the operator turns it up. It is reversible at any time, and every action lands on the audit trail either way.' },
   { q: 'Is the accounting real double-entry bookkeeping?', a: 'Yes. Every charge and payment posts as a balanced journal entry to a real general ledger — trial balance, bank reconciliation, and financial statements run from the same books as the 50-report catalog. Nothing on the screen is a display layer over a spreadsheet.' },
@@ -347,20 +336,9 @@ ${mkHeader()}
   </div>
 </section>
 
-<section class="mk-band mk-band-alt" id="solutions">
-  <div class="mk-wrap">
-    <div class="mk-kicker">${kick('08', 'Who it’s for')}</div>
-    <h2 class="mk-h2">Built for independent operators.</h2>
-    <p class="mk-lead">Enterprise software is built for institutions. StayLeased is built for the owners and small firms that run most of America’s rental housing.</p>
-    <div class="mk-grid3">
-      ${SOLUTIONS.map((s2) => html`<div class="mk-card"><h3>${s2.name}</h3><p>${s2.body}</p></div>`)}
-    </div>
-  </div>
-</section>
-
 <section class="mk-band" id="pricing">
   <div class="mk-wrap">
-    <div class="mk-kicker">${kick('09', 'Pricing')}</div>
+    <div class="mk-kicker">${kick('08', 'Pricing')}</div>
     <h2 class="mk-h2">Straightforward pricing.</h2>
     <p class="mk-lead">One published number, the same for everyone, billed on the units you manage.</p>
     <div class="mk-price-row">
@@ -418,12 +396,14 @@ ${mkHeader()}
   <div class="mk-wrap">
     <div class="mk-kicker">Common questions</div>
     <h2 class="mk-h2">Direct answers.</h2>
-    <p class="mk-lead">Every answer below is checkable in the live demo — and the assistant on this page answers anything else from the product itself.</p>
-    <div class="mkp-faq" style="margin-top:26px">
-      ${HOME_FAQ.map((f, i) => html`<details ${i === 0 ? 'open' : ''}><summary>${f.q}</summary><div class="mkp-a">${f.a}</div></details>`)}
+    <p class="mk-lead">Every answer below is checkable in the live demo.</p>
+    <div class="mkp-faq" style="margin-top:18px">
+      ${HOME_FAQ.map((f) => html`<details><summary>${f.q}</summary><div class="mkp-a">${f.a}</div></details>`)}
     </div>
   </div>
 </section>
+
+
 
 ${mkFooter()}
 
