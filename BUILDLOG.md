@@ -2069,3 +2069,67 @@ deterministic per the m19 doctrine, all shadow-first — including one that repo
 disagree with themselves, because an owner who cannot see a disagreement meets it at tax time.
 
 Gates: no TypeScript touched; `tsc --noEmit` clean; BUILDLOG appended against the current tail.
+
+## 2026-10-04 — Simple mode phase 1: five answers, each showing its working
+
+The home screen the audit proposed, behind an org flag, with every number carrying the
+arithmetic that produced it. Approved scope: `vacant_since` in this phase, 1010-only cash with
+the other accounts named, question 4 as vacancy + non-payment (the per-unit table deferred),
+month-end cash as a shown subtraction with expected rent excluded, one merged "Needs your OK"
+list, and the flag defaulting on for new orgs and off for existing ones.
+
+**What the flag actually required.** "On for new, off for existing" cannot be expressed through
+`SETTING_DEFAULTS`: a setting with no row reads its default, so defaulting it true would have
+switched the chrome under every live operator on deploy. The default is false and new orgs get
+an explicit `true` row from an `org.created` hook, which is the only arrangement that
+distinguishes the two populations. Simple mode replaces `/` rather than adding a page beside it
+— a home screen reachable only at `/home` is one nobody finds, and the first thing an owner
+would otherwise meet is the KPI dashboard's "Exposure 7%".
+
+**Three bugs the work found, two of which no test would have caught on its own.**
+
+`cashFlow().closing` cannot be the cash number. Its `CASH_CODES` is `{1010, 1020, 1030}`, so it
+folds the deposit float and the reserve into "your cash" — $99,367 of overstatement on the live
+Station U&O figures, from a function that is correct and well named and simply answering a
+different question. Home reads 1010 alone; 1020, 1030 and 1050 get their own lines saying whose
+money each is. A test funds the deposit account specifically so the two figures cannot coincide.
+
+The tie under "Who owes you" was a false alarm. It compared the screen's headline (positive
+balances, aging-scoped statuses) to GL 1100 (every lease, every credit) and reported "these do
+not agree" in red on books that balance to the cent — out by $3,564.71. The comparison was
+structurally incapable of being right. It now sums every lease balance, signed, any status,
+which ties exactly; the regression test posts a credit memo to force the filtered figure apart
+from the tied one. A trust rule that fires on good data teaches the reader to ignore the next
+one.
+
+And the first term of every sum rendered into an 18px column, one word per line, with the value
+jammed beside it — `when()` returning nothing removes a grid child rather than blanking it.
+Every assertion passed; it was visible only by opening the page. The same screenshot pass found
+the screen running to 5,277px, on a promise of five answers in ten seconds; capping the two
+tables at 8 and 5 rows with honest "see all N" links brought it to 3,697px without hiding a
+count.
+
+**Two things the tests changed.** The vacancy backfill failed its own test because the fixture
+inserts units after the connection opens — which is the real gap: an import lands a vacant unit
+and its ended lease after boot, so a boot-only backfill leaves the live re-import case dateless
+until a restart. The derivation moved into the read path with the stored column winning when
+set, so an owner-entered date still overrides. And the repo's own settings guards refused a key
+with no spec and no `orgOnly` declaration — correctly, so the bespoke settings card was dropped
+in favour of the ordinary spec-driven control in a new "How much you see" group. One control,
+one source of truth, less code.
+
+Smaller things: `moneyApprovals()` extracted from `/approvals` so Home renders the same queue
+rather than a second implementation of it; `/ai/:id/approve|reject` now honour a local `back`
+(protocol-relative URLs refused, so the convenience does not become an open redirect); the
+decision buttons are floored at 42px on phones, because `btn-sm` is 25px and this is the one
+screen built for people who are not power users.
+
+Not done, deliberately: the navigation is untouched, so the chrome still says "Receivables" —
+that is phase 2, and the e2e jargon assertion is scoped to `main.content` to say so. Agent
+rationale text still reads "dunning ladder" and "delegated floor"; it comes from m17 and belongs
+to the copy-map phase.
+
+Gates: `tsc --noEmit` clean · unit 543/543 · seeded e2e homescreen·smoke·goldenpath·clientready·
+workingmodel·navmenus·ai·autonomy·finops·accounting·setup·facilities·ledger·payments·hubs·
+verticals 90/90 · both themes opened and read. BUILDLOG + DECISIONS #107–#110 appended against
+the current tail.

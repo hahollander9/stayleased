@@ -291,7 +291,14 @@ registerJob({
     );
     for (const lease of due) {
       run("UPDATE leases SET status='ended' WHERE id=?", lease.id);
-      run("UPDATE units SET status='vacant_not_ready' WHERE id=? AND status='notice'", lease.unit_id);
+      // The vacancy clock starts here, and it starts on the move-out date
+      // rather than today: this job runs when the business date reaches the
+      // move-out, but an import or a skipped day can land it later, and
+      // "empty since the day we processed it" would under-count the loss.
+      run(
+        "UPDATE units SET status='vacant_not_ready', vacant_since=?, vacant_since_source='lease' WHERE id=? AND status='notice'",
+        lease.move_out_date || date, lease.unit_id,
+      );
       emit(ctx, 'lease.ended', 'lease', lease.id, { unitId: lease.unit_id, propertyId: lease.property_id });
     }
     return due.length ? `${due.length} move-outs processed` : 'no move-outs today';

@@ -746,7 +746,7 @@ export function applyRentRoll(ctx: Ctx, batch: BatchRow): ApplySummary {
             start_date: billingStart, end_date: null, created_at: nowIso(),
           });
         }
-        run(`UPDATE units SET status=? WHERE id=?`, plan.onNotice ? 'notice' : 'occupied', unitId);
+        run(`UPDATE units SET status=?, vacant_since=NULL, vacant_since_source=NULL WHERE id=?`, plan.onNotice ? 'notice' : 'occupied', unitId);
 
         plan.tenants.forEach((t, ti) => {
           const rid = id('res');

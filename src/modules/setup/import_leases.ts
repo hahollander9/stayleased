@@ -404,7 +404,7 @@ export function leasePdfRoutes(r: Router): void {
           amount_cents: rentCents, gl_account_code: null, rentable_item_id: null,
           start_date: billingStart, end_date: null, created_at: nowIso(),
         });
-        run(`UPDATE units SET status='occupied' WHERE id=?`, unit.id);
+        run(`UPDATE units SET status='occupied', vacant_since=NULL, vacant_since_source=NULL WHERE id=?`, unit.id);
         tenants.forEach((t, ti) => {
           const nm = splitName(t);
           const rid = id('res');

@@ -399,7 +399,7 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
       run(`UPDATE leases SET status='renewed' WHERE id=?`, lease.renewal_of_lease_id);
     }
     run(`UPDATE leases SET status='active' WHERE id=?`, leaseId);
-    run(`UPDATE units SET status='occupied' WHERE id=?`, lease.unit_id);
+    run(`UPDATE units SET status='occupied', vacant_since=NULL, vacant_since_source=NULL WHERE id=?`, lease.unit_id);
 
     // people: applicants → residents with portal accounts (fresh leases only)
     if (lease.application_id && !q1('SELECT id FROM household_members WHERE lease_id=? LIMIT 1', leaseId)) {

@@ -90,6 +90,30 @@ export function db(): DatabaseSync {
     // review screen can show them as what they are — the same file, read again
     // for something else — rather than as unexplained duplicate uploads.
     "ALTER TABLE import_batches ADD COLUMN sibling_of TEXT",
+    // Simple mode: how long a unit has been empty, and where that date came
+    // from ('lease' = derived from the lease that ended, 'owner' = typed in).
+    "ALTER TABLE units ADD COLUMN vacant_since TEXT",
+    "ALTER TABLE units ADD COLUMN vacant_since_source TEXT",
+    // Backfill, from the lease that actually ended and nothing else. A unit
+    // with no ended lease keeps NULL — there is no date to be had, and a
+    // guess here would read as a measurement on the home screen.
+    //
+    // `WHERE vacant_since IS NULL` is what makes this safe to re-run every
+    // boot (which it does: the loop below swallows errors, so there is no
+    // applied-migration table to consult). It fills blanks and never
+    // overwrites, so an owner-entered date survives every restart.
+    `UPDATE units SET vacant_since = (
+       SELECT COALESCE(l.move_out_date, l.end_date) FROM leases l
+       WHERE l.unit_id = units.id AND l.status = 'ended'
+         AND COALESCE(l.move_out_date, l.end_date) IS NOT NULL
+       ORDER BY COALESCE(l.move_out_date, l.end_date) DESC LIMIT 1
+     ), vacant_since_source = 'lease'
+     WHERE vacant_since IS NULL
+       AND status IN ('vacant_ready','vacant_not_ready')
+       AND EXISTS (
+         SELECT 1 FROM leases l WHERE l.unit_id = units.id AND l.status = 'ended'
+           AND COALESCE(l.move_out_date, l.end_date) IS NOT NULL
+       )`,
   ];
   for (const m of MIGRATIONS) {
     try {
