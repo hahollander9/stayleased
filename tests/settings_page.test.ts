@@ -64,7 +64,7 @@ test('the page renders grouped, labelled controls — and no raw JSON', async ()
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@setpage.test');
-    const page = await get(base, '/admin/settings', cookie);
+    const page = await get(base, '/admin/settings?section=all', cookie);
     assert.equal(page.status, 200);
 
     // the page splits on where the answer comes from, not on domain
@@ -224,7 +224,7 @@ test('a property override saves, is badged, and can be handed back to the org de
     assert.equal(val<number>('nsf_fee_cents'), 3500, 'the org default is untouched');
     assert.equal(val<number>('nsf_fee_cents', propId), 6000, 'the property differs');
 
-    const page = await get(base, `/admin/settings?property=${propId}`, cookie);
+    const page = await get(base, `/admin/settings?property=${propId}&section=all`, cookie);
     assert.match(page.text, /overridden here/, 'the page says which settings differ here');
     assert.match(page.text, /Use the organization default/);
 
@@ -239,7 +239,7 @@ test('the late-fee structures offered are exactly the ones the engine implements
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@setpage.test');
-    const page = await get(base, '/admin/settings', cookie);
+    const page = await get(base, '/admin/settings?section=all', cookie);
     // lateFeeCandidates branches on flat | flat_plus_daily | percent. An option
     // it has no branch for would assess nothing at all, silently.
     assert.match(page.text, /value="percent"/, 'percent is offered — the engine implements it');
@@ -348,7 +348,7 @@ test('a partial property override renders merged, so saving cannot pin the untou
       value: JSON.stringify({ leasing: 'auto' }), updated_at: nowIso(),
     });
 
-    const page = await get(base, `/admin/settings?property=${propId}`, cookie);
+    const page = await get(base, `/admin/settings?property=${propId}&section=all`, cookie);
     // the three dials the property does not override must render the ORG value
     const block = page.text.slice(page.text.indexOf('Autonomy by area'), page.text.indexOf('Autonomy by area') + 4000);
     assert.equal((block.match(/value="approve" selected/g) || []).length, 3, 'maintenance, payments and renewals show the org value');
@@ -365,7 +365,9 @@ test('a partial property override renders merged, so saving cannot pin the untou
  * the spec would agree with the spec even when the form disagrees with both. */
 function formsOn(page: string): { key: string; body: Record<string, string> }[] {
   const out: { key: string; body: Record<string, string> }[] = [];
-  for (const chunk of page.split('<form method="post" action="/admin/settings">').slice(1)) {
+  // Any attributes after the action (on/off settings carry data-autosubmit,
+  // because they save when flipped): a browser submits the form the same way.
+  for (const chunk of page.split(/<form method="post" action="\/admin\/settings"[^>]*>/).slice(1)) {
     const form = chunk.slice(0, chunk.indexOf('</form>'));
     const body: Record<string, string> = {};
     for (const m of form.matchAll(/<input\b([^>]*)>/g)) {
@@ -397,7 +399,7 @@ test('every setting round-trips: submitting the form exactly as rendered saves i
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@setpage.test');
-    const page = await get(base, '/admin/settings', cookie);
+    const page = await get(base, '/admin/settings?section=all', cookie);
     const forms = formsOn(page.text);
     assert.equal(forms.length, SPECS.length, 'one editable form per setting');
 
@@ -468,7 +470,7 @@ test('a deleted pay grade stays deleted — the render must not merge a default 
     assert.equal(val<Record<string, unknown>>('bah_table')[doomed!], undefined, `stored without ${doomed}`);
 
     // …and the PAGE must agree, or the next save silently resurrects it
-    const page = await get(base, '/admin/settings', cookie);
+    const page = await get(base, '/admin/settings?section=all', cookie);
     const matrix = page.text.slice(page.text.indexOf('BAH rates by pay grade'));
     assert.doesNotMatch(matrix.slice(0, 6000), new RegExp(`f\\.${doomed}\\.with_deps`), 'the deleted grade is gone from the form too');
 
@@ -508,7 +510,7 @@ test('a property-scoped admin can set their own property but never an organizati
     const orgBefore = val<number>('nsf_fee_cents');
 
     // the org-defaults level is readable but not editable
-    const page = await get(base, '/admin/settings', cookie);
+    const page = await get(base, '/admin/settings?section=all', cookie);
     assert.equal(page.status, 200);
     // copy pin (2026-08-13): the scope bar states the reason, not just the fact
     assert.match(page.text, /read-only for you/, 'the page says why it is read-only');
@@ -666,7 +668,7 @@ test('an organization-wide setting is stated at the property level, not offered'
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@setpage.test');
-    const page = await get(base, `/admin/settings?property=${propId}`, cookie);
+    const page = await get(base, `/admin/settings?property=${propId}&section=all`, cookie);
     assert.equal(page.status, 200);
     assert.match(page.text, /organization-wide/, 'the property level says which settings do not move here');
     // the kill switch has no property form to submit
@@ -691,7 +693,7 @@ test('a setting with one org-wide field still takes a property override on the r
     const cookie = await loginAs(base, 'admin@setpage.test');
     await post(base, '/admin/settings', { key: 'delinquency_scoring', property: '', 'f.mode': 'active', 'f.noticeThresholdDays': '45' }, cookie);
     // the property form carries the threshold only — the mode is not on it
-    const page = await get(base, `/admin/settings?property=${propId}`, cookie);
+    const page = await get(base, `/admin/settings?property=${propId}&section=all`, cookie);
     const form = formsOn(page.text).find((f) => f.key === 'delinquency_scoring');
     assert.ok(form, 'the threshold is still editable at the property');
     assert.equal(form!.body['f.mode'], undefined, 'the org-wide mode is not a property field');
@@ -712,14 +714,14 @@ test('the level switcher names the level, counts what is set there, and every Sa
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@setpage.test');
-    const org = await get(base, '/admin/settings', cookie);
+    const org = await get(base, '/admin/settings?section=all', cookie);
     assert.match(org.text, /Editing the organization/);
     assert.match(org.text, /Settings Test Co/, 'the organization is named, not implied');
     assert.match(org.text, /Save for Settings Test Co/, 'the button carries the scope to the bottom of a long page');
     assert.match(org.text, /apply to <b>every property<\/b>/, 'the reach of an org default is stated');
 
     await post(base, '/admin/settings', { key: 'nsf_fee_cents', property: propId, f: '61.00' }, cookie);
-    const prop = await get(base, `/admin/settings?property=${propId}`, cookie);
+    const prop = await get(base, `/admin/settings?property=${propId}&section=all`, cookie);
     assert.match(prop.text, /Editing one property/);
     assert.match(prop.text, /Save for Override Court/);
     assert.match(prop.text, /Back to organization defaults/, 'one click out of the property level');

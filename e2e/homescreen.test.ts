@@ -55,35 +55,44 @@ after(async () => {
   }
 });
 
-/** The simple-mode switch, as the settings page renders it: the ordinary
- * spec-driven control, a form carrying `key=simple_mode` with one checkbox. */
+/** The organization's starting mode, as the settings page renders it: an
+ * on/off switch in the "How much you see" section that saves when flipped. */
 const SWITCH = 'form:has(input[name="key"][value="simple_mode"])';
 
 async function setSimple(page: import('playwright').Page, on: boolean): Promise<void> {
-  await page.goto(`${base}/admin/settings`);
+  await page.goto(`${base}/admin/settings?section=how-much-you-see`);
   await page.waitForLoadState('networkidle');
   const box = page.locator(`${SWITCH} input[type="checkbox"]`);
   if ((await box.isChecked()) !== on) {
-    await box.setChecked(on);
-    await page.locator(`${SWITCH} button`).first().click();
+    // Flipping it IS saving it: the form submits on change and comes back to
+    // the same section.
+    await Promise.all([
+      page.waitForURL(/\/admin\/settings\?property=&section=how-much-you-see$/),
+      page.locator(`${SWITCH} .switch`).click(),
+    ]);
     await page.waitForLoadState('networkidle');
   }
 }
 
 async function isSimple(page: import('playwright').Page): Promise<boolean> {
-  await page.goto(`${base}/admin/settings`);
+  await page.goto(`${base}/admin/settings?section=how-much-you-see`);
   await page.waitForLoadState('networkidle');
   return page.locator(`${SWITCH} input[type="checkbox"]`).isChecked();
 }
 
-/** Turn simple mode on and land on the home screen.
+/** Put this person in Standard and land on the home screen.
  *
- * The explicit goto is load-bearing: saving a setting leaves you on the
- * settings page, and a test whose flag was ALREADY on would never navigate at
- * all. That is how this helper first reported zero bars in a twelve-bar
- * strip — it was asserting against /admin/settings. */
+ * It posts the same form the navigation-bar switch posts, rather than clicking
+ * it, because the bar is hidden at phone width and this helper serves both;
+ * pressing the switch itself is e2e/modes.test.ts's job. The explicit goto at
+ * the end is load-bearing: an earlier version of this helper asserted against
+ * whatever page it happened to be left on, and reported zero bars in a
+ * twelve-bar strip. */
 async function enable(page: import('playwright').Page): Promise<void> {
-  await setSimple(page, true);
+  await page.request.post(`${base}/mode`, {
+    form: { mode: 'standard', back: '/home' },
+    headers: { origin: base },
+  });
   await page.goto(`${base}/home`);
   await page.waitForLoadState('networkidle');
 }
@@ -91,7 +100,7 @@ async function enable(page: import('playwright').Page): Promise<void> {
 test('the switch is off to begin with, so no existing operator is moved without asking', async () => {
   const page = await newPage(browser, {});
   await login(page, base, ADMIN);
-  await page.goto(`${base}/admin/settings`);
+  await page.goto(`${base}/admin/settings?section=how-much-you-see`);
   await page.waitForLoadState('networkidle');
 
   assert.equal(await page.locator(SWITCH).count(), 1, 'the switch is on the settings page');

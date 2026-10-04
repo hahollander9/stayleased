@@ -17,12 +17,13 @@ import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dia
 import { receiveInbound } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
-import { SPECS, GROUPS, renderSetting, describeSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
+import { SPECS, GROUPS, renderSetting, isInstantSetting, describeSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
 import { pendingProposals, proposalDelta, acceptProposal, dismissProposal } from '../setup/policy_proposals.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea,
   registerNav, registerSearch, emptyState, pager, checkbox,
 } from '../../ui/ui.ts';
+import { uiMode, modeIsChosen } from '../../lib/uimode.ts';
 import { ROLES, ROLE_LABELS, ROLE_PERMS, PERMISSIONS, type Role } from '../../lib/rbac.ts';
 import { deliverWebhooks, emit } from '../../lib/events.ts';
 import { createHash } from 'node:crypto';
@@ -45,19 +46,6 @@ registerSearch((ctx, query) => {
     ctx.orgId, like, like,
   ).map((u) => ({ kind: 'staff', label: u.name, sub: u.email, href: `/admin/staff/${u.id}` }));
 });
-
-/** A section the page keeps folded: real settings, still editable, but not
- * decisions the operator has to make today. Collapsing them is the point —
- * the complaint that started this was forty questions with equal weight. */
-function foldedSection(title: string, note: string, specs: SettingSpec[], body?: (sp: SettingSpec) => Raw): Raw {
-  if (!specs.length) return raw('');
-  return card(html`${title} <span class="muted small">${String(specs.length)}</span>`, html`
-    <details>
-      <summary class="small">Show these ${String(specs.length)} settings</summary>
-      <p class="muted small" style="max-width:68ch">${note}</p>
-      ${specs.map((sp) => body ? body(sp) : raw(''))}
-    </details>`);
-}
 
 /** A setting value in the operator's own units, for proposal copy. */
 function fmtSettingValue(key: string, path: string | null, v: unknown): string {
@@ -296,14 +284,17 @@ export function routes(r: Router): void {
               <p class="small muted" style="margin:8px 0 0">${sp.orgOnlyWhy || 'The product reads this once for the whole organization.'}
                 <a href="${href('')}">Change it at the organization level</a></p>
             </div>`
-          : html`<form method="post" action="/admin/settings">
+          : html`<form method="post" action="/admin/settings"${isInstantSetting(sp) && !orgLevelReadOnly ? raw(' data-autosubmit') : raw('')}>
               <input type="hidden" name="key" value="${sp.key}" />
               <input type="hidden" name="property" value="${propId}" />
+              <input type="hidden" name="section" value="${viewId}" />
               ${renderSetting(sp, effective, !!propId)}
-              ${orgLevelReadOnly ? raw('') : html`<div class="btn-row">
-                <button class="btn btn-sm">${propId ? `Save for ${propName}` : `Save for ${orgName}`}</button>
-                ${when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`)}
-              </div>`}
+              ${orgLevelReadOnly ? raw('') : (() => {
+                const save = html`<button class="btn btn-sm">${propId ? `Save for ${propName}` : `Save for ${orgName}`}</button>`;
+                const reset = when(overridden, () => html`<button class="btn btn-sm btn-ghost" formaction="/admin/settings/clear">Use the organization default</button>`);
+                if (!isInstantSetting(sp)) return html`<div class="btn-row">${save}${reset}</div>`;
+                return html`<noscript><div class="btn-row">${save}</div></noscript>${when(overridden, () => html`<div class="btn-row">${reset}</div>`)}`;
+              })()}
             </form>`}
       </div>`;
     };
@@ -356,8 +347,51 @@ export function routes(r: Router): void {
     // been decided here, as opposed to inherited?"
     const setHere = propId ? overriddenKeys : new Set(orgLevel.keys());
     const onlySet = rq.query.get('only') === 'set';
-    const href = (pid: string, only = onlySet): string =>
-      `/admin/settings${pid ? `?property=${pid}` : '?property='}${only ? '&only=set' : ''}`;
+
+    // ---------- sections ----------
+    // The page used to be every setting in one 8,000px scroll, each group a
+    // card and three more folded away at the bottom. It is now one section at
+    // a time behind a section list, the way every settings screen people
+    // already know works — with "All settings" kept as a real view, because a
+    // taxonomy is somebody's guess at where a thing lives and Find-in-page is
+    // the reader's answer when the guess is wrong.
+    //
+    // Sections are derived from the specs, never listed by hand alone: a group
+    // with nothing to show is not offered, and a group this map forgets still
+    // gets a section under "Your organization" rather than vanishing.
+    const plain = (g: string): SettingSpec[] => SPECS.filter((sp) => sp.group === g && !sp.source && !sp.advanced);
+    type Section = { id: string; label: string; specs: SettingSpec[]; kind: 'group' | 'documents' | 'jurisdiction' | 'specialty' | 'danger' };
+    const slug = (t: string): string => t.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+    const sectionFor = (g: string): Section => ({ id: slug(g), label: g, specs: plain(g), kind: 'group' });
+    const special: Record<string, Section> = {
+      '@documents': { id: 'documents', label: 'Read from your documents', specs: SPECS.filter((sp) => sp.source === 'documents'), kind: 'documents' },
+      '@jurisdiction': { id: 'jurisdiction', label: 'Set by where you operate', specs: SPECS.filter((sp) => sp.source === 'jurisdiction'), kind: 'jurisdiction' },
+      '@specialty': { id: 'specialty', label: 'Specialty housing', specs: SPECS.filter((sp) => !sp.source && (sp.advanced || sp.group === 'Specialty housing')), kind: 'specialty' },
+      '@danger': { id: 'danger', label: 'Clear portfolio data', specs: [], kind: 'danger' },
+    };
+    const NAV: [string, string[]][] = [
+      ['Money', ['Rent, fees and payments', 'Approval thresholds']],
+      ['Renting', ['Leasing and screening', 'Renewals and pricing', 'Deposits and move-out', 'Pets', 'Insurance']],
+      ['Messages and agents', ['Communications', 'AI and automation']],
+      ['Rules from elsewhere', ['@documents', '@jurisdiction']],
+      ['Your organization', ['How much you see', '@specialty', '@danger']],
+    ];
+    const placed = new Set(NAV.flatMap(([, ids]) => ids));
+    for (const g of GROUPS) if (!placed.has(g) && g !== 'Specialty housing') NAV[NAV.length - 1]![1].splice(-1, 0, g);
+    const navGroups = NAV.map(([head, ids]) => ({
+      head,
+      sections: ids.map((x) => special[x] || sectionFor(x))
+        .filter((sec) => sec.kind === 'danger' ? !propId : sec.specs.length > 0),
+    })).filter((g) => g.sections.length);
+    const allSections = navGroups.flatMap((g) => g.sections);
+    const sectionParam = (rq.query.get('section') || '').replace(/[^a-z0-9-]/g, '');
+    // "Only what is set here" cuts across every section, so it shows them all.
+    const showAll = sectionParam === 'all' || onlySet;
+    const current = showAll ? null : allSections.find((sec) => sec.id === sectionParam) || allSections[0]!;
+    const viewId = showAll ? 'all' : current!.id;
+
+    const href = (pid: string, only = onlySet, sec = viewId): string =>
+      `/admin/settings${pid ? `?property=${pid}` : '?property='}${only ? '&only=set' : ''}${sec && !only ? `&section=${sec}` : ''}`;
     const n = (count: number, one: string, many = one + 's'): string => `${count} ${count === 1 ? one : many}`;
 
     // The switcher is chips while an operator can take them all in at a glance,
@@ -400,11 +434,85 @@ export function routes(r: Router): void {
           ? html`${n(visibleOverrides, 'override')} recorded across ${n(propsWithOverrides, 'property', 'properties')}.`
           : html`No property overrides anything yet.`}`;
 
+    /** One section's card. The source-driven sections carry the sentence
+     * that says where their values come from — that sentence is the reason
+     * they are their own sections. */
+    const sectionCard = (sec: Section): Child => {
+      if (sec.kind === 'danger') return dangerZone;
+      const specs = shown(sec.specs);
+      if (!specs.length) return raw('');
+      const note = sec.kind === 'documents'
+        ? `Your leases state these. ${proposals.length ? 'Confirm the proposals above, or edit a value directly.' : 'Nothing is waiting for review — upload signed leases and the system reads them.'}`
+        : sec.kind === 'jurisdiction'
+        ? jurisdictionNote
+        : sec.kind === 'specialty'
+        ? 'Only relevant if you run student or military housing.'
+        : '';
+      // The mode section opens with the reader's own position, because the
+      // setting below is everyone else's starting point and the first question
+      // anyone has on this screen is "so why am I seeing what I'm seeing?"
+      const mine = specs.some((sp) => sp.key === 'simple_mode')
+        ? html`<div class="set-mine">
+            You are using <b>${uiMode(ctx) === 'standard' ? 'Standard' : 'Advanced'}</b>
+            ${modeIsChosen(ctx) ? '— your own choice.' : '— the starting mode below, since you have not picked one.'}
+            Change it any time with the <b>Standard · Advanced</b> switch at the right of the navigation bar;
+            it changes only your screen.
+          </div>`
+        : raw('');
+      return card(groupHeading(sec.label, specs), html`
+        ${mine}
+        ${when(note, () => html`<p class="muted small set-section-note">${note}</p>`)}
+        ${specs.map(settingRow)}`);
+    };
+    const renderSections = (): Child => {
+      if (showAll) {
+        return html`${allSections.map(sectionCard)}
+          ${when(onlySet && setHere.size === 0, () => card('Nothing set here', html`<p class="muted" style="margin:0">Every setting at this level is inherited. <a href="${href(propId, false)}">Show all settings</a>.</p>`))}`;
+      }
+      return sectionCard(current!);
+    };
+
+    /** The section list: a rail on a desk, a native picker on a phone — the
+     * same choice the level switcher makes, for the same reason. A count beside
+     * a section means something is set at this level there; on the documents
+     * section, how many readings are waiting for a decision. */
+    const sectionNav = (): Raw => {
+      const setIn = (sec: Section): number => sec.specs.filter((sp) => setHere.has(sp.key)).length;
+      const badge = (sec: Section): Child => {
+        if (sec.kind === 'documents' && proposals.length) return html`<span class="set-nav-n review" title="waiting for your decision">${String(proposals.length)}</span>`;
+        const k = setIn(sec);
+        return k ? html`<span class="set-nav-n" title="set at this level">${String(k)}</span>` : raw('');
+      };
+      const link = (id: string, label: Child, extra: Child = raw('')): Raw => html`
+        <a href="${href(propId, false, id)}" ${id === viewId && !onlySet ? CURRENT : raw('')}>${label}${extra}</a>`;
+      return html`<aside class="set-side">
+        <nav class="set-nav" aria-label="Settings sections">
+          ${navGroups.map((g) => html`<div class="set-nav-group">
+            <span class="set-nav-head">${g.head}</span>
+            ${g.sections.map((sec) => link(sec.id, sec.label, badge(sec)))}
+          </div>`)}
+          <div class="set-nav-group set-nav-all">${link('all', 'All settings')}</div>
+        </nav>
+        <form method="get" class="set-pick" data-autosubmit>
+          <input type="hidden" name="property" value="${propId}" />
+          ${field('Section', html`<select name="section" aria-label="Settings section">
+            ${navGroups.map((g) => html`<optgroup label="${g.head}">
+              ${g.sections.map((sec) => html`<option value="${sec.id}" ${sec.id === viewId ? 'selected' : ''}>${sec.label}</option>`)}
+            </optgroup>`)}
+            <option value="all" ${viewId === 'all' ? 'selected' : ''}>All settings</option>
+          </select>`)}
+          <noscript><button class="btn btn-sm">Go</button></noscript>
+        </form>
+      </aside>`;
+    };
+
     return shell(rq, {
       title: 'Settings',
       active: '/admin/settings',
       subtitle: 'What residents are charged, when, and how much each agent decides on its own — set once for the organization, then overridden building by building where a building differs.',
-      content: html`
+      content: html`<div class="set-layout">
+        ${sectionNav()}
+        <div class="set-main">
         <div class="scope" data-level="${propId ? 'property' : 'org'}">
           <div class="scope-in">
             <div class="scope-who">
@@ -424,7 +532,7 @@ export function routes(r: Router): void {
             </a>
           </div>`)}
         </div>
-        ${when(!orgLevelReadOnly && !!proposals.length, () => card(
+        ${when(!orgLevelReadOnly && !!proposals.length && (showAll || current?.kind === 'documents'), () => card(
           html`Read from your documents <span class="badge accent">${String(proposals.length)} to review</span>`,
           html`<p class="muted small" style="margin-top:0;max-width:68ch">Your leases state most of these already. Each one shows the
             sentence it was read from — confirm it against the document, or dismiss it and your own value stands. Nothing
@@ -455,21 +563,9 @@ export function routes(r: Router): void {
             </div>`;
           })}`,
         ))}
-        ${GROUPS.map((group) => {
-          const inGroup = shown(SPECS.filter((sp) => sp.group === group && !sp.source && !sp.advanced));
-          return inGroup.length ? card(groupHeading(group, inGroup), html`${inGroup.map(settingRow)}`) : raw('');
-        })}
-        ${foldedSection('Read from your documents',
-          `Your leases state these. ${proposals.length ? 'Confirm the proposals above, or edit a value directly.' : 'Nothing is waiting for review — upload signed leases and the system reads them.'}`,
-          shown(SPECS.filter((sp) => sp.source === 'documents')), settingRow)}
-        ${foldedSection('Set by where you operate',
-          jurisdictionNote,
-          shown(SPECS.filter((sp) => sp.source === 'jurisdiction')), settingRow)}
-        ${foldedSection('Specialty housing',
-          'Only relevant if you run student or military housing.',
-          shown(SPECS.filter((sp) => sp.advanced)), settingRow)}
-        ${when(onlySet && setHere.size === 0, () => card('Nothing set here', html`<p class="muted" style="margin:0">Every setting at this level is inherited. <a href="${href(propId, false)}">Show all settings</a>.</p>`))}
-        ${propId ? raw('') : dangerZone}`,
+        ${renderSections()}
+        </div>
+      </div>`,
     });
   });
 
@@ -482,7 +578,8 @@ export function routes(r: Router): void {
     if (propId && !canAccessProperty(ctx, propId)) return notFound('Property not found');
     // an org default reaches every property, including ones outside the grant
     if (!propId && !ctx.allProperties) return forbidden('Changing an organization default requires access to the whole organization.');
-    const back = `/admin/settings?property=${propId}`;
+    const sec = String(rq.body.section || '').replace(/[^a-z0-9-]/g, '');
+    const back = `/admin/settings?property=${propId}${sec ? `&section=${sec}` : ''}`;
     // the product reads this one org-wide, so a property row would be stored
     // and then ignored — refuse it rather than bank a setting that does nothing
     if (propId && spec.orgOnly) {
@@ -526,7 +623,8 @@ export function routes(r: Router): void {
     if (!clearProp && !ctx.allProperties) return forbidden('Changing an organization default requires access to the whole organization.');
     run('DELETE FROM settings WHERE org_id=? AND property_id=? AND key=?', ctx.orgId, clearProp, key);
     const label = SPECS.find((sp) => sp.key === key)?.label || key;
-    return redirect(`/admin/settings?property=${rq.body.property || ''}`, `${label} follows the organization default again.`);
+    const sec = String(rq.body.section || '').replace(/[^a-z0-9-]/g, '');
+    return redirect(`/admin/settings?property=${clearProp}${sec ? `&section=${sec}` : ''}`, `${label} follows the organization default again.`);
   });
 
   // Confirm or dismiss what the documents said. Accepting is the ONLY path in
@@ -538,12 +636,12 @@ export function routes(r: Router): void {
     const pid = String(rq.body.id || '');
     if (String(rq.body.decision || '') === 'dismiss') {
       const p = dismissProposal(ctx, pid);
-      return redirect('/admin/settings', p ? 'Kept your value — that one will not be proposed again.' : 'That proposal is no longer pending.', p ? 'ok' : 'err');
+      return redirect('/admin/settings?section=documents', p ? 'Kept your value — that one will not be proposed again.' : 'That proposal is no longer pending.', p ? 'ok' : 'err');
     }
     const done = acceptProposal(ctx, pid);
-    if (!done) return redirect('/admin/settings', 'That proposal is no longer pending.', 'err');
+    if (!done) return redirect('/admin/settings?section=documents', 'That proposal is no longer pending.', 'err');
     const spec = SPECS.find((sp) => sp.key === done.key);
-    return redirect('/admin/settings', `${spec?.label || done.key} updated from your documents${done.scope === 'property' ? ' for that property' : ''}.`);
+    return redirect('/admin/settings?section=documents', `${spec?.label || done.key} updated from your documents${done.scope === 'property' ? ' for that property' : ''}.`);
   });
 
   // Org-level reset for the onboarding loop. The typed organization name is
@@ -557,10 +655,10 @@ export function routes(r: Router): void {
     // holding admin:settings must not be able to reach past their grant
     if (!ctx.allProperties) return forbidden('Clearing the portfolio requires access to the whole organization.');
     if (ctx.orgKind === 'demo') {
-      return redirect('/admin/settings', 'The demo organization cannot be cleared — its seeded world runs the public demo.', 'err');
+      return redirect('/admin/settings?section=danger', 'The demo organization cannot be cleared — its seeded world runs the public demo.', 'err');
     }
     if (String(rq.body.confirm_name || '').trim() !== org.name) {
-      return redirect('/admin/settings', 'The name you typed does not match this organization — nothing was cleared.', 'err');
+      return redirect('/admin/settings?section=danger', 'The name you typed does not match this organization — nothing was cleared.', 'err');
     }
     const { counts } = clearOrgData(ctx);
     const n = (k: string): number => counts[k] || 0;

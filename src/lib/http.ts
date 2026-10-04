@@ -14,6 +14,18 @@ export interface Upload {
   data: Buffer;
 }
 
+/** A redirect target that cannot leave this site.
+ *
+ * A leading '/' is not enough on its own. '//evil.example' is a
+ * protocol-relative URL, and '/\evil.example' is normalised by browsers to the
+ * same thing, so both start with a slash and both go off-site. Anything that
+ * is not a plain local path falls back. */
+export function localPath(candidate: unknown, fallback: string): string {
+  const b = String(candidate ?? '');
+  if (!b.startsWith('/') || b.startsWith('//') || b.startsWith('/\\') || /[\r\n]/.test(b)) return fallback;
+  return b;
+}
+
 export interface Rq {
   raw: IncomingMessage;
   method: string;

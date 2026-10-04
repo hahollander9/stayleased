@@ -107,7 +107,7 @@ test('the route needs the typed org name, and refuses the demo org outright', as
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@orgclear-test.test');
-    const page = await get(base, '/admin/settings', cookie);
+    const page = await get(base, '/admin/settings?section=danger', cookie);
     assert.equal(page.status, 200);
     assert.match(page.text, /Danger zone/);
     assert.match(page.text, /Clear all portfolio data/);
@@ -115,7 +115,7 @@ test('the route needs the typed org name, and refuses the demo org outright', as
 
     const bad = await post(base, '/admin/settings/clear-data', { confirm_name: 'Wrong Co' }, cookie);
     assert.equal(bad.status, 303);
-    assert.equal(bad.location, '/admin/settings');
+    assert.equal(bad.location, '/admin/settings?section=danger', 'a refused clear returns to the section the form lives on');
     assert.ok((val<number>('SELECT COUNT(*) FROM properties WHERE org_id=?', orgId) || 0) > 0, 'a mismatch clears nothing');
 
     const ok = await post(base, '/admin/settings/clear-data', { confirm_name: 'Clear Test Co' }, cookie);
@@ -125,12 +125,12 @@ test('the route needs the typed org name, and refuses the demo org outright', as
 
     // the demo org keeps its seeded world even with the name typed correctly
     const demoCookie = await loginAs(base, 'admin@orgclear-demo.test');
-    const demoPage = await get(base, '/admin/settings', demoCookie);
+    const demoPage = await get(base, '/admin/settings?section=danger', demoCookie);
     // NB: match a phrase that cannot straddle a template line break
     assert.match(demoPage.text, /Clearing the portfolio is disabled/);
     const refused = await post(base, '/admin/settings/clear-data', { confirm_name: 'Demo World Co' }, demoCookie);
     assert.equal(refused.status, 303);
-    assert.equal(refused.location, '/admin/settings');
+    assert.equal(refused.location, '/admin/settings?section=danger');
   } finally {
     close();
   }

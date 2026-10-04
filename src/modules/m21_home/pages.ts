@@ -1,5 +1,5 @@
 import { html, when } from '../../lib/html.ts';
-import { redirect, forbidden, type Router, type Rq } from '../../lib/http.ts';
+import { redirect, forbidden, localPath, type Router, type Rq } from '../../lib/http.ts';
 import { requireStaff, requirePerm, can, type Ctx } from '../../lib/auth.ts';
 import { q1, run } from '../../lib/db.ts';
 import { usd } from '../../lib/money.ts';
@@ -103,10 +103,8 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
     bareHead: true,
     content: html`
       <div class="sm-head">
-        <div class="sm-kicker">${orgName} · ${fmtDate(ctx.businessDate)}</div>
         <h1 class="sm-h1">Where you stand</h1>
-        <p class="sm-sub">Counting money that actually came in and went out.
-          ${when(can(ctx, 'admin:settings'), () => html`<a class="sm-advanced" href="/admin/settings">Switch to the full version</a>`)}</p>
+        <p class="sm-sub">${orgName} · ${fmtDate(ctx.businessDate)} · counting money that actually came in and went out.</p>
       </div>
 
       ${card('What you made this month', html`
@@ -274,6 +272,20 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     if (!can(ctx, 'dashboard:view')) return forbidden();
     return homeScreen(rq);
+  });
+
+  // The Standard / Advanced switch in the navigation bar. A personal choice,
+  // stored on the person (see lib/uimode.ts): it changes the screen of whoever
+  // pressed it and nobody else's. It returns to the page it was pressed on,
+  // because the switch is a change of view, not a change of place — the same
+  // page with the other navigation around it.
+  r.post('/mode', requireStaff, (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const mode = String(rq.body.mode || '');
+    const back = localPath(rq.body.back, '/');
+    if (mode !== 'standard' && mode !== 'advanced') return redirect(back, 'That is not a mode.', 'err');
+    run('UPDATE users SET ui_mode=? WHERE id=?', mode, ctx.userId);
+    return redirect(back);
   });
 
   // Owner-entered "empty since", for a unit with no move-out on record. Stored

@@ -114,6 +114,8 @@ export function db(): DatabaseSync {
          SELECT 1 FROM leases l WHERE l.unit_id = units.id AND l.status = 'ended'
            AND COALESCE(l.move_out_date, l.end_date) IS NOT NULL
        )`,
+    // Standard / Advanced, per person. NULL = follow the org default.
+    "ALTER TABLE users ADD COLUMN ui_mode TEXT",
   ];
   for (const m of MIGRATIONS) {
     try {
