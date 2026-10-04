@@ -2133,3 +2133,77 @@ Gates: `tsc --noEmit` clean · unit 543/543 · seeded e2e homescreen·smoke·gol
 workingmodel·navmenus·ai·autonomy·finops·accounting·setup·facilities·ledger·payments·hubs·
 verticals 90/90 · both themes opened and read. BUILDLOG + DECISIONS #107–#110 appended against
 the current tail.
+
+## 2026-10-04 — Standard · Advanced: one switch, the whole navigation, and settings in sections
+
+Feedback on phase 1: simple mode was good, but the point is to idiot-proof it — the switch should
+be visible like any normal/advanced mode, it should change every tab and the summary, and the
+settings and toggles should be cleaned up. Not dumbed down; easier to reach the work StayLeased
+is for. Two decisions were the operator's and were asked: the switch is **per person** (with the
+org setting as everyone's starting point), and the modes are called **Standard · Advanced**.
+
+**The switch.** A Standard · Advanced segmented control at the trailing end of the module bar —
+the row it changes — and at the head of the phone drawer. It reuses the Appearance picker's
+control, so it reads as part of the product rather than a flag that leaked into the UI. A plain
+form post (works without JavaScript) that returns to the page it was pressed on: switching is a
+change of view, not of place. Stored on `users.ui_mode`; NULL follows the org's `simple_mode`
+setting, which is now labelled "Starting mode for your team". A switch every staff member can see
+must only change the screen of whoever pressed it (DECISIONS #111).
+
+**Standard's navigation.** Home · Money · Units · People · Repairs, from the approved audit, with
+the copy map's words: Who owes me, Seriously behind, Deposits I'm holding, Bills, Bills and
+spending to OK, Money in and out, Bank accounts · Properties, Units · Inbox, Residents, Leases,
+Leases ending soon, Inquiries, Tours, Applicants · Repairs, My day, Getting units ready, Vendors.
+Grouped menus (Coming in / Going out / Your books; Residents / New renters). The sub-nav row and
+the phone drawer follow the mode — the drawer used to list all 56 pages whatever you were doing;
+in Standard it lists 20. Every entry resolves through the module's own registration, so
+permissions come from the module and Standard cannot offer a page a role cannot open; a test
+holds every Standard href inside the registry, because an unregistered one renders as nothing
+(#112). Advanced is unchanged except for the switch. Home in Standard is the five-answer screen,
+which also lost its eyebrow label (the heading now carries the org and date in its sub-line) and
+its "Switch to the full version" link, now redundant.
+
+**The gear and the account menu.** The gear was three setup links, a rule, and every admin page in
+registration order. It is now labelled groups — Your portfolio, Your organization (Settings,
+Staff & roles, Billing, Lease templates), Records (Audit log, Outbox), System (Advanced only:
+Scheduled jobs, Integrations, Vertical modes), Demo tools — with a catch-all so a page registered
+later lands under System rather than vanishing. The account menu kept only what is personal
+(profile, appearance, sign out); "Org settings" and "Billing" moved to the gear with everything
+else that belongs to the organization.
+
+**Settings.** 8,105px of every setting in one column became a section list and one section at a
+time — 1,852px for the first — with "All settings" kept as a real view for Find-in-page. The
+level bar (organization vs. one property) heads the right column and stays sticky there; the
+section list holds still in its own. A count beside a section means something is set at this
+level there; on the documents section, readings waiting for a decision. Saves, resets, proposal
+decisions and the clear-data form all return to the section they came from. The union of the
+sections is tested against the spec list, because a forgotten group would be unreachable with
+every rendering test still green (#113). On/off settings are switches that save when flipped; the
+forty "Value" labels are gone and units read after their numbers (#114).
+
+**Found while measuring, fixed because it is the same complaint.** At every width from 981 to
+1,279px — every laptop smaller than a desktop monitor — the top bar pushed the gear and account
+menu off the right edge and every page scrolled sideways. Pre-existing (main measured the same
+1,279px). That band now drops captions the way the phone layout already did, and an e2e test
+checks 1,024, 1,152 and 1,280px in both modes (#115). And the `back` guard on the AI approve/reject
+routes from phase 1 accepted `/\evil.example`, which browsers normalise to `//evil.example`; one
+shared `localPath()` now guards both it and the new `/mode` route, with the three spellings and a
+newline pinned in tests.
+
+Tests: `tests/uimode.test.ts` (15) — resolution, per-person isolation over HTTP, the redirect
+guard, Standard vs. Advanced tabs, Standard against a leasing agent's permissions (every offered
+link opened and checked for 403), the gear, sections losing nothing, saves returning to their
+section, switches vs. Save. `e2e/modes.test.ts` (7) — pressing the switch in the bar and the
+drawer, Standard's menus, settings sections and the phone picker, a switch saving on flip, the
+gear, and laptop widths. Existing suites that read the whole settings page now read
+`?section=all`; the round-trip test's form parser accepts attributes after the action, as a
+browser does; homescreen's helpers use the per-person switch.
+
+Not in this pass: page titles still use the old names (click "Who owes me", land on a page headed
+"Receivables") — that is the copy-map phase. The sub-nav row says where you are in the new words
+in the meantime.
+
+Gates: `tsc --noEmit` clean · unit 558/558 · full seeded e2e 218/218 (every suite) · design detector clean
+on every changed file and the 160 added CSS lines · one inspection round plus one confirmation
+round, desktop and phone, dark and light. BUILDLOG + DECISIONS #111–#115 appended against the
+current tail.

@@ -1,5 +1,6 @@
 import { onboardingBanner } from '../setup/onboarding.ts';
-import { homeScreen, simpleMode } from '../m21_home/pages.ts';
+import { homeScreen } from '../m21_home/pages.ts';
+import { uiMode } from '../../lib/uimode.ts';
 import { marketingHome } from '../m4_marketing/homepage.ts';
 import { landingFor } from '../auth/pages.ts';
 import { html, raw, when, join, type Child } from '../../lib/html.ts';
@@ -60,7 +61,7 @@ export function routes(r: Router): void {
     // it. A home screen you have to know the URL of is a home screen nobody
     // sees, and an owner who lands on the KPI dashboard first has already met
     // "Exposure 7%" before anything answers a question they asked.
-    if (simpleMode(ctx)) return homeScreen(rq);
+    if (uiMode(ctx) === 'standard') return homeScreen(rq);
     if (ctx.currentPropertyId) return propertyDashboard(rq, ctx.currentPropertyId);
     return portfolioDashboard(rq);
   });

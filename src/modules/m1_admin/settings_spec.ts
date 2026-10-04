@@ -1,4 +1,4 @@
-import { html, when, type Raw, type Child } from '../../lib/html.ts';
+import { html, raw, when, type Raw, type Child } from '../../lib/html.ts';
 import { field, input, select, checkbox, moneyInput } from '../../ui/ui.ts';
 import { parseUsd, usd } from '../../lib/money.ts';
 import { SETTING_DEFAULTS } from '../../lib/settings.ts';
@@ -306,11 +306,11 @@ export const SPECS: SettingSpec[] = [
     // is for. It goes through the ordinary spec machinery rather than a
     // bespoke card: the settings page already exists to render settings, and
     // a second control for the same key is how two sources of truth start.
-    key: 'simple_mode', group: 'How much you see', label: 'Simple mode',
-    help: 'One home screen that answers what you made this month, what you have in the bank, who owes you, which units are costing you money, and what needs your OK — in plain words, with the arithmetic on the page. Off, you get every screen and the accounting names for things. Nothing is removed either way: the same records, the same books, the same approvals.',
-    ctl: { t: 'bool', on: 'Simple mode on' },
+    key: 'simple_mode', group: 'How much you see', label: 'Starting mode for your team',
+    help: 'Where each person starts until they choose for themselves with the Standard · Advanced switch in the navigation bar — and their own choice always wins. Standard is Home, Money, Units, People and Repairs in plain words, with the five answers on the home screen. Advanced is every screen, with the accounting and industry names for things. Nothing is removed either way: the same records, the same books, the same approvals.',
+    ctl: { t: 'bool', on: 'Start everyone in Standard' },
     orgOnly: true,
-    orgOnlyWhy: 'Which version of the product you see belongs to the people using it, not to a building. A portfolio where some buildings navigated differently from others would be harder to learn than either version on its own.',
+    orgOnlyWhy: 'It is the starting point for people across the whole organization; each person changes their own view with the switch in the navigation bar.',
   },
 
   // ---------- AI and automation ----------
@@ -533,10 +533,37 @@ export function renderSetting(spec: SettingSpec, value: unknown, atProperty = fa
       )))}</div>`;
   }
   const ctl = spec.ctl!;
-  return html`<div class="form-grid">${field(
-    unitOf(ctl) ? html`Value <span class="muted">${unitOf(ctl)}</span>` : 'Value',
-    control('f', ctl, value),
-  )}</div>`;
+  // One value under its own heading. It used to sit under a visible label
+  // reading "Value" — on every single-value setting on the page, forty times
+  // over — which named nothing the heading had not. The control's accessible
+  // name is now the setting's own label (a wrapping <label>, read by screen
+  // readers, not repeated on screen), and a unit reads as what it is: the word
+  // after the number. "[ 45 ] days", "[ 1 ] of the month".
+  if (ctl.t === 'bool') {
+    // An on/off setting is a switch, and a switch acts when it is flipped. The
+    // page used to make it a checkbox that did nothing until a separate Save
+    // button further down was found and pressed — the one control on the page
+    // whose state on screen could disagree with what was actually saved. The
+    // form auto-submits (see the settings page); the Save button survives only
+    // for browsers without JavaScript.
+    return html`<label class="switch">
+      <input type="checkbox" role="switch" name="f" value="1" ${value === true ? 'checked' : ''} />
+      <span class="switch-track" aria-hidden="true"></span>
+      <span class="switch-label">${ctl.on}</span>
+    </label>`;
+  }
+  const unit = unitOf(ctl);
+  return html`<label class="set-scalar">
+    <span class="sr-only">${spec.label}</span>
+    ${ctl.t === 'money' ? html`<span class="set-unit">$</span>` : raw('')}
+    ${control('f', ctl, value)}
+    ${unit ? html`<span class="set-unit">${unit}</span>` : raw('')}
+  </label>`;
+}
+
+/** A setting that is one on/off value — rendered as a switch that saves on its own. */
+export function isInstantSetting(spec: SettingSpec): boolean {
+  return !spec.subs && !spec.matrix && spec.ctl?.t === 'bool';
 }
 
 /** The same setting as a statement rather than a form: what it currently is,

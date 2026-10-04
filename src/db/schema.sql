@@ -35,6 +35,12 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash TEXT NOT NULL,
   active INTEGER NOT NULL DEFAULT 1,
   last_login_at TEXT,
+  -- Standard or Advanced, chosen with the switch in the navigation bar. NULL
+  -- means this person has not chosen and follows the organization's default
+  -- (the simple_mode setting). A view preference belongs to the person, not
+  -- the org: a property manager switching to Advanced must never change what
+  -- the owner sees.
+  ui_mode TEXT,
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_users_org ON users(org_id, kind);

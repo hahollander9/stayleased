@@ -6,6 +6,7 @@ import { htmlRes, takeFlash, cookie, type Rq, type Res } from '../lib/http.ts';
 import { can, type Ctx } from '../lib/auth.ts';
 import { q, ROOT } from '../lib/db.ts';
 import { fmtDate } from '../lib/dates.ts';
+import { uiMode, type UiMode } from '../lib/uimode.ts';
 
 /** Content-hash version for static assets. Assets are served with
  * cache-control max-age=3600; without a version in the URL, a deploy can pair
@@ -137,6 +138,81 @@ function inGroup(href: string, prefix: string): boolean {
   return href === prefix || href.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`);
 }
 
+// ---------- Standard mode navigation ----------
+// Five tabs named for what an owner does — Home, Money, Units, People, Repairs
+// — instead of the eight department names Advanced uses. Every entry is an
+// href that a module has ALREADY registered, and resolves against that
+// registration: permissions, demo-only flags, adaptive `show` predicates and
+// active-state prefixes all come from the module, so Standard can never offer
+// a page its user could not otherwise open. Only the label is Standard's own,
+// taken from the approved copy map (docs/simple-mode-audit.md).
+//
+// Nothing is removed. Every page Standard leaves out is still at its URL, and
+// one press of the switch puts the full navigation back.
+type StdItem = [href: string, label: string];
+interface StdTab { label: string; home?: true; groups: [heading: string | null, items: StdItem[]][] }
+const STANDARD_TABS: StdTab[] = [
+  { label: 'Home', home: true, groups: [] },
+  { label: 'Money', groups: [
+    ['Coming in', [['/receivables', 'Who owes me'], ['/delinquency', 'Seriously behind'], ['/deposits', 'Deposits I\u2019m holding']]],
+    ['Going out', [['/ap', 'Bills'], ['/approvals', 'Bills and spending to OK']]],
+    ['Your books', [['/statements', 'Money in and out'], ['/banking', 'Bank accounts']]],
+  ] },
+  { label: 'Units', groups: [
+    [null, [['/properties', 'Properties'], ['/units', 'Units']]],
+  ] },
+  { label: 'People', groups: [
+    ['Residents', [['/inbox', 'Inbox'], ['/residents', 'Residents'], ['/leases', 'Leases'], ['/renewals', 'Leases ending soon']]],
+    ['New renters', [['/leads', 'Inquiries'], ['/tours', 'Tours'], ['/applications', 'Applicants']]],
+  ] },
+  { label: 'Repairs', groups: [
+    [null, [['/workorders', 'Repairs'], ['/myday', 'My day'], ['/turns', 'Getting units ready'], ['/vendors', 'Vendors']]],
+  ] },
+];
+
+/** One resolved Standard tab: the module's own NavItem, relabelled. */
+interface StdResolved { label: string; home: boolean; groups: { heading: string | null; items: NavItem[] }[] }
+
+function visible(ctx: Ctx, it: NavItem): boolean {
+  if (it.perm && !can(ctx, it.perm)) return false;
+  if (it.demoOnly && ctx.orgKind === 'live') return false;
+  try {
+    if (it.show && !it.show(ctx)) return false;
+  } catch {
+    return false; /* an adaptive predicate must never break the chrome */
+  }
+  return true;
+}
+
+function standardTabs(ctx: Ctx): StdResolved[] {
+  const registered = new Map<string, NavItem>();
+  for (const items of navSections.values()) for (const it of items) if (!registered.has(it.href)) registered.set(it.href, it);
+  return STANDARD_TABS.map((t) => ({
+    label: t.label,
+    home: !!t.home,
+    groups: t.groups.map(([heading, items]) => ({
+      heading,
+      items: items.flatMap(([href, label]) => {
+        const it = registered.get(href);
+        return it && visible(ctx, it) ? [{ ...it, label }] : [];
+      }),
+    })).filter((g) => g.items.length),
+  })).filter((t) => t.home || t.groups.length);
+}
+
+const HOME_ACTIVE = (active: string): boolean => active === '/' || active === '/home';
+
+/** Every href Standard's navigation names, and every href a module actually
+ * registered. A Standard entry whose href no module registers renders as
+ * nothing at all — a typo in the map above would silently delete a page from
+ * Standard. The tests hold the first list inside the second. */
+export function standardNavHrefs(): string[] {
+  return STANDARD_TABS.flatMap((t) => t.groups.flatMap(([, items]) => items.map(([href]) => href)));
+}
+export function registeredNavHrefs(): Set<string> {
+  return new Set([...navSections.values()].flatMap((items) => items.map((i) => i.href)));
+}
+
 function tabItems(ctx: Ctx): Map<string, NavItem[]> {
   const out = new Map<string, NavItem[]>();
   for (const [sec, items] of navSections) {
@@ -171,11 +247,59 @@ const TAB_ICONS: Record<string, Raw> = {
   Marketing: TI('<path d="M3 11v3l12 4V6L3 10z"/><path d="M15 8.5a3.5 3.5 0 0 1 0 7M7 14.5V20h3v-4.5"/>'),
   Messages: TI('<path d="M21 14a2 2 0 0 1-2 2H8l-5 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>'),
   Reports: TI('<path d="M3 21h18M6 21V12m5 9V7m5 14v-6m5 6V4"/>'),
+  Home: TI('<path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M10 21v-6h4v6"/>'),
 };
+// Standard's tabs reuse Advanced's drawings where the subject is the same, so
+// switching modes changes the words and the grouping, never the iconography.
+TAB_ICONS.Money = TAB_ICONS.Financials!;
+TAB_ICONS.Units = TAB_ICONS.Property!;
+TAB_ICONS.People = TAB_ICONS.Residents!;
+TAB_ICONS.Repairs = TAB_ICONS.Operations!;
 
-function moduleBar(ctx: Ctx, active: string): Raw {
+/** The Standard / Advanced switch.
+ *
+ * It sits at the end of the very bar it changes, and at the top of the mobile
+ * drawer, because a mode a person cannot see is a mode they cannot get out
+ * of. It is the same segmented control the Appearance picker uses, so it reads
+ * as part of the product rather than a feature flag that leaked into the UI.
+ *
+ * A plain form post: it works without JavaScript, and it returns to the page
+ * it was pressed on — switching is a change of view, not a change of place. */
+function modeSwitch(r: Rq, mode: UiMode, where: 'bar' | 'drawer'): Raw {
+  const back = r.url.pathname + r.url.search;
+  return html`<form method="post" action="/mode" class="segbar modeswitch modeswitch-${where}" role="group" aria-label="Navigation mode">
+    <input type="hidden" name="back" value="${back}" />
+    <button class="seg" name="mode" value="standard" aria-pressed="${mode === 'standard' ? 'true' : 'false'}"
+      title="Home, money, units, people and repairs \u2014 the everyday work, in plain words">Standard</button>
+    <button class="seg" name="mode" value="advanced" aria-pressed="${mode === 'advanced' ? 'true' : 'false'}"
+      title="Every screen, with the accounting and industry names for things">Advanced</button>
+  </form>`;
+}
+
+function standardBar(ctx: Ctx, active: string, sw: Raw): Raw {
+  const link = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`;
+  return html`<nav class="modulebar" data-mode="standard" aria-label="Navigation">${join(standardTabs(ctx).map((t, idx) => {
+    if (t.home) {
+      return html`<a class="mtab-btn ${HOME_ACTIVE(active) ? 'active' : ''}" href="/">${TAB_ICONS.Home}Home</a>`;
+    }
+    const all = t.groups.flatMap((g) => g.items);
+    const act = all.some((i) => itemActive(active, i));
+    // A tab with one page is a link, not a menu with one entry in it.
+    if (all.length === 1) {
+      return html`<a class="mtab-btn ${act ? 'active' : ''}" href="${all[0]!.href}">${TAB_ICONS[t.label]}${t.label}</a>`;
+    }
+    const body = t.groups.map((g) => html`${g.heading && t.groups.length > 1 ? html`<span class="mgroup" role="presentation">${g.heading}</span>` : raw('')}${g.items.map(link)}`);
+    return html`<div class="mtab ${act ? 'active' : ''}">
+      <button class="mtab-btn" data-toggle="#st-${idx}" aria-haspopup="true">${TAB_ICONS[t.label]}${t.label}${CARET}</button>
+      <div class="menu mmenu" id="st-${idx}">${body}</div>
+    </div>`;
+  }))}<div class="modulebar-end">${sw}</div></nav>`;
+}
+
+function moduleBar(ctx: Ctx, active: string, mode: UiMode, sw: Raw): Raw {
+  if (mode === 'standard') return standardBar(ctx, active, sw);
   const tabs = tabItems(ctx);
-  return html`<nav class="modulebar" aria-label="Modules">${join(TAB_ORDER.map((label, idx) => {
+  return html`<nav class="modulebar" data-mode="advanced" aria-label="Modules">${join(TAB_ORDER.map((label, idx) => {
     if (label === 'Dashboard') {
       return html`<a class="mtab-btn ${active === '/' ? 'active' : ''}" href="/">${TAB_ICONS.Dashboard}Dashboard</a>`;
     }
@@ -206,14 +330,25 @@ function moduleBar(ctx: Ctx, active: string): Raw {
         ${menuBody}
       </div>
     </div>`;
-  }))}</nav>`;
+  }))}<div class="modulebar-end">${sw}</div></nav>`;
 }
 
 /** Entrata-style white second-row sub-nav: when the current page belongs to a
  * module tab, its sibling pages render as a horizontal row under the red bar
  * (the dropdowns remain for cross-module jumps). Dashboard and unmapped pages
  * (e.g. /setup) render no sub-nav. */
-function subNav(ctx: Ctx, active: string): Raw {
+function subNav(ctx: Ctx, active: string, mode: UiMode): Raw {
+  if (mode === 'standard') {
+    for (const t of standardTabs(ctx)) {
+      const items = t.groups.flatMap((g) => g.items);
+      if (items.length > 1 && items.some((i) => itemActive(active, i))) {
+        return html`<nav class="subnav" aria-label="${t.label} pages">
+          ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}
+        </nav>`;
+      }
+    }
+    return html``;
+  }
   const tabs = tabItems(ctx);
   for (const label of TAB_ORDER) {
     if (label === 'Dashboard') continue;
@@ -227,17 +362,49 @@ function subNav(ctx: Ctx, active: string): Raw {
   return html``;
 }
 
-function setupMenu(ctx: Ctx, active: string): Raw {
-  const setup = tabItems(ctx).get('Setup') || [];
-  if (!setup.length && !can(ctx, 'properties:manage')) return html``;
+/** The gear: everything that belongs to the organization rather than to the
+ * day's work, grouped by what it is. It used to be three setup links, a rule,
+ * and then every admin page in registration order — settings between lease
+ * templates and the audit log, the simulator next to billing.
+ *
+ * Grouping is by href against the registry, like Standard's tabs, so the
+ * module still owns the permission. Anything registered under Admin that no
+ * group claims lands under System rather than vanishing: a page added later
+ * must never become unreachable because this list was not updated. System is
+ * Advanced's — scheduled jobs and integrations are plumbing an owner running
+ * the everyday work has no reason to open. */
+const GEAR_GROUPS: [heading: string, hrefs: string[], advancedOnly?: true][] = [
+  ['Your organization', ['/admin/settings', '/admin/staff', '/admin/billing', '/admin/lease-templates']],
+  ['Records', ['/admin/audit', '/dev/messages']],
+  ['System', ['/admin/jobs', '/admin/api', '/verticals'], true],
+  ['Demo tools', ['/dev/sim']],
+];
+
+function setupMenu(ctx: Ctx, active: string, mode: UiMode): Raw {
+  const admin = tabItems(ctx).get('Setup') || [];
+  // Billing is not a registered nav page — it is reached from here and only here.
+  if (can(ctx, 'admin:billing')) admin.push({ href: '/admin/billing', label: 'Billing', match: ['/admin/billing'] });
+  if (!admin.length && !can(ctx, 'properties:manage')) return html``;
+  const byHref = new Map(admin.map((i) => [i.href, i]));
+  const claimed = new Set<string>();
+  const groups = GEAR_GROUPS.map(([heading, hrefs, advOnly]) => {
+    const items = hrefs.flatMap((h) => (byHref.has(h) ? [byHref.get(h)!] : []));
+    items.forEach((i) => claimed.add(i.href));
+    return { heading, items, advOnly: !!advOnly };
+  });
+  const stray = admin.filter((i) => !claimed.has(i.href));
+  groups.find((g) => g.heading === 'System')!.items.push(...stray);
+  const shown = groups.filter((g) => g.items.length && (mode === 'advanced' || !g.advOnly));
+  const link = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`;
   return html`<div class="usermenu">
-    <button class="icon-btn ${active.startsWith('/setup') ? 'active' : ''}" data-toggle="#setup-pop" aria-label="Setup and administration" title="Setup &amp; administration">${GEAR}</button>
-    <div class="menu" id="setup-pop">
+    <button class="icon-btn ${active.startsWith('/setup') || active.startsWith('/admin') ? 'active' : ''}" data-toggle="#setup-pop" aria-label="Setup and administration" title="Setup &amp; administration">${GEAR}</button>
+    <div class="menu gearmenu" id="setup-pop">
       <div class="menu-head">Setup &amp; administration</div>
-      <a href="/setup" class="${active.startsWith('/setup') && active !== '/setup/wizard' ? 'active' : ''}">Setup hub</a>
-      ${when(can(ctx, 'properties:manage'), () => html`<a href="/setup#upload">Upload your data</a>`)}
-      ${when(can(ctx, 'properties:manage'), () => html`<a href="/setup/wizard" class="${active === '/setup/wizard' ? 'active' : ''}">Add a property (wizard)</a>`)}
-      ${when(setup.length, () => html`<hr />${setup.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}`)}
+      ${when(can(ctx, 'properties:manage'), () => html`<span class="mgroup" role="presentation">Your portfolio</span>
+        <a href="/setup" class="${active.startsWith('/setup') && active !== '/setup/wizard' ? 'active' : ''}">Setup hub</a>
+        <a href="/setup#upload">Upload your data</a>
+        <a href="/setup/wizard" class="${active === '/setup/wizard' ? 'active' : ''}">Add a property</a>`)}
+      ${shown.map((g) => html`<span class="mgroup" role="presentation">${g.heading}</span>${g.items.map(link)}`)}
     </div>
   </div>`;
 }
@@ -357,7 +524,18 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     ? (q<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId)[0]?.name ?? '')
     : 'Platform';
 
-  const nav = join(
+  const mode = uiMode(ctx);
+  const showSwitch = !!ctx.orgId && (ctx.kind === 'staff' || ctx.kind === 'platform');
+  const sw = showSwitch ? modeSwitch(r, mode, 'bar') : raw('');
+
+  // The drawer is the phone's whole navigation, so it follows the mode exactly
+  // as the bar does: five plain-language tabs in Standard, every section in
+  // Advanced. It used to list all 56 pages regardless.
+  const drawerLink = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(opts.active, i) ? 'active' : ''}"><span class="dot"></span>${i.label}</a>`;
+  const standardDrawer = (): Raw => join(standardTabs(ctx).map((t) => t.home
+    ? html`<div class="nav-group"><a href="/" class="${HOME_ACTIVE(opts.active) ? 'active' : ''}"><span class="dot"></span>Home</a></div>`
+    : html`<div class="nav-group"><div class="nav-head">${t.label}</div>${t.groups.flatMap((g) => g.items).map(drawerLink)}</div>`));
+  const nav = mode === 'standard' ? standardDrawer() : join(
     SECTION_ORDER.filter((s) => navSections.has(s)).map((sec) => {
       const items = (navSections.get(sec) || []).filter((i) => (!i.perm || can(ctx, i.perm)) && !(i.demoOnly && ctx.orgKind === 'live'));
       if (!items.length) return null;
@@ -384,7 +562,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
       <div class="brandbar">
         <button class="menu-btn" data-toggle="#sidebar" aria-label="Menu">${raw('<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h16"/></svg>')}</button>
         <a class="brand brand-top" href="/">${logo(22, 'var(--brand)')} <span class="brand-name">Stay<span class="wm-accent">Leased</span></span></a>
-        ${when(orgName && orgName !== 'Platform', () => html`<span class="org-chip" title="Your organization">${orgName}</span>`)}
+        ${when(orgName && orgName !== 'Platform', () => html`<span class="org-chip" title="${orgName}">${orgName}</span>`)}
         ${when(ctx.orgKind === 'demo' && ctx.kind === 'staff', () => html`<span class="demo-pill" title="This is the shared demo world — simulated rails, demo data. Real customer companies run in live mode with real books.">DEMO</span>`)}
         <div class="spacer"></div>
         ${propSwitch}
@@ -393,14 +571,12 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         ${ctx.orgKind === 'demo'
           ? html`<a class="bizdate" href="/dev/sim" title="Simulated business date — open Simulator Console"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</a>`
           : html`<span class="bizdate" title="Business date"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</span>`}
-        ${setupMenu(ctx, opts.active)}
+        ${setupMenu(ctx, opts.active, mode)}
         <div class="usermenu">
           <button class="avatar" data-toggle="#usermenu-pop" aria-label="Account menu">${initials(ctx.userName)}</button>
           <div class="menu" id="usermenu-pop">
             <div class="menu-head">${ctx.userName}<br /><span class="muted">${ctx.userEmail}</span></div>
             <hr />
-            ${when(can(ctx, 'admin:settings'), () => html`<a href="/admin/settings">Org settings</a>`)}
-            ${when(can(ctx, 'admin:billing'), () => html`<a href="/admin/billing">Billing</a>`)}
             <a href="/me">My profile</a>
             <hr />
             ${APPEARANCE}
@@ -409,8 +585,8 @@ export function shell(r: Rq, opts: ShellOpts): Res {
           </div>
         </div>
       </div>
-      ${moduleBar(ctx, opts.active)}
-      ${subNav(ctx, opts.active)}
+      ${moduleBar(ctx, opts.active, mode, sw)}
+      ${subNav(ctx, opts.active, mode)}
     </header>
     ${when(ctx.impersonatorId, () => html`<div class="impersonation">You are viewing StayLeased as <b>${ctx.userName}</b> (impersonation is audited). <a href="/unimpersonate">Return to my account</a></div>`)}
     <div class="main">
@@ -429,6 +605,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     </div>
     <aside class="sidebar drawer" id="sidebar">
       <div class="brand">${logo(22, 'var(--brand)')} <span class="brand-name">Stay<span class="wm-accent">Leased</span><span class="org">${orgName}</span></span></div>
+      ${when(showSwitch, () => html`<div class="drawer-mode">${modeSwitch(r, mode, 'drawer')}</div>`)}
       <nav class="nav">${nav}</nav>
     </aside>
   </div>

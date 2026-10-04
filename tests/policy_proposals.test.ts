@@ -100,7 +100,7 @@ test('accepting writes the setting; dismissing keeps yours and stops the asking'
   const { base, close } = await startTestServer();
   try {
     const cookie = await loginAs(base, 'admin@policy.test');
-    const page = await get(base, '/admin/settings', cookie);
+    const page = await get(base, '/admin/settings?section=documents', cookie);
     assert.equal(page.status, 200);
     assert.match(page.text, /Read from your documents/);
     assert.match(page.text, /late charge of \$75\.00/, 'the quoted sentence is on the page');

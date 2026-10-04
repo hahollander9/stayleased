@@ -1,5 +1,5 @@
 import { html, raw, when, join } from '../../lib/html.ts';
-import { redirect, notFound, type Router, type Rq, jsonRes } from '../../lib/http.ts';
+import { redirect, notFound, localPath, type Router, type Rq, jsonRes } from '../../lib/http.ts';
 import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j, js } from '../../lib/db.ts';
 import { fmtDate } from '../../lib/dates.ts';
@@ -310,12 +310,9 @@ export function routes(r: Router): void {
   /** Where to land after a decision. Simple mode approves from the home
    * screen, and bouncing the owner to /ai — a screen that mode does not
    * otherwise show — would lose their place for no reason. Only a local path
-   * is honoured: a `back` of `//evil.example` is a protocol-relative URL that
-   * browsers follow off-site, so the leading-slash check alone is not enough. */
-  const backTo = (rq: Rq): string => {
-    const b = String(rq.body.back || '');
-    return b.startsWith('/') && !b.startsWith('//') ? b : '/ai';
-  };
+   * is honoured (see localPath: '//x' and '/\x' both start with a slash and
+   * both leave the site). */
+  const backTo = (rq: Rq): string => localPath(rq.body.back, '/ai');
 
   r.post('/ai/:id/approve', requirePerm('ai:approve'), (rq) => {
     const ctx = rq.ctx as Ctx;
