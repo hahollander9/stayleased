@@ -2014,3 +2014,58 @@ BUILDLOG entry and DECISIONS #103–#104 appended against the current tail.
 
 Gates: `tsc --noEmit` clean · unit 522/522 · seeded e2e homeshape·homepage·mkpages·marketing·
 navmenus·rebrand·seo·smoke 50/50 · design detector clean on every range touched.
+
+## 2026-10-04 — Simple mode: the audit, before any of the code
+
+A proposal document, not a change to the product. The ask was for a rework of the logged-in app
+around five questions a 5–100-unit owner should be able to answer in ten seconds — what did I
+make, how much cash, who owes me, which units cost me money, what needs attention — with the
+explicit instruction to audit first and wait. So this commit carries `docs/simple-mode-audit.md`
+and nothing else: every logged-in screen with its purpose, its jargon quoted from the product
+rather than paraphrased, its main action and where an owner stalls; a five-item navigation; a
+~70-term copy map; the home-screen spec with each number's derivation; nine exception rules; and
+the list of what cannot be tied to the books.
+
+No DECISIONS number is claimed. Nothing has been decided — the document exists to be approved or
+rejected, and recording a decision for a proposal awaiting a yes would make the log assert
+something that isn't true yet. The numbers get claimed when the phases land.
+
+What the audit found that the proposal then had to work around:
+
+**None of the five questions has a screen, though all five are derivable.** The ledger is good —
+`incomeStatement`, `balanceSheet` and `t12` all take a `basis`, so cash-basis figures the owner
+actually recognizes are a function call away. What's missing is that question 1 lives in
+`/statements` under "NOI", question 2 in `/gl` under account 1010, question 3 in `/receivables`
+under "aging", and question 4 nowhere at all.
+
+**"Approvals" names two different queues.** `/approvals` is money — POs, vendor invoices, large
+JEs, deposit deadlines. `/ai` is the AI draft queue, which is the product's central promise, and
+it is labelled "AI Activity" inside the Reports dropdown. The proposal renders the AI queue on the
+home screen and leaves the governance machinery exactly as it is.
+
+**`cashFlow().closing` cannot be the cash number.** Its `CASH_CODES` is `{1010, 1020, 1030}` —
+operating cash plus the deposit float plus reserves. Presenting that sum as "your cash" would
+overstate spendable cash by the entire float: $99,367 on the live Station U&O figures. Home reads
+asset line `1010` alone and puts `1020` on its own line, labelled as money held for residents.
+This is the kind of error that would have been nobody's bug: the function is correct, its name is
+correct, and using it for this question is still wrong by six figures.
+
+**Per-unit profit is not a ledger grouping.** `journal_lines` carries `property_id` and no
+`unit_id`, so it cannot be read out of the books directly. It can be assembled —
+`vendor_invoice_lines` does carry `unit_id`, and both `charges` and `vendor_invoices` carry
+`je_id`, so every figure traces to a posted entry — provided the table also shows the remainder
+(total property expense minus the unit-coded lines) as its own named line. Without that line the
+units' numbers imply they sum to the building's P&L, which is false. It is therefore not called
+profit per unit anywhere in the spec.
+
+**Days vacant has no source.** `units` has `status` and no vacancy timestamp. It is derivable from
+the last ended lease's `move_out_date`, but a unit that never had a lease — every unit of a fresh
+import, including the pending Station U&O re-import — has no date at all. Flagged rather than
+shipped, with a `vacant_since` column offered separately so the number starts being real on the
+day it ships instead of being backfilled with a guess.
+
+**There is no anomaly detection in the codebase.** All nine exception rules are new, all
+deterministic per the m19 doctrine, all shadow-first — including one that reports when the books
+disagree with themselves, because an owner who cannot see a disagreement meets it at tax time.
+
+Gates: no TypeScript touched; `tsc --noEmit` clean; BUILDLOG appended against the current tail.
