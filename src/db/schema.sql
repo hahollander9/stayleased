@@ -269,6 +269,16 @@ CREATE TABLE IF NOT EXISTS units (
   market_rent_cents INTEGER NOT NULL,
   amenities TEXT NOT NULL DEFAULT '[]', -- [{name, premium_cents}]
   notes TEXT,
+  -- When this unit became empty. `status` alone cannot answer "how long",
+  -- and the answer is money: days empty x market rent is rent the owner is
+  -- not collecting. NULL means unknown, which is the honest state for a unit
+  -- with no lease history (every unit of a fresh import) — the home screen
+  -- shows "empty" with no duration rather than inventing a date.
+  vacant_since TEXT,
+  -- Where that date came from: 'lease' (derived from the lease that ended)
+  -- or 'owner' (typed in). The UI labels an owner-entered date as such, so a
+  -- figure resting on someone's recollection never reads as a ledger fact.
+  vacant_since_source TEXT,
   created_at TEXT NOT NULL,
   UNIQUE(property_id, unit_number)
 );

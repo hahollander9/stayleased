@@ -2030,3 +2030,158 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
 .guardrails li { line-height: 1.55; }
 .guardrails b { color: var(--ink); font-weight: 640; }
 
+
+/* ============================================================
+   Simple mode — the five-answer home screen (m21)
+   ============================================================
+   Typographic job: make one number per card unmistakably the answer, and make
+   the arithmetic under it legible as an operation rather than as a list. The
+   owner this screen is for reads a figure and wants to know where it came
+   from; the layout has to carry "A minus B equals C" without a caption saying
+   so.
+
+   Only tokens with a [data-theme="light"] override are used here. --surface-3
+   is deliberately avoided: it is a hard-coded dark value with no light
+   counterpart, and the autonomy dial already shipped a bug where that made the
+   unselected options read heavier than the selected one (DECISIONS #101). */
+
+.sm-head { margin: 2px 0 20px }
+.sm-kicker {
+  font-size: 12px; font-weight: 600; letter-spacing: .08em; text-transform: uppercase;
+  color: var(--muted);
+}
+.sm-h1 {
+  margin: 6px 0 4px; font-size: clamp(26px, 3.4vw, 36px); line-height: 1.12;
+  letter-spacing: -.02em; color: var(--ink);
+}
+.sm-sub { margin: 0; color: var(--ink-2); font-size: 14px }
+.sm-advanced { margin-left: 10px; font-size: 13px; color: var(--muted) }
+.sm-advanced:hover { color: var(--accent) }
+
+/* ---- the one big number ---- */
+.sm-big {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px;
+  font-size: clamp(30px, 4.4vw, 44px); font-weight: 650; line-height: 1.05;
+  letter-spacing: -.025em; font-variant-numeric: tabular-nums; color: var(--ink);
+  margin: 2px 0 14px;
+}
+.sm-big.warn { color: var(--warn) }
+.sm-big.bad { color: var(--bad) }
+/* The tracking above is in em, which resolves against THIS font-size and then
+   inherits as that absolute length — on a 44px parent it lands as -1.1px on a
+   13px child and smears it (the billing page shipped exactly that bug). */
+.sm-big-note {
+  font-size: 13px; font-weight: 500; letter-spacing: normal; color: var(--muted);
+}
+
+/* ---- the arithmetic ---- */
+.sm-sum {
+  display: flex; flex-direction: column; gap: 2px;
+  border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
+  background: var(--surface-2); margin: 0 0 12px;
+}
+.sm-term {
+  display: grid; grid-template-columns: 18px 1fr auto; align-items: baseline; gap: 8px;
+  padding: 5px 0; font-size: 14px; color: var(--ink-2);
+}
+.sm-op {
+  font-size: 15px; font-weight: 600; color: var(--faint); text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.sm-term-label { min-width: 0 }
+.sm-term-value { font-variant-numeric: tabular-nums; color: var(--ink); font-weight: 600 }
+.sm-total {
+  border-top: 1px solid var(--line); margin-top: 4px; padding-top: 9px;
+  font-size: 15px; color: var(--ink);
+}
+.sm-total .sm-term-label { font-weight: 600 }
+.sm-total .sm-term-value { font-size: 19px; font-weight: 700 }
+.sm-total .sm-op { color: var(--ink-2) }
+.sm-total.good .sm-term-value { color: var(--ok) }
+.sm-total.bad .sm-term-value { color: var(--bad) }
+
+/* ---- cash that is not yours to spend ---- */
+.sm-other { display: flex; flex-direction: column; gap: 7px; margin: 0 0 14px }
+.sm-other-line {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; font-size: 13px;
+  padding-left: 11px; border-left: 2px solid var(--line);
+}
+.sm-other-line b { font-variant-numeric: tabular-nums; color: var(--ink-2) }
+.sm-other-label { font-weight: 600; color: var(--ink-2) }
+.sm-other-note { color: var(--muted) }
+
+/* ---- notes, ties, and the honest disclaimers ---- */
+.sm-note { margin: 10px 0 0; font-size: 13px; color: var(--ink-2); line-height: 1.5 }
+.sm-note b { font-variant-numeric: tabular-nums }
+.sm-note-why { display: block; margin-top: 3px; color: var(--muted); font-size: 12.5px }
+.sm-tie { color: var(--muted); font-size: 12.5px }
+.sm-pos { color: var(--ok) }
+.sm-neg { color: var(--bad) }
+.sm-h3 {
+  margin: 22px 0 8px; font-size: 14px; font-weight: 650; color: var(--ink);
+  letter-spacing: -.005em;
+}
+
+/* ---- twelve-month strip ----
+   A bar per month, scaled on absolute value from a shared baseline. A losing
+   month is toned rather than pointed downward: the question is "is this month
+   normal", and a bar below an axis reads as a different measure at a glance. */
+.sm-strip {
+  display: flex; align-items: flex-end; gap: 4px; height: 76px; margin: 14px 0 2px;
+  padding-bottom: 16px; position: relative;
+}
+.sm-strip::after {
+  content: ''; position: absolute; left: 0; right: 0; bottom: 16px; height: 1px;
+  background: var(--line);
+}
+.sm-bar-wrap {
+  flex: 1; min-width: 0; height: 100%; display: flex; align-items: flex-end;
+  justify-content: center; position: relative;
+}
+.sm-bar {
+  width: 100%; max-width: 34px; border-radius: 3px 3px 0 0;
+  background: var(--accent); opacity: .85;
+}
+.sm-bar.neg { background: var(--bad) }
+.sm-bar-wrap:last-child .sm-bar { opacity: 1 }
+.sm-bar-label {
+  position: absolute; bottom: -16px; left: 0; right: 0; text-align: center;
+  font-size: 10px; color: var(--faint); font-variant-numeric: tabular-nums;
+}
+
+/* ---- needs your OK: one list, two kinds ---- */
+.sm-ok-item {
+  display: grid; grid-template-columns: 72px 1fr auto; gap: 12px; align-items: start;
+  padding: 12px 0; border-top: 1px solid var(--line-2);
+}
+.sm-ok-item:first-child { border-top: 0; padding-top: 2px }
+.sm-ok-tag {
+  font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
+  padding: 3px 7px; border-radius: 5px; text-align: center; white-space: nowrap;
+}
+.sm-ok-tag.money { background: var(--warn-soft); color: var(--warn) }
+.sm-ok-tag.msg { background: var(--info-soft); color: var(--info) }
+.sm-ok-body { min-width: 0; font-size: 14px; color: var(--ink) }
+.sm-ok-body .sub { display: block; font-size: 12.5px; color: var(--muted); margin-top: 2px }
+.sm-ok-why {
+  margin: 6px 0 6px; font-size: 12.5px; color: var(--ink-2); line-height: 1.5;
+  padding-left: 9px; border-left: 2px solid var(--line);
+}
+.sm-ok-act { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: flex-end }
+.sm-ok-act form { margin: 0 }
+.sm-ok-amt { font-variant-numeric: tabular-nums; font-size: 15px; color: var(--ink) }
+
+@media (max-width: 640px) {
+  /* The three-column OK row collapses: the tag goes inline above the body and
+     the actions drop full-width, so a 44px tap target survives on a phone. */
+  .sm-ok-item { grid-template-columns: 1fr; gap: 7px }
+  .sm-ok-tag { justify-self: start }
+  .sm-ok-act { justify-content: flex-start; gap: 9px }
+  /* A thumb, not a mouse. btn-sm is 25px tall — right for a dense table, wrong
+     for the only controls on the one screen built for non-power-users. */
+  .sm-ok-act button, .sm-ok-act a.btn { min-height: 42px; padding-inline: 16px }
+  .sm-term { grid-template-columns: 16px 1fr; row-gap: 0 }
+  .sm-term-value { grid-column: 2; text-align: right }
+  .sm-strip { height: 64px }
+  .sm-bar-label { font-size: 9px }
+}

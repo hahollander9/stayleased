@@ -86,6 +86,7 @@ const SCORER: [string, string][] = [
 ];
 
 export const GROUPS = [
+  'How much you see',
   'Rent, fees and payments',
   'Deposits and move-out',
   'Leasing and screening',
@@ -297,6 +298,19 @@ export const SPECS: SettingSpec[] = [
     key: 'auto_enroll_migrated', group: 'Insurance', label: 'Auto-enroll imported households',
     help: 'Imported households arrive with no coverage on file because they were just migrated, not because anything lapsed. Off means they are left alone until you decide — no billed master policy appears on a portfolio the day it lands.',
     ctl: { t: 'bool', on: 'Enroll imported households too' },
+  },
+
+  // ---------- How much you see ----------
+  {
+    // The first thing in SPECS because it decides what the rest of the page
+    // is for. It goes through the ordinary spec machinery rather than a
+    // bespoke card: the settings page already exists to render settings, and
+    // a second control for the same key is how two sources of truth start.
+    key: 'simple_mode', group: 'How much you see', label: 'Simple mode',
+    help: 'One home screen that answers what you made this month, what you have in the bank, who owes you, which units are costing you money, and what needs your OK — in plain words, with the arithmetic on the page. Off, you get every screen and the accounting names for things. Nothing is removed either way: the same records, the same books, the same approvals.',
+    ctl: { t: 'bool', on: 'Simple mode on' },
+    orgOnly: true,
+    orgOnlyWhy: 'Which version of the product you see belongs to the people using it, not to a building. A portfolio where some buildings navigated differently from others would be harder to learn than either version on its own.',
   },
 
   // ---------- AI and automation ----------

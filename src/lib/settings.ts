@@ -87,6 +87,13 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   po_approval_threshold_cents: 100000,
   match_price_tolerance_pct: 2.5, // 3-way match variance tolerance
   writeoff_approval_threshold_cents: 50000,
+  // Simple mode (the five-answer home screen and, from phase 2, the reduced
+  // navigation). The DEFAULT IS FALSE ON PURPOSE: a setting with no row reads
+  // its default, so defaulting true would have switched the chrome under every
+  // existing operator on deploy. New orgs get an explicit `true` row written
+  // on org.created instead, which is what "on for new, off for existing"
+  // actually requires.
+  simple_mode: false,
 };
 
 export function getSetting<T = any>(ctx: Ctx, key: string, propertyId?: string | null): T {

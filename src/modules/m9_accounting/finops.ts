@@ -27,32 +27,56 @@ registerNav('Money', {
   show: (ctx) => APPROVER_PERMS.some((p) => can(ctx, p)),
 });
 
+/** Everything waiting on a money sign-off, permission-filtered.
+ *
+ * Extracted from the /approvals route so the simple-mode home screen can
+ * render the same queue without a second implementation of it. Two copies of
+ * "what needs approving" would drift the first time a threshold moved, and
+ * they would drift silently: both would still look like working screens. The
+ * route below and Home now ask the same function, so the count on Home is the
+ * count on /approvals by construction rather than by coincidence. */
+export interface MoneyApprovals {
+  pos: any[];
+  invoices: any[];
+  jes: any[];
+  deposits: any[];
+  total: number;
+}
+
+export function canApproveMoney(ctx: Ctx): boolean {
+  return APPROVER_PERMS.some((p) => can(ctx, p));
+}
+
+export function moneyApprovals(ctx: Ctx): MoneyApprovals {
+  const pos = can(ctx, 'pos:approve')
+    ? q<any>(`SELECT po.*, v.name AS vendor_name, p.name AS prop_name FROM purchase_orders po
+              JOIN vendors v ON v.id=po.vendor_id JOIN properties p ON p.id=po.property_id
+              WHERE po.org_id=? AND po.status='pending_approval' ORDER BY po.created_at`, ctx.orgId)
+    : [];
+  const invoices = can(ctx, 'ap:approve')
+    ? q<any>(`SELECT i.*, v.name AS vendor_name, p.name AS prop_name FROM vendor_invoices i
+              JOIN vendors v ON v.id=i.vendor_id JOIN properties p ON p.id=i.property_id
+              WHERE i.org_id=? AND i.status='pending_approval' ORDER BY i.due_date`, ctx.orgId)
+    : [];
+  const jes = can(ctx, 'gl:close_period')
+    ? q<any>(`SELECT * FROM pending_jes WHERE org_id=? AND status='pending' ORDER BY created_at`, ctx.orgId)
+    : [];
+  const deposits = can(ctx, 'deposits:manage')
+    ? q<any>(`SELECT l.id, l.property_id, l.household_name, l.move_out_date, p.name AS prop_name, p.state AS state
+              FROM leases l JOIN properties p ON p.id=l.property_id
+              WHERE l.org_id=? AND l.status='ended' AND l.move_out_date IS NOT NULL ORDER BY l.move_out_date`, ctx.orgId)
+        .map((l) => ({ ...l, held: depositHeld(ctx, l.id), dl: depositDeadline(ctx, l.property_id, l.state, l.move_out_date) }))
+        .filter((l) => l.held > 0 && l.dl.daysLeft !== null && l.dl.daysLeft <= 10)
+    : [];
+  return { pos, invoices, jes, deposits, total: pos.length + invoices.length + jes.length + deposits.length };
+}
+
 export function routes(r: Router): void {
   // ---------------- the approver's single queue ----------------
   r.get('/approvals', requireStaff, (rq) => {
     const ctx = rq.ctx as Ctx;
-    if (!APPROVER_PERMS.some((p) => can(ctx, p))) return forbidden();
-    const pos = can(ctx, 'pos:approve')
-      ? q<any>(`SELECT po.*, v.name AS vendor_name, p.name AS prop_name FROM purchase_orders po
-                JOIN vendors v ON v.id=po.vendor_id JOIN properties p ON p.id=po.property_id
-                WHERE po.org_id=? AND po.status='pending_approval' ORDER BY po.created_at`, ctx.orgId)
-      : [];
-    const invoices = can(ctx, 'ap:approve')
-      ? q<any>(`SELECT i.*, v.name AS vendor_name, p.name AS prop_name FROM vendor_invoices i
-                JOIN vendors v ON v.id=i.vendor_id JOIN properties p ON p.id=i.property_id
-                WHERE i.org_id=? AND i.status='pending_approval' ORDER BY i.due_date`, ctx.orgId)
-      : [];
-    const jes = can(ctx, 'gl:close_period')
-      ? q<any>(`SELECT * FROM pending_jes WHERE org_id=? AND status='pending' ORDER BY created_at`, ctx.orgId)
-      : [];
-    const deposits = can(ctx, 'deposits:manage')
-      ? q<any>(`SELECT l.id, l.property_id, l.household_name, l.move_out_date, p.name AS prop_name, p.state AS state
-                FROM leases l JOIN properties p ON p.id=l.property_id
-                WHERE l.org_id=? AND l.status='ended' AND l.move_out_date IS NOT NULL ORDER BY l.move_out_date`, ctx.orgId)
-          .map((l) => ({ ...l, held: depositHeld(ctx, l.id), dl: depositDeadline(ctx, l.property_id, l.state, l.move_out_date) }))
-          .filter((l) => l.held > 0 && l.dl.daysLeft !== null && l.dl.daysLeft <= 10)
-      : [];
-    const total = pos.length + invoices.length + jes.length + deposits.length;
+    if (!canApproveMoney(ctx)) return forbidden();
+    const { pos, invoices, jes, deposits, total } = moneyApprovals(ctx);
     return shell(rq, {
       title: 'Approvals',
       active: '/approvals',

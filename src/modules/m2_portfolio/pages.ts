@@ -1,9 +1,10 @@
 import { onboardingBanner } from '../setup/onboarding.ts';
+import { homeScreen, simpleMode } from '../m21_home/pages.ts';
 import { marketingHome } from '../m4_marketing/homepage.ts';
 import { landingFor } from '../auth/pages.ts';
-import { html, raw, when, join } from '../../lib/html.ts';
+import { html, raw, when, join, type Child } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/http.ts';
-import { requirePerm, requireStaff, propFilter, canAccessProperty, type Ctx , type UserRow } from '../../lib/auth.ts';
+import { requirePerm, requireStaff, propFilter, canAccessProperty, can, type Ctx , type UserRow } from '../../lib/auth.ts';
 import { q, q1, run, insert, update, val, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, addMonths, addDays, timezoneLabel, timezoneOptions } from '../../lib/dates.ts';
@@ -55,6 +56,11 @@ export function routes(r: Router): void {
     if (user.kind !== 'staff' && user.kind !== 'platform') return redirect(landingFor(user));
     const ctx = rq.ctx as Ctx;
     if (!ctx.perms.has('dashboard:view')) return redirect('/me');
+    // Simple mode replaces the front door rather than adding a page beside
+    // it. A home screen you have to know the URL of is a home screen nobody
+    // sees, and an owner who lands on the KPI dashboard first has already met
+    // "Exposure 7%" before anything answers a question they asked.
+    if (simpleMode(ctx)) return homeScreen(rq);
     if (ctx.currentPropertyId) return propertyDashboard(rq, ctx.currentPropertyId);
     return portfolioDashboard(rq);
   });
@@ -484,7 +490,30 @@ export function routes(r: Router): void {
             ['Floorplan', u.fp_name ? `${u.fp_name} — ${u.beds === 0 ? 'Studio' : u.beds + ' bd'} / ${u.baths} ba` : '—'],
             ['Sqft', u.sqft],
             ['Status', statusBadge(u.status, UNIT_STATUS_LABELS[u.status])],
+            // How long it has been empty, and where that date came from. The
+            // home screen turns this into rent not collected, so an entered
+            // date and a derived one must stay distinguishable here too: one
+            // comes off the lease that ended, the other off someone's memory.
+            ...(u.status === 'vacant_ready' || u.status === 'vacant_not_ready'
+              ? [['Empty since', u.vacant_since
+                  ? html`${fmtDate(u.vacant_since)}${u.vacant_since_source === 'owner' ? html` <span class="badge">you entered this</span>` : html` <span class="sub">from the lease that ended</span>`}`
+                  : html`<span class="muted">not known — no move-out on record</span>`]] as [string, Child][]
+              : []),
           ]))}
+          ${when(
+            (u.status === 'vacant_ready' || u.status === 'vacant_not_ready') && can(ctx, 'units:manage'),
+            () => card('When did this unit go empty?', html`
+              <p class="flush-note" style="margin-top:0">${u.vacant_since && u.vacant_since_source !== 'owner'
+                ? html`Taken from the lease that ended. You can correct it if the unit actually emptied on a different day.`
+                : html`There is no move-out on record for this unit, so nothing can be worked out from it. Entering
+                  the date it emptied lets Home show how long it has sat and what that has cost; leaving it blank
+                  keeps Home honest about not knowing.`}</p>
+              <form method="post" action="/units/${u.id}/vacant-since">
+                ${field('Empty since', input('vacant_since', { type: 'date', value: u.vacant_since || '', max: ctx.businessDate }))}
+                <div class="btn-row"><button class="btn btn-sm">Save</button>
+                  ${when(!!u.vacant_since, () => html`<button class="btn btn-ghost btn-sm" name="vacant_since" value="">Clear</button>`)}</div>
+              </form>`),
+          )}
           ${card('Pricing', html`${dl([
             ['Floorplan base', usd(u.fp_rent ?? u.market_rent_cents)],
             ...amenities.map((a): [string, string] => [a.name, `+${usd(a.premium_cents)}`]),

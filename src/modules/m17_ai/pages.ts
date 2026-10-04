@@ -1,5 +1,5 @@
 import { html, raw, when, join } from '../../lib/html.ts';
-import { redirect, notFound, type Router , jsonRes } from '../../lib/http.ts';
+import { redirect, notFound, type Router, type Rq, jsonRes } from '../../lib/http.ts';
 import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j, js } from '../../lib/db.ts';
 import { fmtDate } from '../../lib/dates.ts';
@@ -307,24 +307,36 @@ export function routes(r: Router): void {
     return redirect('/ai', now ? '🛑 AI paused org-wide. Proposals still record for audit; nothing sends.' : '▶ AI resumed.');
   });
 
+  /** Where to land after a decision. Simple mode approves from the home
+   * screen, and bouncing the owner to /ai — a screen that mode does not
+   * otherwise show — would lose their place for no reason. Only a local path
+   * is honoured: a `back` of `//evil.example` is a protocol-relative URL that
+   * browsers follow off-site, so the leading-slash check alone is not enough. */
+  const backTo = (rq: Rq): string => {
+    const b = String(rq.body.back || '');
+    return b.startsWith('/') && !b.startsWith('//') ? b : '/ai';
+  };
+
   r.post('/ai/:id/approve', requirePerm('ai:approve'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const back = backTo(rq);
     try {
       decideAction(ctx, rq.params.id!, 'approve', { editedDraft: rq.body.edited ? String(rq.body.edited) : undefined });
       const a = q1<any>('SELECT * FROM ai_actions WHERE id=?', rq.params.id);
-      return redirect('/ai', a.autonomy === 'draft' ? 'Marked reviewed — the draft is yours to send.' : `Approved and executed: ${a.result || 'done'}`);
+      return redirect(back, a.autonomy === 'draft' ? 'Marked reviewed — the draft is yours to send.' : `Approved and executed: ${a.result || 'done'}`);
     } catch (e) {
-      return redirect('/ai', (e as Error).message, 'err');
+      return redirect(back, (e as Error).message, 'err');
     }
   });
 
   r.post('/ai/:id/reject', requirePerm('ai:approve'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const back = backTo(rq);
     try {
       decideAction(ctx, rq.params.id!, 'reject', { reason: String(rq.body.reason || 'rejected by staff') });
-      return redirect('/ai', 'Rejected — nothing was sent.');
+      return redirect(back, 'Rejected — nothing was sent.');
     } catch (e) {
-      return redirect('/ai', (e as Error).message, 'err');
+      return redirect(back, (e as Error).message, 'err');
     }
   });
 
