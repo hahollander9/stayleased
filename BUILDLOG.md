@@ -2207,3 +2207,49 @@ Gates: `tsc --noEmit` clean · unit 558/558 · full seeded e2e 218/218 (every su
 on every changed file and the 160 added CSS lines · one inspection round plus one confirmation
 round, desktop and phone, dark and light. BUILDLOG + DECISIONS #111–#115 appended against the
 current tail.
+
+## 2026-11-01 — Weekly Cash & Collections Action Report (alongside AppFolio)
+
+Built for the Scope design-partner conversation: their question was whether StayLeased replaces
+AppFolio or works with it, and their pain was "profitable on paper ≠ cash" on a voucher-heavy,
+scattered-site portfolio. `/weekly-report` (Money → Weekly action report, in Standard and Advanced)
+takes AppFolio-style exports — rent roll and delinquency required; receipts, last week's
+delinquency and work orders optional — and returns, for one response only (#116):
+
+- **Who owes what**, split household vs. housing agency when the data supports it, "not split"
+  when it does not (#117); agency balances aged as months of subsidy unpaid.
+- **What agencies owe, by program** — one row per program, because one call covers every unit.
+- **Expected vs. received this month** — rent roll vs. receipts, by payer, plus flags: no agency
+  payment (after the 10th), agency paid short (abatement), no / partial household payment
+  (after the 5th), more than rent, receipts for units not on the rent roll or vacant.
+- **A ranked follow-up list** — amount × age weight; payment plans halved; conservative,
+  DC-appropriate next-step wording; CSV download. Nothing is sent from the page.
+- **Since last week** (newly behind, grew, paid down, paid off) and **repairs that need a push**
+  (urgent open > 1 day, idle ≥ 7 days, vendor quiet ≥ 3 days).
+- **What this report read** — rows read, tie-out to each file's grand-total row, columns not
+  found, and plain sentences on what the data could not support.
+
+`/weekly-report/sample` renders it on a fictional 47-unit portfolio (six 4-unit buildings, an
+18-unit building, five houses; HCVP/VASH/rapid-rehousing/market mix) built to hit every branch;
+the five sample CSVs download from the upload page so a partner can see the expected layout.
+Column aliases are our reading of AppFolio's reports until a real export arrives — confirm against
+Scope's files before the pilot, especially whether the subsidy portion is its own column/charge code.
+
+Also fixed, app-wide: **printing dropped everything below the fold.** The scroll-reveal hides
+below-the-fold blocks until they are scrolled into view; paper never scrolls, so a printed page
+kept only the first screen. Print now forces revealed state and dark-theme callouts/badges get
+paper-legible ink; `[data-print]` buttons work under the nonce CSP, and `details[data-print-open]`
+lists open for the print and fold back after.
+
+Files: `src/modules/m22_weekly/{exports,engine,sample,pages}.ts`, `src/server/modules.ts`,
+`src/ui/ui.ts` (Standard Money tab), `src/ui/app.js`, `src/ui/theme.css`.
+
+Tests: `tests/weekly_report.test.ts` (26) — cell parsing, header detection ("Rent" never takes
+"Tenant Rent"), section/total rows and tie-outs, payer recognition, refusing an out-of-range
+subsidy, owed split ties to the export, agency grouping, expected/received re-derived from the
+files, flags, the before-the-10th rule, ranking, the cross-property unit-match regression,
+maintenance, the no-subsidy-column path, and the HTTP routes (form, sample, sample downloads +
+404, multipart upload with `no-store`, missing-file message).
+
+Gates: `tsc --noEmit` clean · unit suite green · e2e smoke + modes · screenshots desk (dark) and
+phone (light), plus a printed PDF. DECISIONS #116–#117 appended against the current tail.

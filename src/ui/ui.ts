@@ -154,7 +154,7 @@ interface StdTab { label: string; home?: true; groups: [heading: string | null, 
 const STANDARD_TABS: StdTab[] = [
   { label: 'Home', home: true, groups: [] },
   { label: 'Money', groups: [
-    ['Coming in', [['/receivables', 'Who owes me'], ['/delinquency', 'Seriously behind'], ['/deposits', 'Deposits I\u2019m holding']]],
+    ['Coming in', [['/receivables', 'Who owes me'], ['/delinquency', 'Seriously behind'], ['/deposits', 'Deposits I\u2019m holding'], ['/weekly-report', 'Weekly action report']]],
     ['Going out', [['/ap', 'Bills'], ['/approvals', 'Bills and spending to OK']]],
     ['Your books', [['/statements', 'Money in and out'], ['/banking', 'Bank accounts']]],
   ] },
