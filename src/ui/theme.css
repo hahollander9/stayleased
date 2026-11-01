@@ -924,7 +924,18 @@ body.dnd-active .board .col.dnd-locked { opacity: .5; }
   body { background: #fff !important; color: #101623; }
   .card, .kpi { border: 1px solid #d9dee8; box-shadow: none; background: #fff; }
   .kpi .k-value { color: #101623 !important; text-shadow: none !important; }
+  /* Below-the-fold content waits for a scroll to reveal itself; paper never
+   * scrolls, so without this a printed page keeps only what was on screen. */
+  .scrollrev { opacity: 1 !important; transform: none !important; filter: none !important; transition: none !important; }
+  /* the dark theme's pale callout and badge inks vanish on white paper */
+  .callout { color: #101623 !important; background: #f3f6fb !important; border-color: #d9dee8 !important; }
+  .badge { color: #101623 !important; background: #fff !important; border-color: #c9d0dc !important; }
 }
+
+/* weekly action report: on a phone the 7-column follow-up list scrolls
+ * sideways inside its frame rather than wrapping one word per line */
+.wr-wide .tbl { min-width: 760px; }
+@media print { .wr-wide .tbl { min-width: 0; } }
 
 /* ---------- brand wordmark ---------- */
 .brand .brand-name { display: inline; }
