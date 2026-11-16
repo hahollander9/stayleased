@@ -163,7 +163,7 @@ const STANDARD_TABS: StdTab[] = [
   ] },
   { label: 'People', groups: [
     ['Residents', [['/inbox', 'Inbox'], ['/one-inbox', 'One Inbox'], ['/residents', 'Residents'], ['/leases', 'Leases'], ['/renewals', 'Leases ending soon']]],
-    ['New renters', [['/leads', 'Inquiries'], ['/tours', 'Tours'], ['/applications', 'Applicants']]],
+    ['New renters', [['/leads', 'Inquiries'], ['/tours', 'Tours'], ['/applications', 'Applicants'], ['/placement-scorecard', 'Placement scorecard']]],
   ] },
   { label: 'Repairs', groups: [
     [null, [['/workorders', 'Repairs'], ['/myday', 'My day'], ['/turns', 'Getting units ready'], ['/vendors', 'Vendors']]],
