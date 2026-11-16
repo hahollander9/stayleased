@@ -101,7 +101,7 @@ const SECTION_TO_TAB: Record<string, string> = {
   Property: 'Property', Operations: 'Operations', Marketing: 'Leasing',
   Intelligence: 'Reports', Admin: 'Setup', Developer: 'Setup',
 };
-const HREF_TO_TAB: Record<string, string> = { '/inbox': 'Messages', '/comms': 'Messages' };
+const HREF_TO_TAB: Record<string, string> = { '/inbox': 'Messages', '/one-inbox': 'Messages', '/comms': 'Messages' };
 
 /** Grouped dropdowns (nav consolidation pass): the big tabs organize their
  * many pages into labeled clusters instead of one flat column, so a menu
@@ -162,7 +162,7 @@ const STANDARD_TABS: StdTab[] = [
     [null, [['/properties', 'Properties'], ['/units', 'Units']]],
   ] },
   { label: 'People', groups: [
-    ['Residents', [['/inbox', 'Inbox'], ['/residents', 'Residents'], ['/leases', 'Leases'], ['/renewals', 'Leases ending soon']]],
+    ['Residents', [['/inbox', 'Inbox'], ['/one-inbox', 'One Inbox'], ['/residents', 'Residents'], ['/leases', 'Leases'], ['/renewals', 'Leases ending soon']]],
     ['New renters', [['/leads', 'Inquiries'], ['/tours', 'Tours'], ['/applications', 'Applicants']]],
   ] },
   { label: 'Repairs', groups: [

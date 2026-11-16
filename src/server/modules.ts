@@ -32,6 +32,7 @@ import * as m18 from '../modules/m18_verticals/pages.ts'; // also registers affo
 import * as m20 from '../modules/m20_billing/pages.ts'; // what the OPERATOR pays StayLeased (Stripe) + its webhook
 import * as m21 from '../modules/m21_home/pages.ts'; // simple mode: the five-answer home screen
 import * as m22 from '../modules/m22_weekly/pages.ts'; // weekly cash & collections action report, alongside AppFolio
+import * as m23 from '../modules/m23_oneinbox/pages.ts'; // One Inbox: a forwarded shared mailbox, matched to people and sorted
 import * as setup from '../modules/setup/pages.ts'; // M2.5: setup hub, property wizard, CSV Migration Center
 import * as onboarding from '../modules/setup/onboarding.ts'; // working model: guided go-live checklist
 import * as importHub from '../modules/setup/import.ts'; // working model: universal Import Hub
@@ -80,6 +81,7 @@ export function registerModules(r: Router): void {
   m20.routes(r); // Billing: the operator's own subscription + the Stripe webhook
   m21.routes(r); // Simple mode: /home, the org switch, owner-entered vacancy dates
   m22.routes(r); // /weekly-report: exports in, ranked follow-up list out (nothing stored)
+  m23.routes(r); // /one-inbox: forwarded mail matched to an uploaded contact list (stored, purgeable)
   setup.routes(r); // M2.5: setup hub, property wizard, CSV Migration Center
   onboarding.routes(r); // /welcome guided setup
   importHub.routes(r); // /setup/import universal importers
