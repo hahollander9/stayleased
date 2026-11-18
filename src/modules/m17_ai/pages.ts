@@ -93,25 +93,12 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'AI Activity',
       active: '/ai',
-      subtitle: html`Every agent action with its input, output and approval trail. Drafts come from the deterministic engine, grounded in live records${st.live ? html` — Ask and document reading run on <b>${st.model}</b>` : ''}. Supervision is the product. ${brainBadge}`,
-      actions: html`${when(canConfigure, () => html`<form method="post" action="/ai/kill-switch" data-confirm="${on ? 'Pause ALL AI agents org-wide? Nothing will send until re-enabled.' : 'Re-enable AI agents?'}"><button class="btn ${on ? 'btn-danger' : ''}">${on ? '⏻ Kill switch' : '▶ Resume AI'}</button></form>`)}<a class="btn btn-ghost" href="/ai/calls">Call analysis</a><a class="btn btn-ghost" href="/ai/essentials">Content studio</a>`,
+      subtitle: pending.length
+        ? html`<b>${pending.length}</b> ${pending.length === 1 ? 'draft is' : 'drafts are'} waiting for your OK. Nothing below goes out until you say so.`
+        : 'Nothing is waiting. Drafts appear here before anything is sent.',
+      actions: html`<a class="btn btn-ghost" href="/ai/calls">Call analysis</a><a class="btn btn-ghost" href="/ai/essentials">Content studio</a>${when(canConfigure, () => html`<form method="post" action="/ai/kill-switch" data-confirm="${on ? 'Pause ALL AI agents org-wide? Nothing will send until re-enabled.' : 'Re-enable AI agents?'}"><button class="btn ${on ? 'btn-ghost btn-quiet-danger' : ''}">${on ? 'Pause all AI' : 'Resume AI'}</button></form>`)}`,
       content: html`
-        ${when(!on, () => html`<div class="callout bad">🛑 <b>AI is paused by the global kill switch.</b> Agents keep recording proposals for audit, but nothing sends and nothing runs autonomously until an admin resumes.</div>`)}
-        <div class="aiflow-legend">
-          <div class="afl-step"><i>1</i><div><b>Watch</b><span>Agents monitor leads, payments, work orders and renewals as they happen</span></div></div>
-          <span class="afl-arrow">→</span>
-          <div class="afl-step"><i>2</i><div><b>Draft</b><span>The agent proposes an action, with confidence scored and guardrails applied</span></div></div>
-          <span class="afl-arrow">→</span>
-          <div class="afl-step"><i>3</i><div><b>Review</b><span>You approve, edit, or reject — unless the dial says it may run on its own</span></div></div>
-          <span class="afl-arrow">→</span>
-          <div class="afl-step"><i>4</i><div><b>Execute &amp; log</b><span>Every action lands in the audit trail, human-approved or autonomous</span></div></div>
-        </div>
-        ${kpis([
-          { label: 'Awaiting approval', value: String(pending.length), tone: pending.length ? 'warn' : 'ok' },
-          { label: 'Executed on approval', value: String(cnt('executed')) },
-          { label: 'Autonomous (audited)', value: String(cnt('auto_executed')), tone: 'accent' },
-          { label: 'Rejected', value: String(cnt('rejected')) },
-        ])}
+        ${when(!on, () => html`<div class="callout bad"><b>AI is paused.</b> Agents keep recording proposals for the audit trail, but nothing sends and nothing runs on its own until an admin resumes.</div>`)}
         ${tabs([
           { href: '/ai', label: 'Approval queue', active: view === 'queue', count: pending.length },
           { href: '/ai?view=history', label: 'Audit history', active: view === 'history' },
@@ -126,7 +113,26 @@ export function routes(r: Router): void {
           // ai:configure by the POST route, so passing the approval permission
           // here handed a property manager controls that fail on click.
           ? dialsView(ctx, props, canConfigure)
-          : view === 'history' ? historyView(history) : queueView(pending, canApprove)}`,
+          : view === 'history' ? historyView(history) : queueView(pending, canApprove)}
+        <details class="ai-how">
+          <summary>How this works, and the totals</summary>
+          <div class="aiflow-legend">
+            <div class="afl-step"><i>1</i><div><b>Watch</b><span>Agents monitor leads, payments, work orders and renewals as they happen</span></div></div>
+            <span class="afl-arrow">→</span>
+            <div class="afl-step"><i>2</i><div><b>Draft</b><span>The agent proposes an action, with confidence scored and guardrails applied</span></div></div>
+            <span class="afl-arrow">→</span>
+            <div class="afl-step"><i>3</i><div><b>Review</b><span>You approve, edit, or reject — unless the dial says it may run on its own</span></div></div>
+            <span class="afl-arrow">→</span>
+            <div class="afl-step"><i>4</i><div><b>Execute &amp; log</b><span>Every action lands in the audit trail, human-approved or autonomous</span></div></div>
+          </div>
+          ${kpis([
+            { label: 'Awaiting approval', value: String(pending.length), tone: pending.length ? 'warn' : 'ok' },
+            { label: 'Executed on approval', value: String(cnt('executed')) },
+            { label: 'Autonomous (audited)', value: String(cnt('auto_executed')), tone: 'accent' },
+            { label: 'Rejected', value: String(cnt('rejected')) },
+          ])}
+          <p class="small muted">Drafts come from ${st.live ? html`<b>${st.model}</b> for Ask and document reading, and from` : ''} the built-in rule engine, grounded in the live records. ${brainBadge}</p>
+        </details>`,
     });
   });
 
@@ -152,8 +158,8 @@ export function routes(r: Router): void {
             <form method="post" action="/ai/${a.id}/approve">
               ${when(output.draft, () => field('Edit before sending (optional)', textarea('edited', { rows: 3, placeholder: 'leave empty to use the draft as-is' })))}
               <div style="display:flex;gap:8px;margin-top:6px">
-                <button class="btn">${a.autonomy === 'draft' ? 'Mark reviewed' : 'Approve & execute'}</button>
-                <button class="btn btn-ghost" formaction="/ai/${a.id}/reject">Reject</button>
+                <button class="btn">${a.autonomy === 'draft' ? 'Mark reviewed' : 'OK, send it'}</button>
+                <button class="btn btn-ghost" formaction="/ai/${a.id}/reject">No</button>
               </div>
             </form>
           </div>`)}

@@ -2407,3 +2407,155 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
 
 /* a button whose form has been sent: still there, visibly not waiting for another press */
 .is-busy { opacity: .6; pointer-events: none; cursor: progress; }
+
+/* ============================================================
+   Calm layer (2026-11-18)
+
+   The app read as a "dark AI dashboard": small uppercase grey labels on
+   everything, glowing coloured numbers, a pill on every table row, and three
+   blues left over from an earlier palette on an emerald brand. The buyer is an
+   owner of 10–100 units who wants books and buildings, not a control room.
+   One rule each, applied here once so every screen gets it:
+
+     · sentence case; uppercase survives only on table headers
+     · a type floor: nothing a person must read is under 12.5px
+     · colour means "look at this" — a number that is fine is ink, not green
+     · a neutral state is words, not a pill
+     · depth is one soft shadow, never a glow
+   ============================================================ */
+
+/* ---- type: sentence case and a readable floor ---- */
+[data-theme="light"] { --muted: #4a566b; }
+.card > .card-head h2 { font-size: 15px; font-weight: 650; text-transform: none; letter-spacing: -.005em; color: var(--ink); }
+.kpi .k-label, .toolbar .field > label, .pp-fact dt, .pp-chart-title, .trend-tile .tt-label, .scope-eyebrow,
+.dash-feed .df-head, .hub-ai-head .hai-title, .sm-first-step, .nav-group > .nav-head, .bid-facts dt, .dash-hero .dh-kicker,
+.kpi-band .kb-head, .demo-personas .dp-head {
+  text-transform: none; letter-spacing: 0; font-size: 12.5px; font-weight: 600;
+}
+.tbl { font-size: 13.5px; }
+.tbl th { font-size: 11.5px; letter-spacing: .045em; padding-top: 10px; padding-bottom: 10px; }
+.tbl td { padding-top: 10px; padding-bottom: 10px; }
+.tbl.tight td { padding-top: 6px; padding-bottom: 6px; }
+.tbl .sub, .kpi .k-sub, .field .hint, .crumbs { font-size: 12.5px; }
+.subtitle { font-size: 13.5px; line-height: 1.5; max-width: 82ch; }
+.subnav a { font-size: 13px; }
+.badge { font-size: 12px; }
+.field > label { font-size: 12.5px; }
+.page-head h1 { letter-spacing: -.02em; }
+
+/* ---- numbers: Inter, tabular, no glow; colour only when something is wrong ---- */
+.kpis { grid-template-columns: repeat(auto-fit, minmax(176px, 1fr)); gap: 12px; }
+.kpi { text-align: left; padding: 14px 16px 13px; background: var(--surface); }
+.kpi::before { display: none; }
+.kpi .k-value {
+  font-family: var(--font); font-weight: 650; font-size: clamp(20px, 1.7vw, 25px); letter-spacing: -.02em;
+  font-feature-settings: 'tnum', 'cv11'; white-space: nowrap; margin-top: 5px; text-shadow: none;
+}
+.kpi.tone-ok .k-value, .kpi.tone-accent .k-value { color: var(--ink); text-shadow: none; }
+.kpi.tone-warn .k-value, .kpi.tone-bad .k-value { text-shadow: none; }
+.kpi .spark, .kpi svg { margin-left: 0; }
+a.kpi:hover { transform: none; border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); box-shadow: var(--shadow); }
+.kpi-band.kb-attn .kb-head { color: var(--ink-2); }
+
+/* ---- a neutral state is words, not a pill ---- */
+.badge:not(.ok):not(.warn):not(.bad):not(.info):not(.accent):not(.violet) {
+  background: none; border-color: transparent; padding-left: 0; padding-right: 0; color: var(--muted); font-weight: 500;
+}
+.card-head .badge:not(.ok):not(.warn):not(.bad):not(.info):not(.accent):not(.violet),
+.tabs .badge:not(.ok):not(.warn):not(.bad):not(.info):not(.accent):not(.violet) {
+  background: rgba(154, 170, 196, .13); padding-left: 8px; padding-right: 8px; color: var(--ink-2); font-weight: 600;
+}
+
+/* ---- buttons: one soft shadow, the brand's own colour, no lift ---- */
+.btn { box-shadow: 0 1px 2px rgba(0, 0, 0, .18); transition: filter .15s ease, box-shadow .15s ease, background .15s ease; }
+.btn:hover { transform: none; filter: brightness(1.08); box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-strong) 30%, transparent); }
+.btn:active { filter: brightness(.96); }
+.btn-ghost, .btn-ghost:hover { box-shadow: none; filter: none; }
+.btn-danger { background: #c62828; box-shadow: 0 1px 2px rgba(0, 0, 0, .18); }
+.btn-danger:hover { box-shadow: 0 2px 8px rgba(198, 40, 40, .32); }
+.btn { min-height: 36px; }
+.btn-sm { min-height: 30px; padding: 5px 11px; font-size: 12.5px; }
+.field input:focus, .field select:focus, .field textarea:focus, .searchbtn:focus {
+  border-color: var(--accent-strong); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-strong) 22%, transparent);
+}
+
+/* ---- top bar: one primary thing (search), everything else quiet ---- */
+.askbtn { background: none; color: var(--ink-2); border: 1px solid var(--line); box-shadow: none; }
+.askbtn:hover { transform: none; filter: none; box-shadow: none; color: var(--ink); border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); background: var(--accent-soft); }
+.askbtn svg { color: var(--accent); }
+.bizdate, .bizdate:hover { background: none; border-color: transparent; color: var(--muted); padding-left: 4px; padding-right: 4px; font-weight: 500; }
+a.bizdate:hover { color: var(--ink); text-decoration: underline; text-underline-offset: 3px; }
+.subnav a.active { color: var(--ink); }
+
+/* ---- the parts the browser draws ---- */
+::selection { background: color-mix(in srgb, var(--accent) 30%, transparent); color: var(--ink); }
+:root { accent-color: var(--accent-strong); caret-color: var(--accent-strong); scrollbar-color: color-mix(in srgb, var(--muted) 45%, transparent) transparent; }
+a { text-underline-offset: 3px; }
+.tbl td.num, .tbl th.num, .mono, .sm-term-value, .sm-big { font-variant-numeric: tabular-nums; }
+input[type="file"]::file-selector-button {
+  font: 600 12.5px var(--font); color: var(--ink); background: var(--surface-2); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 6px 12px; margin-right: 10px; cursor: pointer;
+}
+input[type="file"]::file-selector-button:hover { border-color: color-mix(in srgb, var(--accent) 45%, var(--line)); }
+
+/* ---- phone: a table becomes a list of labelled rows ----
+   Desktop columns on a 390px screen put the two things that matter — the
+   amount and the button — off the right edge behind a sideways scroll. Each
+   row is now its own block: the first cell is the title, every other cell is
+   "label … value", and the actions sit full width at the bottom. */
+@media (max-width: 640px) {
+  .tbl[data-stack], .tbl[data-stack] tbody, .tbl[data-stack] tfoot, .tbl[data-stack] tr, .tbl[data-stack] td { display: block; width: 100%; }
+  .tbl[data-stack] tfoot tr { background: var(--surface-2); font-weight: 600; }
+  .tbl[data-stack] thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .tbl[data-stack] tr { padding: 12px 14px; border-bottom: 1px solid var(--line-2); }
+  .tbl[data-stack] tr:last-child { border-bottom: 0; }
+  .tbl[data-stack] td { padding: 2px 0; border: 0; text-align: left; display: flex; justify-content: space-between; gap: 14px; align-items: baseline; min-width: 0; }
+  .tbl[data-stack] td.num { text-align: right; }
+  .tbl[data-stack] td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12.5px; flex: none; }
+  .tbl[data-stack] td:first-child { display: block; font-weight: 600; font-size: 14.5px; padding-bottom: 5px; }
+  .tbl[data-stack] td:first-child::before { content: none; }
+  .tbl[data-stack] td:empty { display: none; }
+  .tbl[data-stack] td:not([data-label]):not(:first-child) { justify-content: flex-start; flex-wrap: wrap; gap: 8px; padding-top: 8px; }
+  .tbl[data-stack] td:not([data-label]):not(:first-child) .btn { flex: 1 1 auto; justify-content: center; min-height: 42px; }
+  .tbl[data-stack] td:not([data-label]):not(:first-child) form { flex: 1 1 auto; display: flex; }
+  .tbl-wrap:has(> .tbl[data-stack]) { overflow-x: visible; }
+  .btn { min-height: 42px; }
+  .btn-sm { min-height: 38px; }
+}
+
+/* ---- Home: the answer to "what needs me today" in one line, then first on the page ---- */
+.sm-status { display: flex; flex-wrap: wrap; gap: 8px; margin: 14px 0 0; }
+.sm-status a {
+  display: inline-flex; align-items: baseline; gap: 6px; padding: 7px 12px; border: 1px solid var(--line); border-radius: 999px;
+  background: var(--surface); color: var(--ink-2); font-size: 13.5px; text-decoration: none;
+}
+.sm-status a b { font-weight: 650; color: var(--ink); font-variant-numeric: tabular-nums; }
+.sm-status a.attn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.sm-status a.attn b { color: var(--warn); }
+.sm-status a:hover { border-color: color-mix(in srgb, var(--accent) 50%, var(--line)); color: var(--ink); text-decoration: none; }
+#needs-ok, #owes-you, #empty-units { scroll-margin-top: calc(var(--chrome-h) + 14px); }
+
+/* ---- approval queue: the queue first; the explanation folded underneath ---- */
+.ai-how { margin-top: 18px; border: 1px solid var(--line-2); border-radius: var(--radius); padding: 0 16px; }
+.ai-how > summary { cursor: pointer; padding: 12px 0; font-weight: 600; font-size: 13.5px; color: var(--ink-2); }
+.ai-how[open] { padding-bottom: 14px; }
+.btn-quiet-danger { color: var(--bad); }
+.btn-quiet-danger:hover { border-color: color-mix(in srgb, var(--bad) 50%, var(--line)); color: var(--bad); }
+
+/* ---- dashboard: a page header, not a poster ----
+   The hero was a gradient card with gradient-clipped title text, a dotted
+   backdrop and a glowing blue ring. The title is ink, the ring is the brand's
+   colour, and the card is a plain surface like every other card. */
+.dash-hero { background: var(--surface); }
+.dash-hero::before { display: none; }
+.dash-hero .dh-title, [data-theme="light"] .dash-hero .dh-title {
+  background: none; -webkit-background-clip: border-box; background-clip: border-box; -webkit-text-fill-color: currentColor; color: var(--ink);
+}
+.dash-hero .dh-kicker { color: var(--muted); font-weight: 500; }
+.dash-ring svg { filter: none; }
+.dash-ring svg circle[stroke^="url"], .dash-ring svg path[stroke^="url"] { stroke: var(--accent-strong); }
+.dash-ring .dr-val { font-family: var(--font); font-weight: 650; }
+.dash-ring .dr-val small { text-transform: none; letter-spacing: 0; font-size: 11px; font-weight: 500; }
+.ai-feed .af-domain { text-transform: none; letter-spacing: 0; font-size: 13px; font-weight: 600; color: var(--ink); min-width: 132px; }
+.ai-feed .af-domain::before { color: var(--accent); }
+.kpi-band .kb-head::after { opacity: .5; }

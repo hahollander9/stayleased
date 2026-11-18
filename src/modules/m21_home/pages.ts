@@ -157,8 +157,63 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
       <div class="sm-head">
         <h1 class="sm-h1">Where you stand</h1>
         <p class="sm-sub">${orgName} · ${fmtDate(ctx.businessDate)} · counting money that actually came in and went out.</p>
+        <p class="sm-status">
+          <a href="#needs-ok" class="${needsOk ? 'attn' : ''}"><b>${needsOk}</b> waiting on your OK</a>
+          <a href="#owes-you" class="${owed.households ? 'attn' : ''}"><b>${owed.households}</b> ${owed.households === 1 ? 'household owes' : 'households owe'} ${usd(owed.total)}</a>
+          <a href="#empty-units" class="${empty.length ? 'attn' : ''}"><b>${empty.length}</b> ${empty.length === 1 ? 'unit' : 'units'} empty</a>
+        </p>
       </div>
       ${onboardingBanner(ctx)}
+
+      <div id="needs-ok">
+      ${card(html`Needs your OK${when(needsOk, () => html` <span class="badge warn">${needsOk}</span>`)}`, html`
+        ${needsOk
+          ? html`
+            ${drafts.slice(0, 4).map((d) => html`<div class="sm-ok-item">
+              <div class="sm-ok-tag msg">message</div>
+              <div class="sm-ok-body">
+                <b>${d.title}</b>
+                ${when(d.detail, () => html`<span class="sub">${d.detail}</span>`)}
+                ${when(d.rationale, () => html`<p class="sm-ok-why">${d.rationale}</p>`)}
+                <span class="badge">${d.sureness}</span>
+              </div>
+              <div class="sm-ok-act">
+                ${canDecideAi
+                  ? html`<form method="post" action="/ai/${d.id}/approve"><input type="hidden" name="back" value="/home" /><button class="btn btn-sm">OK, send it</button></form>
+                         <form method="post" action="/ai/${d.id}/reject"><input type="hidden" name="back" value="/home" /><button class="btn btn-ghost btn-sm">No</button></form>`
+                  : html`<a class="btn btn-sm btn-ghost" href="/ai">Open</a>`}
+              </div>
+            </div>`)}
+            ${(money?.invoices || []).map((i: any) => html`<div class="sm-ok-item">
+              <div class="sm-ok-tag money">money</div>
+              <div class="sm-ok-body"><b>Bill from ${i.vendor_name}</b><span class="sub">${i.prop_name} · due ${fmtDate(i.due_date)}</span></div>
+              <div class="sm-ok-act"><b class="sm-ok-amt">${usd(i.total_cents)}</b>
+                <form method="post" action="/ap/${i.id}/approve"><button class="btn btn-sm">OK, pay it</button></form></div>
+            </div>`)}
+            ${(money?.pos || []).map((po: any) => html`<div class="sm-ok-item">
+              <div class="sm-ok-tag money">money</div>
+              <div class="sm-ok-body"><b>Spending request — ${po.vendor_name}</b><span class="sub">${po.prop_name}${po.memo ? ` · ${po.memo}` : ''}</span></div>
+              <div class="sm-ok-act"><b class="sm-ok-amt">${usd(po.total_cents)}</b>
+                <a class="btn btn-sm" href="/purchasing/${po.id}">Review</a></div>
+            </div>`)}
+            ${(money?.deposits || []).map((d: any) => html`<div class="sm-ok-item">
+              <div class="sm-ok-tag money">money</div>
+              <div class="sm-ok-body"><b>Deposit to return — ${d.household_name}</b>
+                <span class="sub">${d.prop_name} · ${d.dl.daysLeft < 0 ? `${-d.dl.daysLeft} days overdue by law` : `${d.dl.daysLeft} days left by law`}</span></div>
+              <div class="sm-ok-act"><b class="sm-ok-amt">${usd(d.held)}</b>
+                <a class="btn btn-sm" href="/leases/${d.id}?tab=deposit">Settle it</a></div>
+            </div>`)}
+            ${(money?.jes || []).map((j: any) => html`<div class="sm-ok-item">
+              <div class="sm-ok-tag money">money</div>
+              <div class="sm-ok-body"><b>Bookkeeping entry</b><span class="sub">${j.memo || '(no note)'} · entered by ${j.created_by || 'staff'}</span></div>
+              <div class="sm-ok-act"><a class="btn btn-sm" href="/approvals">Review</a></div>
+            </div>`)}`
+          : emptyState('Nothing is waiting on you', 'Bills, spending and anything an agent wants to send will appear here first.')}
+        ${when(drafts.length > 4, () => html`<p class="sm-note">
+          <a href="/ai">${drafts.length - 4} more waiting for your OK</a></p>`)}
+        <p class="sm-note sm-tie">Nothing reaches a resident or a vendor without your OK, unless you have
+          set an agent to act on its own.</p>`)}
+      </div>
 
       ${card('What you made this month', html`
         ${sum(
@@ -197,6 +252,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
           <span class="sm-note-why">Counting it would mean assuming how much of it arrives, and that is a guess rather than something your books can show.</span>
         </p>`)}
 
+      <div id="owes-you"></div>
       ${card(html`Who owes you${when(owed.households, () => html` <span class="badge warn">${owed.households}</span>`)}`, html`
         <div class="sm-big ${owed.total > 0 ? 'warn' : ''}">${usd(owed.total)}<span class="sm-big-note">across ${owed.households} resident${owed.households === 1 ? '' : 's'}</span></div>
         ${owed.households
@@ -226,6 +282,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
                 <a href="/gl">open the full accounts</a>.</span>`}
         </p>`)}
 
+      <div id="empty-units"></div>
       ${card(html`Units costing you money${when(empty.length, () => html` <span class="badge warn">${empty.length} empty</span>`)}`, html`
         ${empty.length
           ? html`${when(emptyLost > 0, () => html`<div class="sm-big warn">${usd(emptyLost)}<span class="sm-big-note">rent not collected while empty, where the dates are known</span></div>`)}
@@ -268,55 +325,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
           ${when(behind.length > 5, () => html`<p class="sm-note"><a href="/receivables">See all ${behind.length}</a></p>`)}`)}
         <p class="sm-note sm-tie">A unit's own income and costs side by side is coming in a later pass; it needs a
           line for building-wide costs that are not split per unit, or the numbers would look like they add up to the
-          building's total when they do not.</p>`)}
-
-      ${card(html`Needs your OK${when(needsOk, () => html` <span class="badge warn">${needsOk}</span>`)}`, html`
-        ${needsOk
-          ? html`
-            ${drafts.slice(0, 6).map((d) => html`<div class="sm-ok-item">
-              <div class="sm-ok-tag msg">message</div>
-              <div class="sm-ok-body">
-                <b>${d.title}</b>
-                ${when(d.detail, () => html`<span class="sub">${d.detail}</span>`)}
-                ${when(d.rationale, () => html`<p class="sm-ok-why">${d.rationale}</p>`)}
-                <span class="badge">${d.sureness}</span>
-              </div>
-              <div class="sm-ok-act">
-                ${canDecideAi
-                  ? html`<form method="post" action="/ai/${d.id}/approve"><input type="hidden" name="back" value="/home" /><button class="btn btn-sm">OK, send it</button></form>
-                         <form method="post" action="/ai/${d.id}/reject"><input type="hidden" name="back" value="/home" /><button class="btn btn-ghost btn-sm">No</button></form>`
-                  : html`<a class="btn btn-sm btn-ghost" href="/ai">Open</a>`}
-              </div>
-            </div>`)}
-            ${(money?.invoices || []).map((i: any) => html`<div class="sm-ok-item">
-              <div class="sm-ok-tag money">money</div>
-              <div class="sm-ok-body"><b>Bill from ${i.vendor_name}</b><span class="sub">${i.prop_name} · due ${fmtDate(i.due_date)}</span></div>
-              <div class="sm-ok-act"><b class="sm-ok-amt">${usd(i.total_cents)}</b>
-                <form method="post" action="/ap/${i.id}/approve"><button class="btn btn-sm">OK, pay it</button></form></div>
-            </div>`)}
-            ${(money?.pos || []).map((po: any) => html`<div class="sm-ok-item">
-              <div class="sm-ok-tag money">money</div>
-              <div class="sm-ok-body"><b>Spending request — ${po.vendor_name}</b><span class="sub">${po.prop_name}${po.memo ? ` · ${po.memo}` : ''}</span></div>
-              <div class="sm-ok-act"><b class="sm-ok-amt">${usd(po.total_cents)}</b>
-                <a class="btn btn-sm" href="/purchasing/${po.id}">Review</a></div>
-            </div>`)}
-            ${(money?.deposits || []).map((d: any) => html`<div class="sm-ok-item">
-              <div class="sm-ok-tag money">money</div>
-              <div class="sm-ok-body"><b>Deposit to return — ${d.household_name}</b>
-                <span class="sub">${d.prop_name} · ${d.dl.daysLeft < 0 ? `${-d.dl.daysLeft} days overdue by law` : `${d.dl.daysLeft} days left by law`}</span></div>
-              <div class="sm-ok-act"><b class="sm-ok-amt">${usd(d.held)}</b>
-                <a class="btn btn-sm" href="/leases/${d.id}?tab=deposit">Settle it</a></div>
-            </div>`)}
-            ${(money?.jes || []).map((j: any) => html`<div class="sm-ok-item">
-              <div class="sm-ok-tag money">money</div>
-              <div class="sm-ok-body"><b>Bookkeeping entry</b><span class="sub">${j.memo || '(no note)'} · entered by ${j.created_by || 'staff'}</span></div>
-              <div class="sm-ok-act"><a class="btn btn-sm" href="/approvals">Review</a></div>
-            </div>`)}`
-          : emptyState('Nothing is waiting on you', 'Bills, spending and anything an agent wants to send will appear here first.')}
-        ${when(drafts.length > 6, () => html`<p class="sm-note">
-          <a href="/ai">${drafts.length - 6} more waiting for your OK</a></p>`)}
-        <p class="sm-note sm-tie">Nothing reaches a resident or a vendor without your OK, unless you have
-          set an agent to act on its own.</p>`)}`,
+          building's total when they do not.</p>`)}`,
   });
 }
 

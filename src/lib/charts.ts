@@ -3,10 +3,13 @@ import { html, raw, esc, type Raw } from './html.ts';
 /** Server-rendered SVG charts (environment fallback for Recharts, DECISIONS.md
  * #6). Consistent with the design system; zero client JS. */
 
-export const PALETTE = ['#60a5fa', '#34d399', '#fbbf24', '#a78bfa', '#f472b6', '#22d3ee', '#f87171', '#93c5fd'];
+// Led by the brand's emerald, then hues far enough apart to tell five series
+// from each other in both themes. The old list opened on blue, so every chart
+// on an emerald product was a blue chart.
+export const PALETTE = ['#10b981', '#0ea5e9', '#f59e0b', '#8b5cf6', '#f43f5e', '#14b8a6', '#64748b', '#84cc16'];
 
 const TONE: Record<string, string> = {
-  ok: '#34d399', warn: '#fbbf24', bad: '#f87171', info: '#60a5fa', accent: '#60a5fa',
+  ok: '#10b981', warn: '#f59e0b', bad: '#ef4444', info: '#0ea5e9', accent: '#10b981',
   muted: '#71809a', violet: '#a78bfa',
 };
 export function toneColor(t: string): string {
