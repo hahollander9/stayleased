@@ -2295,3 +2295,29 @@ upload form, and the webhook (403 on a bad token, auto-reply skipped, unknown ad
 
 Gates: `tsc --noEmit` clean · unit suite green · e2e smoke + modes + comms · screenshots desk and
 phone. DECISIONS #118–#119 appended against the current tail.
+
+## 2026-11-16 — Placement Scorecard (tenant outcomes by agent and source)
+
+Third add-on for the Scope design-partner track (their words: screening and tenant placement is
+what most people overlook, especially through outside agents). `/placement-scorecard`
+(Leasing → Placement scorecard; People → New renters in Standard). Stateless like the weekly
+action report: a tenant export in, a comparison out, nothing stored.
+
+- **Inputs**: tenant export with a Unit column and at least one of Leasing Agent / Lead Source /
+  Screening Decision (required); delinquency export (optional, reuses m22's reader).
+- **Per group**: placements, households behind and the rate, percentage points above or below
+  everyone else, household balance, average months behind against the tenant's own share of the
+  rent, and tenants who left within a year (only those with a full year of history).
+- **Rules** (#120): three group-by dimensions and no others; no subsidy column is ever read;
+  agency balances excluded from "behind"; groups under 5 are listed, not compared; labels group
+  case-insensitively and display as first typed.
+- `/placement-scorecard/sample` on the fictional portfolio (shares m22's sample delinquency);
+  sample CSVs downloadable.
+
+Depends on the export carrying an agent or source column. Whether AppFolio's tenant reports
+include one for a given operator is unconfirmed — ask before promising this to anyone.
+
+Files: `src/modules/m24_placement/{scorecard,sample,pages}.ts`, `src/server/modules.ts`, `src/ui/ui.ts`.
+
+Tests: `tests/placement_scorecard.test.ts` (9). Gates: `tsc --noEmit` clean · unit suite green ·
+e2e smoke + modes + navmenus · screenshots desk and phone. DECISIONS #120.
