@@ -30,6 +30,9 @@ export interface ZipEntry {
   data: Buffer;
 }
 
+const MAX_ENTRY_BYTES = 120 * 1024 * 1024;
+const MAX_TOTAL_BYTES = 250 * 1024 * 1024;
+
 /** Read all entries of a ZIP archive. Throws on anything that isn't a zip. */
 export function readZip(buf: Buffer): ZipEntry[] {
   // find End Of Central Directory (scan backwards through possible comment)
@@ -42,6 +45,7 @@ export function readZip(buf: Buffer): ZipEntry[] {
   const count = buf.readUInt16LE(eocd + 10);
   let off = buf.readUInt32LE(eocd + 16);
   const entries: ZipEntry[] = [];
+  let total = 0;
   for (let n = 0; n < count; n++) {
     if (buf.readUInt32LE(off) !== 0x02014b50) throw new Error('bad central directory entry');
     const method = buf.readUInt16LE(off + 10);
@@ -59,8 +63,16 @@ export function readZip(buf: Buffer): ZipEntry[] {
     const raw = buf.subarray(dataStart, dataStart + csize);
     let data: Buffer;
     if (method === 0) data = Buffer.from(raw);
-    else if (method === 8) data = inflateRawSync(raw);
+    else if (method === 8) {
+      // A spreadsheet is small. Without a ceiling, a few megabytes of crafted
+      // zip inflate to gigabytes, synchronously, in the one process that
+      // serves every customer.
+      try { data = (inflateRawSync as (b: Buffer, o: { maxOutputLength: number }) => Buffer)(raw, { maxOutputLength: MAX_ENTRY_BYTES }); }
+      catch { throw new Error('This file is too large to read once unpacked.'); }
+    }
     else throw new Error(`unsupported zip compression method ${method}`);
+    total += data.length;
+    if (total > MAX_TOTAL_BYTES) throw new Error('This file is too large to read once unpacked.');
     if (!name.endsWith('/')) entries.push({ name, data });
     off += 46 + nameLen + extraLen + commentLen;
   }

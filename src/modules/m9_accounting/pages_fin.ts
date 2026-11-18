@@ -4,7 +4,7 @@ import { requirePerm, can, propFilter, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j } from '../../lib/db.ts';
 import { fmtDate, fmtMonth, monthKey, lastOfMonth, addMonths } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
-import { shell, card, tbl, dl, statusBadge, field, select, input, registerNav, kpis, tabs, emptyState } from '../../ui/ui.ts';
+import { shell, card, tbl, dl, statusBadge, field, select, input, registerNav, kpis, tabs, emptyState, noProperties } from '../../ui/ui.ts';
 import { COA } from './coa.ts';
 import { accountBalance } from './service.ts';
 import { ensureBankAccounts, importAllFeeds, createRecon, autoMatch, postAdjustment, manualMatch, excludeTxn, completeRecon, reconSummary, unreconciledAging, unmatchedTotal } from './banking.ts';
@@ -243,6 +243,7 @@ export function routes(r: Router): void {
   r.get('/periods', requirePerm('gl:close_period'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const props = propsFor(ctx);
+    if (!props.length) return noProperties(rq, 'Month-end close', '/periods');
     const propId = rq.query.get('property') || props[0]?.id;
     const month = rq.query.get('month') || monthKey(addMonths(ctx.businessDate, -1));
     const grid = periodGrid(ctx, propId);

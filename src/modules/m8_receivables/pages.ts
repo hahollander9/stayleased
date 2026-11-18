@@ -538,7 +538,7 @@ export function routes(r: Router): void {
           }),
           { empty: 'No deposits held.' },
         ), { flush: true })}
-        <p class="small muted" style="margin-top:10px">Deadlines and interest flags are state-law presets — verify specifics with counsel. A per-property override lives in Settings (<code>deposit_disposition_days</code>); interest accrues at <code>deposit_interest_pct</code> from the lease's Deposit tab.</p>`,
+        <p class="small muted" style="margin-top:10px">Deadlines and interest flags are state-law presets — verify specifics with counsel. Both can be set per property under <a href="/admin/settings?section=deposits-and-move-out">Settings → Deposits and move-out</a>: the return deadline, and the interest rate that accrues from the lease's Deposit tab.</p>`,
     });
   });
 
@@ -620,7 +620,7 @@ registerLeaseTab((ctx, lease) => ({
         ['Currently held', usd(held)],
         ['Account balance', html`<span class="${balance > 0 ? 'neg' : ''}">${usd(balance)}</span>`],
         ['Return deadline', html`${prop?.state || '—'} law: ${dl2.days} days after move-out${dl2.rule.note ? html` <span class="muted small">(${dl2.rule.note})</span>` : ''}${lease.move_out_date && dl2.due ? html` — due <b>${fmtDate(dl2.due)}</b> ${dl2.daysLeft! < 0 ? html`<span class="badge bad">overdue ${-dl2.daysLeft!}d</span>` : html`<span class="badge ${dl2.daysLeft! <= 7 ? 'warn' : 'ok'}">${dl2.daysLeft}d left</span>`}` : ''}`],
-        ...(dl2.rule.interest ? [['Interest', html`required in ${prop?.state} — accrues at the <code>deposit_interest_pct</code> setting`] as [Child, Child]] : []),
+        ...(dl2.rule.interest ? [['Interest', html`required in ${prop?.state} — accrues at the rate under <a href="/admin/settings?section=deposits-and-move-out">Settings → Deposit interest</a>`] as [Child, Child]] : []),
       ]))}
       ${when(held > 0 && dl2.rule.interest, () => html`<form method="post" action="/leases/${lease.id}/deposit/interest" class="toolbar" style="margin:-6px 0 14px">
         <button class="btn btn-ghost btn-sm">Accrue deposit interest through today</button>

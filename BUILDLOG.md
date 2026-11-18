@@ -2253,3 +2253,83 @@ maintenance, the no-subsidy-column path, and the HTTP routes (form, sample, samp
 
 Gates: `tsc --noEmit` clean · unit suite green · e2e smoke + modes · screenshots desk (dark) and
 phone (light), plus a printed PDF. DECISIONS #116–#117 appended against the current tail.
+
+## 2026-11-18 — Production-readiness audit: security, first run, and the things a crawl finds
+
+A full audit ahead of the first outside logins: every page crawled as eight roles and as a
+brand-new signup (desktop and phone), a read-only code audit, and the Slack record of what Scope
+and Corey asked for. Structurally the app was sound — 420 app pages, 41 public pages and a fresh
+org's 219 pages produced no 5xx from the crawl. What was wrong was at the edges.
+
+**Security (the audit's two criticals first)**
+- **Stored XSS from a public form into a staff session.** A lead's name on `/p/:slug/inquire` was
+  interpolated into the AI reply draft and rendered with `raw()` on `/ai`. Drafts and queued
+  message bodies now render through `safeHtml()` (escape everything, re-admit a short tag list and
+  http/mailto/relative links). Property JSON-LD escapes `<` (#118).
+- **The public application booked fictitious cash into live ledgers.** No live fence on
+  `/p/:slug/apply` → `collectFees`. Live orgs' public applications are closed with a plain screen,
+  and `collectFees` posts nothing in a live org (#119).
+- **Live properties were public by default.** `published` now defaults to false for live orgs, and
+  inquire / tour / apply check it, not only the page. Public form posts are rate-limited (#119).
+- **Role escalation**: `saveGrant` took the role from the request; an org admin could post
+  `PLATFORM_ADMIN`. Server-side allowlist; property scope limited to the org's own properties.
+- **`?property=`** is checked once, before routing, against the reader's scope and organization
+  (`guardPropertyParam`) instead of in twenty-two handlers that mostly did not (#120).
+- **Simulator jobs** refuse a live org inside `runJob`, not only in the scheduler ("Run now" had
+  invented leads and a bank transaction in a live org).
+- **Passwords**: `/me` has a password change (shared demo logins excepted); admin resets revoke
+  sessions; new orgs created by the platform get a one-time password, not `demo1234`; the seeded
+  platform account takes `STAYLEASED_PLATFORM_PASSWORD` and is rotated from it at boot (#121).
+- Cookies are `Secure` on any real deployment (the service runs `MODE=demo`, so they were not);
+  HSTS behind https; login is also limited per account; signup has a global limit; the limiter
+  map is swept. Webhook URLs must be https and public, redirects are not followed. Zip inflation
+  is capped. A second Stripe checkout is refused when a subscription exists. Open redirect after
+  login closed with `localPath()`.
+
+**Operations**
+- `GET /healthz` (database reachable; disk headroom; 503 only when the database is down) and
+  `render.yaml` points the health check at it. SIGTERM/SIGINT drain and close the database.
+- `job_runs` logged every poller pass — ~30,000 rows per org per day. A run is logged when its
+  result changes, on failure, or when started by hand; history older than 60 days is pruned, and
+  expired sessions with it (#122).
+- Validation, closed-period and permission errors answer 400/403 or a flash on the form they came
+  from, not "500 Something went wrong".
+- Report PDFs: `→ ✓ −` in static notes made the balance sheet, income statement and cash flow
+  PDFs a 500. Text is translated to what the built-in fonts can draw.
+- Seven pages 500'd before a first property existed (`/periods`, `/utilities`,
+  `/utilities/recovery`, four under `/pricing`); they share a "No buildings yet" page. The
+  opening-bank-balance form required a permission that does not exist; it uses `gl:post`.
+
+**First run and layout**
+- **Home before the first building** was five boxes of `$0.00`. It is now "One file to start":
+  the rent-roll upload, the two alternatives, and what the screen will answer once it is in.
+  Live orgs still onboarding get the setup banner on Standard Home too.
+- **Financials sub-nav** (fifteen pages) widened every money page by 82px at 1280. It scrolls
+  inside its row, centres the current page, and fades the side that has more.
+- **Labels**: sixty hand-written `<label>` + control pairs (sign-in and sign-up among them) were
+  not associated. `associateLabels()` pairs them where every HTML response already passes; bare
+  inputs take their placeholder as a name; unnamed sort buttons on blank columns are gone.
+  Pages with an unlabeled input: 369 of 420 → 4 (#123).
+- Phone: the dashboard's AI rows truncated to "Re…"; the action has its own line. Property-site
+  nav, marketing grids and one unbreakable slash-word no longer push pages sideways. The live
+  activity feed ellipsizes instead of being cut mid-word.
+- A second click no longer posts a form twice (payments were the case that mattered).
+
+**Copy and marketing**
+- New page `/for/alongside-appfolio` — the weekly report as the answer to "replacement or
+  integration?", in the nav and footer. Every claim on it is the m22 engine's behaviour.
+- "Property management, run by AI" (sign-in, footer) → "Property management that does the work",
+  per the replacement-anxiety doctrine. No pin referenced the old line.
+- Raw setting keys in three footnotes (`po_approval_threshold_cents` …) are now links to the
+  setting by its name. Logged-out `/pricing` goes to the published price, not a sign-in form.
+
+Not done here, and why: file downloads are still authorized per org rather than per record's
+role/property; API keys are still accepted in a query string; Stripe events are applied in arrival
+order; `clientIp` still reads the leftmost forwarded-for entry (which hop Render's edge appends
+needs confirming on the live service before changing it); consolidated ledger views do not yet
+apply `propFilter`. Staff-started applications in a live org still reach simulated screening.
+
+Tests: `tests/hardening.test.ts` (17) — one per finding. Gates: `tsc --noEmit` clean · unit
+601/601 · full seeded e2e (see the PR for the count) · crawl re-run on a fresh signup · one
+inspection round and one confirmation round, desktop and phone, light and dark. DECISIONS
+#118–#123 appended against the current tail.

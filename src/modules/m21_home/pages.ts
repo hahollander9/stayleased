@@ -9,6 +9,7 @@ import { audit } from '../../lib/audit.ts';
 import { on } from '../../lib/events.ts';
 import { shell, card, tbl, emptyState } from '../../ui/ui.ts';
 import { moneyApprovals, canApproveMoney } from '../m9_accounting/finops.ts';
+import { onboardingProgress, onboardingBanner } from '../setup/onboarding.ts';
 import {
   monthEarnings, cashPosition, owedToYou, vacantUnits, notPaying, agentDrafts,
 } from './service.ts';
@@ -82,6 +83,49 @@ function sum(terms: [string, number][], total: [string, number], opts?: { tone?:
   </div>`;
 }
 
+/** Home before the first building exists. */
+function firstRun(rq: Rq, orgName: string): ReturnType<typeof shell> {
+  const ctx = rq.ctx as Ctx;
+  const p = onboardingProgress(ctx);
+  const manage = can(ctx, 'properties:manage');
+  const answers: [string, string][] = [
+    ['What you made this month', 'Money that came in, less money that went out — with last month beside it.'],
+    ['What you have', 'The operating account, the bills due before month-end, and what is left after them.'],
+    ['Who owes you', 'Every household behind on rent, how far behind, and the total — tied to the books.'],
+    ['Units costing you money', 'Each empty unit, how long it has been empty, and the rent that has cost.'],
+    ['Waiting on your OK', 'Drafted notices, replies and bills. Nothing goes out until you approve it.'],
+  ];
+  return shell(rq, {
+    title: 'Home',
+    active: '/home',
+    bareHead: true,
+    content: html`
+      <div class="sm-head">
+        <h1 class="sm-h1">One file to start</h1>
+        <p class="sm-sub">${orgName} is set up and empty. A rent roll — the report your current system already exports — brings in the buildings, units, residents, leases and balances together.</p>
+      </div>
+      <div class="card sm-first">
+        <div class="sm-first-main">
+          <div class="sm-first-step">Step ${Math.min(p.done + 1, p.total)} of ${p.total}</div>
+          <h2 class="sm-first-h">Upload a rent roll</h2>
+          <p class="sm-first-p">Excel, CSV or PDF, from AppFolio, Buildium, Yardi, Rent Manager or a spreadsheet of your own. It is read and laid out for review first; nothing is saved until you approve it, and the totals are checked against the report’s own summary.</p>
+          ${manage
+            ? html`<div class="btn-row">
+                <a class="btn" href="/setup/import">Upload a rent roll</a>
+                <a class="btn btn-ghost" href="/setup/wizard">Add a building by hand</a>
+                <a class="btn btn-ghost" href="/welcome">All setup steps</a>
+              </div>`
+            : html`<p class="sm-note">Setting up buildings needs an administrator on your team.</p>`}
+        </div>
+        <ol class="sm-first-list" aria-label="What this screen answers once the rent roll is in">
+          ${answers.map(([t, d]) => html`<li><b>${t}</b><span>${d}</span></li>`)}
+        </ol>
+      </div>
+      <p class="sm-note">Only want a collections list from the system you already run? The
+        <a href="/weekly-report">weekly action report</a> reads AppFolio exports and saves nothing.</p>`,
+  });
+}
+
 export function homeScreen(rq: Rq): ReturnType<typeof shell> {
   const ctx = rq.ctx as Ctx;
   const pid = ctx.currentPropertyId || null;
@@ -97,6 +141,11 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
   const emptyLost = empty.reduce((s, u) => s + (u.rentLostCents || 0), 0);
   const canDecideAi = can(ctx, 'ai:approve');
 
+  // A company that has not brought a building in yet has nothing to count, and
+  // five boxes of $0.00 read as a product that is broken rather than one that
+  // is waiting. Say what the screen will answer, and what one file starts it.
+  if (!q1('SELECT 1 AS x FROM properties WHERE org_id=? LIMIT 1', ctx.orgId)) return firstRun(rq, orgName);
+
   return shell(rq, {
     title: 'Home',
     active: '/home',
@@ -106,6 +155,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
         <h1 class="sm-h1">Where you stand</h1>
         <p class="sm-sub">${orgName} · ${fmtDate(ctx.businessDate)} · counting money that actually came in and went out.</p>
       </div>
+      ${onboardingBanner(ctx)}
 
       ${card('What you made this month', html`
         ${sum(

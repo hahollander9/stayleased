@@ -735,7 +735,7 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
     return redirect(back, 'Original attached — it opens from this screen from now on.');
   });
 
-  r.post('/setup/import/bank-balance', requirePerm('accounting:manage'), (rq) => {
+  r.post('/setup/import/bank-balance', requirePerm('gl:post'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const propertyId = String(rq.body.property || '');
     const cents = Math.round(parseFloat(String(rq.body.amount || '').replace(/[$,]/g, '')) * 100);

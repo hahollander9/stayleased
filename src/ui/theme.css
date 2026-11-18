@@ -290,8 +290,18 @@ small, .small { font-size: 12px; }
 /* second-row sub-nav: the active module's pages */
 .subnav {
   display: flex; align-items: stretch; gap: 2px; padding: 0 14px;
-  background: rgba(10, 14, 24, .55); border-bottom: 1px solid var(--line-2); overflow: visible;
+  background: rgba(10, 14, 24, .55); border-bottom: 1px solid var(--line-2);
+  /* A long module (Financials has fifteen pages) scrolls inside the row. Left
+     to overflow, it widened the document, so every money page scrolled sideways
+     and the last tabs sat past the edge of a 1280px laptop. */
+  overflow-x: auto; overflow-y: hidden; scrollbar-width: none; overscroll-behavior-x: contain;
 }
+.subnav::-webkit-scrollbar { display: none; }
+.subnav a { flex: none; }
+/* the fade says "there is more this way", and only on the side where there is */
+.subnav.more-r { -webkit-mask-image: linear-gradient(to left, transparent, #000 56px); mask-image: linear-gradient(to left, transparent, #000 56px); }
+.subnav.more-l { -webkit-mask-image: linear-gradient(to right, transparent, #000 56px); mask-image: linear-gradient(to right, transparent, #000 56px); }
+.subnav.more-l.more-r { -webkit-mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); mask-image: linear-gradient(to right, transparent, #000 56px, #000 calc(100% - 56px), transparent); }
 .subnav a {
   display: inline-flex; align-items: center; padding: 0 11px; height: 38px;
   font: 600 12.5px var(--font); color: var(--muted); text-decoration: none;
@@ -476,6 +486,7 @@ a.kpi:hover { text-decoration: none; border-color: rgba(96, 165, 250, .4); trans
 
 /* ---------- tables ---------- */
 .tbl-wrap { overflow-x: auto; }
+.po-lines select { max-width: 240px; } .po-lines td:nth-child(3) input { width: 72px; } .po-lines td:nth-child(4) input { width: 150px; }
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
 .tbl th {
   text-align: left; font-size: 10.5px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted);
@@ -895,10 +906,17 @@ body.dnd-active .board .col.dnd-locked { opacity: .5; }
 .site { font-size: 15px; }
 .site .site-nav { display: flex; align-items: center; gap: 18px; padding: 14px 24px; max-width: 1080px; margin: 0 auto; }
 .site .site-nav .sn-name { font-weight: 700; font-size: 18px; flex: 1; font-family: var(--display); }
+/* three links and a button do not fit beside a property name at 390px: the
+   name takes its own line and the links sit under it */
+@media (max-width: 560px) {
+  .site .site-nav { flex-wrap: wrap; gap: 8px 16px; padding: 12px 16px; }
+  .site .site-nav .sn-name { flex: 0 0 100%; }
+  .site .site-nav .btn { margin-left: auto; }
+}
 .site .hero { position: relative; color: #fff; padding: 90px 24px 70px; text-align: center; background: radial-gradient(700px 320px at 50% -10%, rgba(96, 165, 250, .35), transparent 65%), linear-gradient(160deg, #0b1120, #14204a); }
 .site .hero h1 { font-size: 38px; letter-spacing: -.02em; }
 .site section { max-width: 1080px; margin: 0 auto; padding: 44px 24px; }
-.site h2 { font-size: 24px; margin-bottom: 18px; }
+.site h2, .site section > h1 { font-size: 24px; margin-bottom: 18px; }
 .site .fp-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
 .site .foot { background: #05070d; color: #8b98ad; padding: 30px 24px; text-align: center; font-size: 13px; margin-top: 30px; border-top: 1px solid var(--line-2); }
 .gallery { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
@@ -1013,7 +1031,8 @@ body.dnd-active .board .col.dnd-locked { opacity: .5; }
   font-family: var(--display); font-weight: 700; font-size: 22px; letter-spacing: -.02em;
 }
 .dash-ring .dr-val small { display: block; font-size: 9px; font-weight: 600; letter-spacing: .1em; color: var(--muted); text-transform: uppercase; margin-top: 1px; }
-.dash-feed { min-width: 240px; max-width: 330px; display: grid; gap: 8px; }
+.dash-feed { min-width: 240px; max-width: 330px; display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; }
+.dash-hero .dh-side { min-width: 0; }
 .dash-feed .df-head { font-size: 10.5px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); display: flex; align-items: center; gap: 7px; }
 .dash-feed .df-head i { width: 7px; height: 7px; border-radius: 99px; background: var(--ok); box-shadow: 0 0 0 0 rgba(52, 211, 153, .5); animation: dfping 2.2s ease-out infinite; }
 @keyframes dfping { 0% { box-shadow: 0 0 0 0 rgba(52, 211, 153, .5); } 70%, 100% { box-shadow: 0 0 0 7px rgba(52, 211, 153, 0); } }
@@ -1224,6 +1243,16 @@ svg.chart path.ct { transform-box: fill-box; transform-origin: 50% 50%; animatio
 .ai-feed .af-quiet { color: var(--muted); font-style: italic; }
 .ai-feed .af-title { flex: 1; min-width: 0; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ai-feed .af-when { flex: none; color: var(--muted); font-size: 11px; }
+/* On a phone the row has room for a label and a badge, not a sentence between
+   them — the action was truncating to "Re…". It gets its own line instead. */
+@media (max-width: 640px) {
+  .ai-feed li { flex-wrap: wrap; row-gap: 4px; }
+  .ai-feed .af-domain { flex: 1; min-width: 0; }
+  .ai-feed .af-title { order: 5; flex: 0 0 100%; white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+  .ai-panel .card-head { flex-wrap: wrap; row-gap: 8px; }
+  .ai-panel .card-head h2 { flex: 0 0 100%; }
+  .ai-panel .card-body { max-height: none; }
+}
 .ai-feed li { animation: dfin .5s cubic-bezier(.16, 1, .3, 1) both; }
 .ai-feed li:nth-child(2) { animation-delay: .06s; } .ai-feed li:nth-child(3) { animation-delay: .12s; }
 .ai-feed li:nth-child(4) { animation-delay: .18s; } .ai-feed li:nth-child(5) { animation-delay: .24s; }
@@ -2063,6 +2092,24 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
 }
 .sm-sub { margin: 0; color: var(--ink-2); font-size: 14px }
 
+/* ---- Home before the first building: one action, then what it buys ---- */
+.sm-sub { max-width: 68ch }
+.sm-first { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); gap: 0; padding: 0; overflow: hidden }
+.sm-first-main { padding: 26px 28px 28px }
+.sm-first-step { font-size: 11px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: var(--accent-ink) }
+.sm-first-h { margin: 8px 0 8px; font: 600 24px/1.15 var(--display); letter-spacing: -.015em; color: var(--ink) }
+.sm-first-p { margin: 0 0 18px; color: var(--ink-2); font-size: 14px; line-height: 1.55; max-width: 56ch }
+.sm-first-list { list-style: none; margin: 0; padding: 22px 28px; border-left: 1px solid var(--line-2); background: var(--surface-2, rgba(127, 127, 127, .05)); display: grid; gap: 14px; align-content: center; counter-reset: smf }
+.sm-first-list li { display: grid; grid-template-columns: 22px minmax(0, 1fr); column-gap: 10px; counter-increment: smf }
+.sm-first-list li::before { content: counter(smf); grid-row: span 2; font: 600 12px var(--font); color: var(--muted); font-variant-numeric: tabular-nums; padding-top: 2px }
+.sm-first-list b { font-size: 13.5px; color: var(--ink) }
+.sm-first-list span { font-size: 12.5px; color: var(--ink-2); line-height: 1.45 }
+@media (max-width: 860px) {
+  .sm-first { grid-template-columns: minmax(0, 1fr) }
+  .sm-first-main { padding: 20px 18px 22px }
+  .sm-first-list { border-left: 0; border-top: 1px solid var(--line-2); padding: 18px }
+}
+
 /* ---- the one big number ---- */
 .sm-big {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 10px;
@@ -2349,3 +2396,6 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
      is in its tooltip. */
   .org-chip { max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
+
+/* a button whose form has been sent: still there, visibly not waiting for another press */
+.is-busy { opacity: .6; pointer-events: none; cursor: progress; }

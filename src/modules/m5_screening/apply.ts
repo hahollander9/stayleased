@@ -10,7 +10,7 @@ import { doc, logo, statusBadge } from '../../ui/ui.ts';
 import {
   createApplication, inviteApplicant, collectFees, submitApplication, completeScreenings,
 } from './service.ts';
-import { marketingOf } from '../m4_marketing/public.ts';
+import { marketingOf, publicProperty, publicFormAllowed } from '../m4_marketing/public.ts';
 
 /** M5.1 applicant experience: tokenized multi-step application with
  * save-and-resume, co-applicant invites, document upload, fee payment. */
@@ -37,11 +37,30 @@ function loadByToken(tokenStr: string): { app: any; applicant: any; prop: any } 
   return { app, applicant, prop };
 }
 
+/** The application fee is charged on a card rail and the result comes from a
+ * screening bureau, and both are simulated today. In the demo that is the
+ * point. In a real operator's org it would book cash that never arrived into
+ * their ledger and hand them a screening verdict nobody produced — so the
+ * public application stays closed there until those rails are real, the same
+ * way the resident portal's pay screen does. */
+function onlineApplicationsOpen(prop: any): boolean {
+  return sysCtx(prop.org_id).orgKind !== 'live';
+}
+function closedScreen(rq: Rq, prop: any): Res {
+  return wizardShell(rq, `Apply at ${prop.name}`, html`
+    <div class="card"><div class="card-body">
+      <p><b>Online applications are not open for this community yet.</b></p>
+      <p class="muted">The leasing office is taking applications directly. Send a note and the team will be in touch with next steps.</p>
+      <a class="btn" href="/p/${prop.slug}/inquire">Contact the leasing office</a>
+    </div></div>`, { propName: prop.name });
+}
+
 export function routes(r: Router): void {
   // start an application from a public unit/quote link
   r.get('/p/:slug/apply', (rq) => {
-    const prop = q1<any>('SELECT * FROM properties WHERE slug=?', rq.params.slug!);
+    const prop = publicProperty(rq.params.slug);
     if (!prop) return notFound();
+    if (!onlineApplicationsOpen(prop)) return closedScreen(rq, prop);
     const units = q<any>(
       `SELECT u.*, f.name AS fp_name, f.beds FROM units u LEFT JOIN floorplans f ON f.id=u.floorplan_id
        WHERE u.property_id=? AND u.status='vacant_ready'
@@ -65,8 +84,10 @@ export function routes(r: Router): void {
   });
 
   r.post('/p/:slug/apply', (rq) => {
-    const prop = q1<any>('SELECT * FROM properties WHERE slug=?', rq.params.slug!);
+    const prop = publicProperty(rq.params.slug);
     if (!prop) return notFound();
+    if (!onlineApplicationsOpen(prop)) return closedScreen(rq, prop);
+    if (!publicFormAllowed(rq)) return redirect(`/p/${prop.slug}/apply`, 'That is a lot of requests in a few minutes — please try again shortly.', 'err');
     const ctx = sysCtx(prop.org_id);
     const email = v.email().safe(rq.body.email);
     if (!email.ok) return redirect(`/p/${prop.slug}/apply`, 'Valid email required.', 'err');
@@ -230,6 +251,7 @@ export function routes(r: Router): void {
     if (!loaded) return notFound();
     const { app, applicant, prop } = loaded;
     if (applicant.kind !== 'primary') return notFound();
+    if (!onlineApplicationsOpen(prop)) return closedScreen(rq, prop);
     const ctx = sysCtx(prop.org_id);
     update('applicants', applicant.id, { status: 'complete' });
     collectFees(ctx, app.id);

@@ -343,7 +343,7 @@ function subNav(ctx: Ctx, active: string, mode: UiMode): Raw {
       const items = t.groups.flatMap((g) => g.items);
       if (items.length > 1 && items.some((i) => itemActive(active, i))) {
         return html`<nav class="subnav" aria-label="${t.label} pages">
-          ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}
+          ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}" ${itemActive(active, i) ? raw('aria-current="page"') : ''}>${i.label}</a>`)}
         </nav>`;
       }
     }
@@ -355,7 +355,7 @@ function subNav(ctx: Ctx, active: string, mode: UiMode): Raw {
     const items = tabs.get(label) || [];
     if (items.length && items.some((i) => itemActive(active, i))) {
       return html`<nav class="subnav" aria-label="${label} pages">
-        ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`)}
+        ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}" ${itemActive(active, i) ? raw('aria-current="page"') : ''}>${i.label}</a>`)}
       </nav>`;
     }
   }
@@ -611,7 +611,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
   </div>
   <div class="palette-back" id="palette">
     <div class="palette" role="dialog" aria-label="Global search">
-      <input type="search" placeholder="Search residents, units, leads, vendors, invoices…" id="palette-input" autocomplete="off" />
+      <input type="search" placeholder="Search residents, units, leads, vendors, invoices…" aria-label="Search residents, units, leads, vendors and invoices" id="palette-input" autocomplete="off" />
       <div class="results" id="palette-results"><div class="hintbar">Type at least 2 characters</div></div>
       <div class="hintbar">↑↓ navigate · Enter open · Esc close</div>
     </div>
@@ -664,7 +664,7 @@ export function authShell(title: string, content: Child): Res {
   return htmlRes(
     doc(
       title,
-      html`<div class="auth-wrap"><div class="auth-card">${content}</div></div>`,
+      html`<main class="auth-wrap"><div class="auth-card"><h1 class="sr-only">${title}</h1>${content}</div></main>`,
     ),
   );
 }
@@ -747,19 +747,22 @@ export function tbl(
   }
   const server = cols.some((c) => c.href);
   const sortable = opts?.sort !== false && !server;
+  // A column with no heading (the row-actions column) has nothing to sort by,
+  // and a sort button with no text is a control with no name.
+  const blank = (c: Col): boolean => html`${c.label}`.s.trim() === '';
   const head = (c: Col): Raw => {
     if (c.href) {
       const next = c.sorted === 'asc' ? 'descending' : 'ascending';
       return html`<a class="th-sort" href="${c.href}" aria-label="Sort by ${c.label} ${raw(next)}">${c.label}<span class="th-caret" aria-hidden="true"></span></a>`;
     }
-    if (!sortable || c.nosort) return html`${c.label}`;
+    if (!sortable || c.nosort || blank(c)) return html`${c.label}`;
     // a button, not a bare click handler: it is reachable by keyboard and
     // announced as an control rather than as decoration
     return html`<button type="button" class="th-sort" data-sort>${c.label}<span class="th-caret" aria-hidden="true"></span></button>`;
   };
   return html`<div class="tbl-wrap"><table class="tbl ${opts?.density === 'tight' ? 'tight' : ''}"
       ${sortable ? raw('data-sortable') : ''}>
-    <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}${c.href || (sortable && !c.nosort) ? ' th-sortable' : ''}"
+    <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}${c.href || (sortable && !c.nosort && !blank(c)) ? ' th-sortable' : ''}"
       ${c.sorted ? raw(`aria-sort="${c.sorted === 'asc' ? 'ascending' : 'descending'}"`) : ''}
       ${c.num ? raw('data-num') : ''}
       ${c.w ? raw(`style="width:${c.w}"`) : ''}>${head(c)}</th>`)}</tr></thead>
@@ -922,7 +925,9 @@ export function field(label: Child, control: Child, hint?: Child): Raw {
   return html`<div class="field"><label${raw(forAttr)}>${label}</label>${ctrl}${when(hint, () => html`<div class="hint">${hint}</div>`)}</div>`;
 }
 export function input(name: string, opts: { value?: Child; type?: string; placeholder?: string; required?: boolean; step?: string; min?: string; max?: string; list?: string; autofocus?: boolean; id?: string } = {}): Raw {
-  return html`<input id="${opts.id ?? ctrlId()}" name="${name}" type="${opts.type || 'text'}" value="${opts.value ?? ''}" placeholder="${opts.placeholder ?? ''}" ${opts.required ? 'required' : ''} ${opts.step ? raw(`step="${esc(opts.step)}"`) : ''} ${opts.min ? raw(`min="${esc(opts.min)}"`) : ''} ${opts.max ? raw(`max="${esc(opts.max)}"`) : ''} ${opts.list ? raw(`list="${esc(opts.list)}"`) : ''} ${opts.autofocus ? 'autofocus' : ''} />`;
+  // A placeholder is the only name a bare input has (table-row inputs, filter
+  // bars); field() drops this again when it pairs the control with its label.
+  return html`<input id="${opts.id ?? ctrlId()}" name="${name}" type="${opts.type || 'text'}" value="${opts.value ?? ''}" placeholder="${opts.placeholder ?? ''}" ${opts.placeholder ? raw(`aria-label="${esc(opts.placeholder)}"`) : ''} ${opts.required ? 'required' : ''} ${opts.step ? raw(`step="${esc(opts.step)}"`) : ''} ${opts.min ? raw(`min="${esc(opts.min)}"`) : ''} ${opts.max ? raw(`max="${esc(opts.max)}"`) : ''} ${opts.list ? raw(`list="${esc(opts.list)}"`) : ''} ${opts.autofocus ? 'autofocus' : ''} />`;
 }
 export function select(name: string, options: [string, Child][], value?: string | null, opts: { required?: boolean; blank?: string; id?: string; ariaLabel?: string } = {}): Raw {
   // Always carry an accessible name: field() strips this when it associates a
@@ -943,6 +948,20 @@ export function checkbox(name: string, label: Child, checked?: boolean, value = 
 export function moneyInput(name: string, cents?: number | null, opts: { required?: boolean; placeholder?: string; id?: string } = {}): Raw {
   const val = cents === undefined || cents === null ? '' : (cents / 100).toFixed(2);
   return html`<input id="${opts.id ?? ctrlId()}" name="${name}" type="text" inputmode="decimal" value="${val}" placeholder="${opts.placeholder ?? '0.00'}" ${opts.required ? 'required' : ''} />`;
+}
+
+/** A page that reports on one property, opened before any property exists.
+ * These used to bind `undefined` into a query and answer with a 500. */
+export function noProperties(r: Rq, title: string, active: string): Res {
+  return shell(r, {
+    title,
+    active,
+    content: card(null, emptyState(
+      'No buildings yet',
+      'This page reports on one property at a time, and none has been added. A rent roll brings in buildings, units, residents and leases together.',
+      html`<a class="btn" href="/setup/import">Upload a rent roll</a> <a class="btn btn-ghost" href="/setup/wizard">Add a building by hand</a>`,
+    )),
+  });
 }
 
 // ---------- history (audit) panel ----------

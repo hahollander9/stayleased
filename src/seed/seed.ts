@@ -4,12 +4,25 @@ import { db, dbPath, closeDb, insert, q1, tx, run } from '../lib/db.ts';
 import { ROOT } from '../lib/db.ts';
 import { id } from '../lib/ids.ts';
 import { nowIso, mkDate } from '../lib/dates.ts';
-import { hashPassword } from '../lib/auth.ts';
+import { hashPassword, tempPassword } from '../lib/auth.ts';
 import { Rng, GLOBAL_SEED } from '../lib/rng.ts';
 import { ROLE_LABELS, type Role } from '../lib/rbac.ts';
 import { setDials, DEFAULT_DIALS } from '../lib/sim/dials.ts';
 import { seedPhases } from './parts.ts';
 import { env } from '../lib/env.ts';
+
+/** The platform operator's account opens every customer's organization, so on
+ * a real deployment it never gets the password printed in docs/demo-logins.md.
+ * STAYLEASED_PLATFORM_PASSWORD sets it; without one, a deployment gets a random
+ * password printed once in the boot log. Local and test seeds keep demo1234. */
+function platformPassword(): string {
+  const set = env('PLATFORM_PASSWORD');
+  if (set) return set;
+  if (process.env.RENDER !== 'true' && env('MODE') !== 'production') return 'demo1234';
+  const pw = tempPassword();
+  console.log(`[seed] platform@stayleased.demo one-time password: ${pw} — change it at /me after signing in.`);
+  return pw;
+}
 
 /** Deterministic demo seed (§8): Summit Ridge Management Co., three
  * properties, staff for every role, and (as phases land) 14 months of
@@ -88,7 +101,7 @@ async function main(): Promise<void> {
   tx(() => {
     insert('users', {
       id: id('usr'), org_id: null, email: 'platform@stayleased.demo', name: 'StayLeased Platform Ops',
-      kind: 'platform', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+      kind: 'platform', password_hash: hashPassword(platformPassword()), active: 1, created_at: nowIso(),
     });
     seedCtx.demoLogins.push(['Platform Admin', 'platform@stayleased.demo', 'org onboarding']);
     for (const [name, local, role, notes] of staff) {

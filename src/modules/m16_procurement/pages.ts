@@ -111,9 +111,9 @@ export function routes(r: Router): void {
             ${when(wo, () => html`<input type="hidden" name="source" value="workorder" /><input type="hidden" name="source_id" value="${wo.id}" />
               <p class="small muted">Linked to work order <a href="/workorders/${wo.id}">${wo.summary}</a> — the approved purchase flows into AP against this job.</p>`)}`)}
           ${card('Lines (catalog or free-form)', html`
-            <table class="tbl"><thead><tr><th>Catalog item</th><th>Free-form description</th><th>Qty</th><th>Unit price</th><th>Capital project</th></tr></thead>
-            <tbody>${join([0, 1, 2, 3].map(lineRow), '')}</tbody></table>
-            <p class="small muted">Catalog lines carry their GL + inventory SKU; receiving restocks inventory automatically. POs over ${usd(100000)} route for approval.</p>`)}
+            <div class="tbl-wrap po-lines"><table class="tbl"><thead><tr><th>Catalog item</th><th>Free-form description</th><th>Qty</th><th>Unit price</th><th>Capital project</th></tr></thead>
+            <tbody>${join([0, 1, 2, 3].map(lineRow), '')}</tbody></table></div>
+            <p class="small muted">Catalog lines carry their GL + inventory SKU; receiving restocks inventory automatically. A purchase order over the property’s <a href="/admin/settings?section=approval-thresholds">approval threshold</a> waits for sign-off before it is sent.</p>`)}
           <button class="btn">Create & submit</button>
         </form>`,
     });

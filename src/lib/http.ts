@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse, type Server } from 'node:http';
 import { randomBytes } from 'node:crypto';
-import { esc, Raw } from './html.ts';
+import { esc, Raw, associateLabels } from './html.ts';
 import { env } from './env.ts';
 
 /** Tiny server-rendered web framework on node:http (environment fallback for
@@ -87,7 +87,7 @@ export function redirect(to: string, flash?: string, kind: 'ok' | 'err' = 'ok'):
   const headers: Record<string, string | string[]> = { location: to };
   if (flash) {
     headers['set-cookie'] = [
-      `sl_fl=${encodeURIComponent(kind + '|' + flash)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30${env('MODE') === 'production' ? '; Secure' : ''}`,
+      `sl_fl=${encodeURIComponent(kind + '|' + flash)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=30${secureCookies() ? '; Secure' : ''}`,
     ];
   }
   return { status: 303, headers, body: '' };
@@ -255,7 +255,11 @@ function parseCookies(header: string | undefined): Record<string, string> {
   if (!header) return out;
   for (const part of header.split(';')) {
     const i = part.indexOf('=');
-    if (i > -1) out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+    if (i > -1) {
+      const rawVal = part.slice(i + 1).trim();
+      // a cookie some other site or extension set with a stray % is not our error
+      try { out[part.slice(0, i).trim()] = decodeURIComponent(rawVal); } catch { out[part.slice(0, i).trim()] = rawVal; }
+    }
   }
   return out;
 }
@@ -273,6 +277,15 @@ function clientIp(req: IncomingMessage): string {
   return req.socket.remoteAddress || '0.0.0.0';
 }
 
+/** Whether cookies should be marked Secure. The deployed service runs with
+ * MODE=demo (the mode names the data, not the transport), so keying this on
+ * MODE=production alone meant the session cookie and the one-time-password
+ * flash went out without Secure on the live site. Any sign of a real
+ * deployment — the host's own marker, or an https origin — is enough. */
+export function secureCookies(): boolean {
+  return env('MODE') === 'production' || process.env.RENDER === 'true' || (env('SITE_ORIGIN') || '').startsWith('https://');
+}
+
 export function cookie(
   name: string,
   value: string,
@@ -282,7 +295,7 @@ export function cookie(
   if (opts.httpOnly !== false) parts.push('HttpOnly');
   // Secure in production so session/switcher/impersonation cookies never ride
   // plain HTTP; left off in dev so local http://localhost still works.
-  if (env('MODE') === 'production') parts.push('Secure');
+  if (secureCookies()) parts.push('Secure');
   if (opts.expire) parts.push('Max-Age=0');
   else if (opts.maxAge) parts.push(`Max-Age=${opts.maxAge}`);
   return parts.join('; ');
@@ -376,6 +389,24 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: AppOption
     send(res, r, out);
   } catch (e) {
     const err = e as Error;
+    // Not every throw is a fault. A rejected amount, a closed period or a
+    // missing permission is the application answering correctly, and it used
+    // to answer "500 Something went wrong" — which tells the person nothing
+    // and pages whoever watches the error log. Matched by name so this file
+    // does not import the modules that define them.
+    const kind = err?.constructor?.name || '';
+    try {
+      if (kind === 'PermError') { send(res, r, errorPage(403, 'You do not have permission to do that.')); return; }
+      if (kind === 'URIError') { send(res, r, errorPage(400, 'That address is not valid.')); return; }
+      if (['VError', 'ClosedPeriod', 'UnbalancedEntry', 'PaymentRejected'].includes(kind)) {
+        const msg = (err.message || 'That could not be saved.').slice(0, 300);
+        let back = '';
+        try { const ref = new URL(String(req.headers.referer || '')); if (ref.host === req.headers.host) back = localPath(ref.pathname + ref.search, ''); } catch { /* no referer */ }
+        if (r && r.method === 'POST' && back && !r.path.startsWith('/api/')) send(res, r, redirect(back, `Not saved — ${msg}`, 'err'));
+        else send(res, r, errorPage(400, msg));
+        return;
+      }
+    } catch { /* fall through to the generic page */ }
     if (opts.onError && r) opts.onError(err, r);
     // Fail-safe: only leak a stack when explicitly opted in AND not in
     // production, so a forgotten MODE=production never exposes internals.
@@ -397,6 +428,7 @@ function send(res: ServerResponse, r: Rq | null, out: Res): void {
   if (r?.setCookies.length) cookies.push(...r.setCookies);
   if (cookies.length) headers['set-cookie'] = cookies;
   headers['x-content-type-options'] = 'nosniff';
+  if (r?.raw.headers['x-forwarded-proto'] === 'https') headers['strict-transport-security'] = 'max-age=31536000; includeSubDomains';
   headers['x-frame-options'] = 'SAMEORIGIN';
   headers['referrer-policy'] = 'same-origin';
   let body = out.body;
@@ -410,7 +442,7 @@ function send(res: ServerResponse, r: Rq | null, out: Res): void {
     const nonce = randomBytes(16).toString('base64');
     // literal string search + function replacer: the nonce is inserted verbatim
     // and never interpreted as a $-replacement pattern (regex/injection-safe).
-    body = body.replaceAll('<script', () => `<script nonce="${nonce}"`);
+    body = associateLabels(body.replaceAll('<script', () => `<script nonce="${nonce}"`));
     // Google Analytics (marketing pages, env-gated): the loader tag itself is
     // covered by the nonce, but gtag.js fetches config and beacons from
     // Google's hosts — those are allowed ONLY while STAYLEASED_GA_ID is set,

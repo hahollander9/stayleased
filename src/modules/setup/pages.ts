@@ -441,7 +441,7 @@ function runImport(rq: Rq) {
       <form method="post" action="/setup/import/legacy" class="wiz-actions">
         <input type="hidden" name="entity" value="${spec.key}" />
         ${when(spec.needsProperty, () => raw(`<input type="hidden" name="property" value="${propertyId}" />`))}
-        <input type="hidden" name="csv" value="${csv.replace(/"/g, '&quot;').replace(/</g, '&lt;')}" />
+        <input type="hidden" name="csv" value="${csv}" />
         <a class="btn btn-ghost" href="/setup/import/legacy?entity=${spec.key}">Back</a>
         <button class="btn" type="submit" name="mode" value="commit" ${okN === 0 ? 'disabled' : ''}>Import ${okN} ${spec.label.toLowerCase()}</button>
       </form>`,

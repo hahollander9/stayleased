@@ -2,7 +2,7 @@ import { scryptSync, randomBytes, timingSafeEqual, createHash } from 'node:crypt
 import { q, q1, run, insert, j } from './db.ts';
 import { id, token } from './ids.ts';
 import { nowIso } from './dates.ts';
-import { cookie, forbidden, redirect, type Middleware, type Rq, type Res } from './http.ts';
+import { cookie, forbidden, notFound, redirect, type Middleware, type Rq, type Res } from './http.ts';
 import { expandPerms, type Role } from './rbac.ts';
 import { env } from './env.ts';
 
@@ -44,7 +44,7 @@ export function dummyVerify(): void {
 const SESSION_COOKIE = 'sl_s';
 const SESSION_DAYS = 7;
 
-function tokenHash(t: string): string {
+export function tokenHash(t: string): string {
   return createHash('sha256').update(t).digest('hex');
 }
 
@@ -241,6 +241,22 @@ export const requireStaff: Middleware = (r) => {
   return;
 };
 
+/** Runs before every route: a property named in the request must be one this
+ * person may see. Twenty-odd pages take `?property=` and most trusted it, so a
+ * manager scoped to one building could read another's ledger by editing the
+ * URL, and three queries would answer for a property in a different
+ * organization. Checking it once here covers the pages that exist and the
+ * ones not written yet. */
+export const guardPropertyParam: Middleware = (r) => {
+  const ctx = r.ctx as Ctx | undefined;
+  if (!ctx || !r.user || (r.user as UserRow).kind !== 'staff') return;
+  const bad = (v: unknown): boolean => typeof v === 'string' && v.startsWith('prp_') && !canAccessProperty(ctx, v);
+  // as far as this person is concerned the property does not exist; forms that
+  // post a property check it themselves and keep their own answers
+  if (bad(r.query.get('property')) || bad(r.query.get('property_id'))) return notFound('Property not found');
+  return;
+};
+
 export function requirePerm(perm: string): Middleware {
   return (r) => {
     if (!r.user) return loginRedirect(r);
@@ -281,6 +297,9 @@ const attempts = new Map<string, { n: number; reset: number }>();
 
 export function rateLimit(key: string, max: number, windowMs: number): boolean {
   const now = Date.now();
+  // entries are per key and keys can be invented by a caller (a forged
+  // forwarded-for header), so the map is swept rather than left to grow
+  if (attempts.size > 5000) for (const [k, v] of attempts) if (v.reset < now) attempts.delete(k);
   const cur = attempts.get(key);
   if (!cur || cur.reset < now) {
     attempts.set(key, { n: 1, reset: now + windowMs });

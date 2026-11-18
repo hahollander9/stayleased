@@ -2,9 +2,10 @@ import { html, when, raw } from '../../lib/html.ts';
 import {
   htmlRes, jsonRes, redirect, notFound, forbidden, cookie,
   type Router, type Rq, takeFlash,
+  localPath,
 } from '../../lib/http.ts';
 import {
-  verifyPassword, dummyVerify, createSession, destroySession, setSessionCookie, clearSessionCookie,
+  verifyPassword, hashPassword, tokenHash, dummyVerify, createSession, destroySession, setSessionCookie, clearSessionCookie,
   getSessionToken, attachSession, requireUser, requirePerm, rateLimit,
   type UserRow, type Ctx, canAccessProperty,
 } from '../../lib/auth.ts';
@@ -15,6 +16,16 @@ import { authShell, logo, wordmark, runSearch, shell, card, dl } from '../../ui/
 import { ROLE_LABELS, type Role } from '../../lib/rbac.ts';
 import { env } from '../../lib/env.ts';
 import { signupRoutes } from './signup.ts';
+
+/** The demo cast (admin@summitridge.demo and friends) is a set of published,
+ * shared sign-ins: letting one visitor change one would lock the demo for
+ * everyone after them. The platform operator's account is not part of the
+ * cast, whatever its address ends in. */
+function sharedDemoLogin(rq: Rq): boolean {
+  const ctx = rq.ctx as Ctx;
+  const u = rq.user as UserRow;
+  return ctx.orgKind !== 'live' && u.kind !== 'platform' && String(u.email).endsWith('.demo');
+}
 
 export function routes(r: Router): void {
   signupRoutes(r);
@@ -33,7 +44,7 @@ export function routes(r: Router): void {
       html`
         <a class="auth-back" href="/">← Back to home</a>
         <div class="auth-brand">${wordmark(28)}</div>
-        <div class="auth-sub">Property management, run by AI.</div>
+        <div class="auth-sub">Property management that does the work.</div>
         ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
         <form method="post" action="/login">
           <input type="hidden" name="next" value="${rq.query.get('next') || ''}" />
@@ -61,6 +72,13 @@ export function routes(r: Router): void {
     if (!rateLimit(`login:${rq.ip}:${email}`, 20, 60000)) {
       return redirect('/login', 'Too many attempts — wait a minute and try again.', 'err');
     }
+    // and on the account alone: the address above comes from a header a caller
+    // can forge, which made the per-IP bucket unlimited guesses for anyone who
+    // rotated it. The shared demo logins are exempt — they are public, and one
+    // visitor must not be able to lock the demo for the rest.
+    if (!email.endsWith('.demo') && !rateLimit(`login-acct:${email}`, 30, 15 * 60000)) {
+      return redirect('/login', 'Too many attempts on this account — wait fifteen minutes and try again.', 'err');
+    }
     const user = q1<UserRow>('SELECT * FROM users WHERE email=? AND active=1', email);
     if (!user) {
       dummyVerify(); // equalize timing so a missing email can't be distinguished from a wrong password
@@ -73,7 +91,7 @@ export function routes(r: Router): void {
     setSessionCookie(rq, t);
     run('UPDATE users SET last_login_at=? WHERE id=?', nowIso(), user.id);
     const next = String(rq.body.next || '');
-    return redirect(next && next.startsWith('/') && !next.startsWith('//') ? next : landingFor(user));
+    return redirect(localPath(next, landingFor(user)));
   });
 
   r.post('/logout', (rq) => {
@@ -100,7 +118,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'My profile',
       active: '/me',
-      content: card(
+      content: html`${card(
         'Account',
         dl([
           ['Name', ctx.userName],
@@ -108,8 +126,38 @@ export function routes(r: Router): void {
           ['Roles', grants.length ? grants.map((g) => ROLE_LABELS[g.role] ?? g.role).join(', ') : ctx.kind],
           ['Access', ctx.allProperties ? 'All properties' : `${ctx.propertyIds.length} propert${ctx.propertyIds.length === 1 ? 'y' : 'ies'}`],
         ]),
-      ),
+      )}
+      ${card('Password', sharedDemoLogin(rq)
+        ? html`<p class="muted" style="margin:0">This is a shared demo sign-in, so its password stays as published. Accounts in a real organization change theirs here.</p>`
+        : html`<form method="post" action="/me/password" style="max-width:420px" autocomplete="off">
+            <div class="field"><label>Current password</label><input name="current" type="password" required autocomplete="current-password" /></div>
+            <div class="field"><label>New password</label><input name="password" type="password" required minlength="10" autocomplete="new-password" /><div class="hint">At least 10 characters.</div></div>
+            <div class="field"><label>Confirm new password</label><input name="password2" type="password" required minlength="10" autocomplete="new-password" /></div>
+            <button class="btn">Change password</button>
+            <p class="small muted" style="margin:10px 0 0">Changing it signs this account out everywhere else.</p>
+          </form>`)}`,
     });
+  });
+
+  // Until this existed, nobody could change a password: the owner who signed
+  // up kept the one they typed forever, staff kept the temporary one an admin
+  // read out to them, and the platform account kept the one printed in the
+  // demo-logins file.
+  r.post('/me/password', requireUser, (rq) => {
+    const ctx = rq.ctx as Ctx;
+    if (sharedDemoLogin(rq)) return forbidden('The shared demo sign-ins keep their published password.');
+    if (!rateLimit(`pwchange:${ctx.userId}`, 8, 15 * 60000)) return redirect('/me', 'Too many attempts — wait fifteen minutes and try again.', 'err');
+    const user = q1<UserRow>('SELECT * FROM users WHERE id=? AND active=1', ctx.userId);
+    const next = String(rq.body.password || '');
+    if (!user || !verifyPassword(String(rq.body.current || ''), user.password_hash)) return redirect('/me', 'The current password is not right.', 'err');
+    if (next.length < 10) return redirect('/me', 'The new password needs at least 10 characters.', 'err');
+    if (next !== String(rq.body.password2 || '')) return redirect('/me', 'The two new passwords do not match.', 'err');
+    if (next === String(rq.body.current || '') || next.toLowerCase() === 'demo1234') return redirect('/me', 'Choose a password that is not the old one.', 'err');
+    run('UPDATE users SET password_hash=? WHERE id=?', hashPassword(next), user.id);
+    const mine = getSessionToken(rq);
+    run('DELETE FROM sessions WHERE user_id=? AND token_hash<>?', user.id, mine ? tokenHash(mine) : '');
+    if (user.org_id) audit(ctx, 'user', user.id, 'password_changed');
+    return redirect('/me', 'Password changed. Other sessions for this account have been signed out.');
   });
 
   // impersonation (admins; bannered + audited)

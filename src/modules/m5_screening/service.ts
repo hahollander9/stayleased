@@ -108,6 +108,10 @@ export function collectFees(ctx: Ctx, applicationId: string): { total: number; r
   const app = q1<any>('SELECT * FROM applications WHERE id=? AND org_id=?', applicationId, ctx.orgId);
   if (!app) throw new Error('application not found');
   if (app.fees_paid) return { total: 0, ref: app.fee_payment_ref };
+  // No card rail is live, so in a real operator's books there is no cash to
+  // record: posting it here debited their operating account for money that was
+  // never collected. The fee stays unpaid until someone records a real receipt.
+  if (ctx.orgKind === 'live') return { total: 0, ref: '' };
   const adults = val<number>(`SELECT COUNT(*) FROM applicants WHERE application_id=? AND kind IN ('primary','co')`, applicationId) || 1;
   const feeTotal = app.app_fee_cents * adults;
   const total = feeTotal + app.hold_deposit_cents;

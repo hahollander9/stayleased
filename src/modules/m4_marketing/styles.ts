@@ -799,6 +799,13 @@ html[data-theme="dark"] .mk-hero-clip::before { background: radial-gradient(46% 
 #mktop.show { opacity: 1; transform: none; pointer-events: auto; }
 #mktop:hover { border-color: var(--ink); transform: translateY(-2px); }
 
+/* A grid item's minimum width is its content's, so one wide child (a framed
+ * screenshot, a long unbroken word) stretched a "1fr" column past the phone's
+ * edge and took the whole page sideways with it. Items may shrink to the track. */
+/* "Buildium/AppFolio/Yardi/RentManager/TenantCloud" is one unbreakable word to a browser */
+.mk-card, .mkp-sub, .mkp-points li, .mkp-stat { overflow-wrap: break-word; }
+.mk-hero-in > *, .mkp-hero-in > *, .mk-grid2 > *, .mk-grid3 > *, .mk-grid5 > *, .mk-two > *, .mk-two-col > * { min-width: 0; }
+
 /* responsive */
 @media (max-width: 980px) {
   .mk-wrap { padding: 0 24px; }

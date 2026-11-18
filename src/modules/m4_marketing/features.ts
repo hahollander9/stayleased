@@ -1034,6 +1034,49 @@ export const MK_PAGES: MkPage[] = [
     ],
   },
   {
+    slug: 'alongside-appfolio', group: 'for', label: 'Alongside AppFolio',
+    title: 'The weekly cash and collections report, on top of AppFolio.',
+    sub: 'AppFolio stays the system of record. Its own exports go in — rent roll and delinquency, with receipts and work orders when available — and a ranked follow-up list comes out: who owes what, separated by who pays, with every total tied to the file it came from.',
+    chip: { kind: 'live', text: 'Working today · reads exports · stores nothing' },
+    points: [
+      'No integration, no migration, no second system of record',
+      'Household balances kept apart from what housing agencies owe',
+      'Nothing sent to a resident, agency, or vendor from the report',
+    ],
+    stats: [
+      { b: 'Two exports required', s: 'Rent roll and delinquency; receipts, last week’s delinquency, and work orders are optional' },
+      { b: 'Nothing stored', s: 'Files are read for one page and never written to a disk or a database' },
+      { b: 'Tied to the source', s: 'Each export’s sum is checked on screen against the file’s own grand-total row' },
+    ],
+    features: [
+      { t: 'Who owes what, by payer', b: 'Household balances and housing-agency balances reported separately, so a collections call never goes to a household for money an agency owes. Where the export cannot support the split, the balance is shown as “not split” — never estimated.' },
+      { t: 'What agencies owe, by program', b: 'One row per program — voucher, VASH, rapid rehousing — with the balance aged in months of subsidy unpaid, because one call to a program covers every unit under it.' },
+      { t: 'Expected against received', b: 'The rent roll compared with the month’s receipts, by payer: no agency payment after the 10th, an agency payment that arrived short, no household payment after the 5th, and receipts for units the rent roll does not carry.' },
+      { t: 'A ranked follow-up list', b: 'Ordered by amount and age, with payment plans weighted down and conservative next-step wording. Downloadable as a spreadsheet; the work of the call stays with the team that knows the household.' },
+      { t: 'Since last week', b: 'With last week’s delinquency export alongside: who is newly behind, whose balance grew, who paid down, and who paid off.' },
+      { t: 'Repairs that need a push', b: 'From the work-order export: urgent requests open more than a day, orders idle a week or longer, and vendors who have gone quiet.' },
+    ],
+    mock: {
+      kpis: [['2', 'Exports required'], ['3', 'Optional exports'], ['0', 'Rows stored'], ['1', 'Follow-up list']],
+      feed: [
+        ['Read', 'Rent roll and delinquency · each tied to its own total'],
+        ['Split', 'Household and agency balances separated'],
+        ['Ranked', 'Follow-up list ready · nothing sent'],
+      ],
+    },
+    faq: [
+      { q: 'Is this a replacement for AppFolio?', a: 'No. AppFolio remains the system of record, and nothing in it changes. The report works from files AppFolio already exports, and it writes nothing back. Moving the books into StayLeased is a separate decision, made later or never.' },
+      { q: 'What happens to the uploaded files?', a: 'They are read in memory to build one page and then discarded. Nothing is written to a disk or a database, and the response is marked not to be cached. Running the report again next week means uploading next week’s exports.' },
+      { q: 'What if the export has no column for the subsidy portion?', a: 'A balance on a lease with no subsidy belongs to the household — the rent roll shows there is no other payer. A balance on a subsidized lease is shown as “not split”, with a follow-up item to confirm the split before anyone contacts the household. The report does not guess.' },
+      { q: 'Can the report be seen before any files are shared?', a: 'Yes. The live demo includes the full report on a fictional 47-unit portfolio — scattered four-unit buildings, one larger building, and single-family homes, with a mix of voucher and market-rate leases — along with the sample exports it was built from.' },
+    ],
+    related: [
+      { label: 'Switching from Buildium / AppFolio', href: '/for/switching-from-buildium-appfolio' },
+      { label: 'Rent collection', href: '/platform/rent-collection' },
+      { label: 'Approvals & control', href: '/agents/governance' },
+    ],
+  },
+  {
     slug: 'switching-from-spreadsheets', group: 'for', label: 'Switching from spreadsheets',
     title: 'Keep the spreadsheet. Upload it. We build the rest.',
     sub: 'Your rent-tracking sheet — whatever its columns, whatever its quirks — is enough. AI reads it, maps it with synonym matching, shows you the review screen, and turns it into a running operation.',

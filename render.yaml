@@ -9,7 +9,7 @@ services:
     name: stayleased
     runtime: docker
     plan: starter # always-on; the free plan sleeps and has no disks
-    healthCheckPath: /login
+    healthCheckPath: /healthz # database reachable; reports disk headroom (see DEPLOY.md)
     disk:
       name: stayleased-data
       mountPath: /data

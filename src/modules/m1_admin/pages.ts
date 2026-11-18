@@ -1,4 +1,5 @@
-import { html, raw, when, join, type Child, type Raw } from '../../lib/html.ts';
+import { html, raw, when, join, type Child, type Raw, safeHtml } from '../../lib/html.ts';
+import { VError } from '../../lib/validate.ts';
 import {
   redirect, notFound, forbidden, fileRes, type Router, type Rq, badRequest,
 } from '../../lib/http.ts';
@@ -25,7 +26,7 @@ import {
 } from '../../ui/ui.ts';
 import { uiMode, modeIsChosen } from '../../lib/uimode.ts';
 import { ROLES, ROLE_LABELS, ROLE_PERMS, PERMISSIONS, type Role } from '../../lib/rbac.ts';
-import { deliverWebhooks, emit } from '../../lib/events.ts';
+import { deliverWebhooks, emit, webhookUrlShape } from '../../lib/events.ts';
 import { createHash } from 'node:crypto';
 import { expandPerms } from '../../lib/rbac.ts';
 import { historyPanel } from '../../ui/ui.ts';
@@ -194,6 +195,7 @@ export function routes(r: Router): void {
     const live = ctx.orgKind === 'live';
     const pw = live ? tempPassword() : 'demo1234';
     run('UPDATE users SET password_hash=? WHERE id=?', hashPassword(pw), u.id);
+    run('DELETE FROM sessions WHERE user_id=?', u.id); // a reset that leaves the old sessions signed in has not reset much
     audit(ctx, 'user', u.id, 'password_reset');
     return redirect(`/admin/staff/${u.id}`, live
       ? `Password reset. One-time password (shown only now): ${pw}`
@@ -756,7 +758,7 @@ export function routes(r: Router): void {
 
   r.post('/admin/jobs/:key/run', requirePerm('admin:jobs'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const out = runJob(sysCtx(ctx.orgId), rq.params.key!, ctx.businessDate);
+    const out = runJob(sysCtx(ctx.orgId), rq.params.key!, ctx.businessDate, { manual: true });
     return redirect('/admin/jobs', `${rq.params.key}: ${out.status}${out.summary ? ` — ${out.summary}` : ''}`, out.status === 'ok' ? 'ok' : 'err');
   });
 
@@ -897,7 +899,7 @@ export function routes(r: Router): void {
             // attacker-controlled — render it as escaped text, never raw HTML
             // (§SEC-2). raw() stays only for system-generated outbound templates.
             ? html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff;white-space:pre-wrap">${m.body}</div>`
-            : html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff">${raw(m.body)}</div>`
+            : html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff">${safeHtml(m.body)}</div>`
           : html`<div style="max-width:340px;background:var(--info-soft);border-radius:14px;padding:10px 14px;font-size:14px">${m.body}</div>`)}
         ${m.direction === 'out' && m.person_id ? card('Simulate inbound reply', html`
           <form method="post" action="/dev/messages/${m.id}/reply">
@@ -997,6 +999,8 @@ export function routes(r: Router): void {
 
   r.post('/admin/api/webhooks', requirePerm('admin:api'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const bad = webhookUrlShape(String(rq.body.url || ''));
+    if (bad) return redirect('/admin/api', bad, 'err');
     const events = String(rq.body.events || '*').split(',').map((s) => s.trim()).filter(Boolean);
     const secret = 'whsec_' + token(16);
     insert('webhook_endpoints', {
@@ -1067,15 +1071,16 @@ export function routes(r: Router): void {
     const orgId = id('org');
     insert('orgs', { id: orgId, name, slug, business_date: (rq.ctx as Ctx).businessDate || nowIso().slice(0, 10), created_at: nowIso() });
     const uid = id('usr');
+    const firstPw = tempPassword(); // never the public demo password: this is someone's real organization
     insert('users', {
       id: uid, org_id: orgId, email: String(rq.body.admin_email).toLowerCase(), name: String(rq.body.admin_name),
-      kind: 'staff', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso(),
+      kind: 'staff', password_hash: hashPassword(firstPw), active: 1, created_at: nowIso(),
     });
     insert('role_assignments', { id: id('ra'), org_id: orgId, user_id: uid, role: 'ORG_ADMIN', scope_type: 'org', property_ids: '[]', created_at: nowIso() });
     // standard chart of accounts is created by the accounting module hook
     emit(sysCtx(orgId), 'org.created', 'org', orgId, { name });
     audit(rq.ctx as Ctx, 'org', orgId, 'create', null, { name, slug });
-    return redirect('/admin/orgs', `${name} created — admin ${rq.body.admin_email} / demo1234.`);
+    return redirect('/admin/orgs', `${name} created — admin ${rq.body.admin_email}. One-time password (shown only now): ${firstPw}`);
   });
 
   // ---------- file downloads (authorized per record) ----------
@@ -1093,10 +1098,22 @@ export function routes(r: Router): void {
 
 // helpers
 
+/** Roles an organization may hand to its own staff: everything except the
+ * platform operator's role and the roles that belong to non-staff accounts. */
+const ASSIGNABLE_ROLES: Role[] = ROLES.filter((x) => !['PLATFORM_ADMIN', 'RESIDENT', 'APPLICANT', 'GUARANTOR', 'VENDOR'].includes(x));
+
 function saveGrant(ctx: Ctx, userId: string, rq: Rq): void {
-  const role = String(rq.body.role || 'LEASING_AGENT') as Role;
+  // The form's select only offers staff roles, but a select is a suggestion:
+  // the role arrived straight from the request, so an org admin could post
+  // role=PLATFORM_ADMIN for themselves and open every customer's organization.
+  const asked = String(rq.body.role || 'LEASING_AGENT') as Role;
+  if (!ASSIGNABLE_ROLES.includes(asked)) throw new VError([{ path: 'role', message: 'that role cannot be assigned here' }]);
+  const role = asked;
   const scope = String(rq.body.scope_type || 'org');
-  const pids = Array.isArray(rq.body.property_ids) ? rq.body.property_ids : rq.body.property_ids ? [rq.body.property_ids] : [];
+  // and a property scope may only name this organization's own properties
+  const own = new Set(q<{ id: string }>('SELECT id FROM properties WHERE org_id=?', ctx.orgId).map((p) => p.id));
+  const pids = (Array.isArray(rq.body.property_ids) ? rq.body.property_ids : rq.body.property_ids ? [rq.body.property_ids] : [])
+    .map(String).filter((pid: string) => own.has(pid));
   insert('role_assignments', {
     id: id('ra'), org_id: ctx.orgId, user_id: userId, role,
     scope_type: scope === 'properties' && pids.length ? 'properties' : 'org',
