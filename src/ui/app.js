@@ -1004,3 +1004,28 @@
     opened = [];
   });
 })();
+
+// [data-copy="#selector"] — copy a field's text to the clipboard (One Inbox's
+// suggested reply). No inline handlers under the nonce CSP; the button says
+// "Copied" for a moment so the click is not silent.
+(function () {
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('[data-copy]') : null;
+    if (!b) return;
+    e.preventDefault();
+    var el = document.querySelector(b.getAttribute('data-copy'));
+    if (!el) return;
+    var text = 'value' in el ? el.value : el.textContent;
+    var done = function () {
+      var was = b.textContent;
+      b.textContent = 'Copied';
+      setTimeout(function () { b.textContent = was; }, 1400);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { el.select && el.select(); });
+    } else if (el.select) {
+      el.select();
+      try { document.execCommand('copy'); done(); } catch (err) { /* selection is left for a manual copy */ }
+    }
+  });
+})();
