@@ -2254,6 +2254,74 @@ maintenance, the no-subsidy-column path, and the HTTP routes (form, sample, samp
 Gates: `tsc --noEmit` clean · unit suite green · e2e smoke + modes · screenshots desk (dark) and
 phone (light), plus a printed PDF. DECISIONS #116–#117 appended against the current tail.
 
+## 2026-11-16 — One Inbox (a forwarded shared mailbox, alongside AppFolio)
+
+Second add-on for the Scope design-partner track (their words: property managers break first,
+on email volume and non-standard channels). `/one-inbox` (Residents → One Inbox in Standard;
+Messages → One Inbox in Advanced):
+
+- **Setup**: upload a tenant directory (CSV/Excel; title rows, `-> Property` section rows,
+  "Last, First", several emails/phones per cell); a per-org forwarding address
+  `inbox-<code>@<inbound domain>`; paste-an-email lane for when forwarding is not switched on;
+  load/clear a fictional sample; delete all data (typed DELETE).
+- **Matching** (#119): address → phone in body → property + unit → unique display name;
+  otherwise "Pick who" (candidates offered) or "Unsorted". Manual forwards ("Fwd:") are unwrapped
+  to the original sender. Filing by hand can remember the address, sweeps up other waiting mail
+  from it, and re-labels the email by the sender's kind.
+- **Sorting**: Repair / Payment / Agency / Owner / Leasing / Other by best keyword fit (sender
+  kind first, mailbox name last); Urgent on danger words (no heat, water through a ceiling, gas,
+  abated payments, lockout…).
+- **Suggested reply** to copy or open in the operator's own mail client — only once a person is
+  identified. Nothing is sent from StayLeased.
+- **Record**: earlier emails for the same unit on every message; a banner when forwarded mail
+  has not arrived in 48h (the "rule silently stopped" failure).
+
+Inbound path: `/hooks/inbound-email` gained a fallback registry (`registerInboundFallback`), so
+One Inbox claims mail addressed to its family after lead-intake addresses are tried; no new
+unauthenticated route (#118). Forwarding goes live when `STAYLEASED_INBOUND_TOKEN` and an
+inbound-email provider pointed at that endpoint exist — neither is set in prod today, and the
+setup screen says so instead of showing an address that would silently drop mail.
+
+Schema: `oi_config`, `oi_contacts`, `oi_messages` (append-only CREATE TABLEs). Also: a CSP-safe
+`[data-copy]` clipboard helper in `app.js`.
+
+Files: `src/modules/m23_oneinbox/{engine,service,pages,sample}.ts`, `src/modules/m3_crm/ils_email.ts`,
+`src/server/modules.ts`, `src/ui/{ui.ts,app.js,theme.css}`, `src/db/schema.sql`.
+
+Tests: `tests/one_inbox.test.ts` (22) — what must NOT match (body mentions, shared names, unit
+prefixes, property-only, thread-only), forwards, sorting, replies, roster parsing, the sample's
+expected piles, org isolation on read and write, learning + re-upload, dedupe, purge, the
+upload form, and the webhook (403 on a bad token, auto-reply skipped, unknown address 404).
+
+Gates: `tsc --noEmit` clean · unit suite green · e2e smoke + modes + comms · screenshots desk and
+phone. DECISIONS #118–#119 appended against the current tail.
+
+## 2026-11-16 — Placement Scorecard (tenant outcomes by agent and source)
+
+Third add-on for the Scope design-partner track (their words: screening and tenant placement is
+what most people overlook, especially through outside agents). `/placement-scorecard`
+(Leasing → Placement scorecard; People → New renters in Standard). Stateless like the weekly
+action report: a tenant export in, a comparison out, nothing stored.
+
+- **Inputs**: tenant export with a Unit column and at least one of Leasing Agent / Lead Source /
+  Screening Decision (required); delinquency export (optional, reuses m22's reader).
+- **Per group**: placements, households behind and the rate, percentage points above or below
+  everyone else, household balance, average months behind against the tenant's own share of the
+  rent, and tenants who left within a year (only those with a full year of history).
+- **Rules** (#120): three group-by dimensions and no others; no subsidy column is ever read;
+  agency balances excluded from "behind"; groups under 5 are listed, not compared; labels group
+  case-insensitively and display as first typed.
+- `/placement-scorecard/sample` on the fictional portfolio (shares m22's sample delinquency);
+  sample CSVs downloadable.
+
+Depends on the export carrying an agent or source column. Whether AppFolio's tenant reports
+include one for a given operator is unconfirmed — ask before promising this to anyone.
+
+Files: `src/modules/m24_placement/{scorecard,sample,pages}.ts`, `src/server/modules.ts`, `src/ui/ui.ts`.
+
+Tests: `tests/placement_scorecard.test.ts` (9). Gates: `tsc --noEmit` clean · unit suite green ·
+e2e smoke + modes + navmenus · screenshots desk and phone. DECISIONS #120.
+
 ## 2026-11-18 — Production-readiness audit: security, first run, and the things a crawl finds
 
 A full audit ahead of the first outside logins: every page crawled as eight roles and as a
@@ -2265,21 +2333,21 @@ org's 219 pages produced no 5xx from the crawl. What was wrong was at the edges.
 - **Stored XSS from a public form into a staff session.** A lead's name on `/p/:slug/inquire` was
   interpolated into the AI reply draft and rendered with `raw()` on `/ai`. Drafts and queued
   message bodies now render through `safeHtml()` (escape everything, re-admit a short tag list and
-  http/mailto/relative links). Property JSON-LD escapes `<` (#118).
+  http/mailto/relative links). Property JSON-LD escapes `<` (#121).
 - **The public application booked fictitious cash into live ledgers.** No live fence on
   `/p/:slug/apply` → `collectFees`. Live orgs' public applications are closed with a plain screen,
-  and `collectFees` posts nothing in a live org (#119).
+  and `collectFees` posts nothing in a live org (#122).
 - **Live properties were public by default.** `published` now defaults to false for live orgs, and
-  inquire / tour / apply check it, not only the page. Public form posts are rate-limited (#119).
+  inquire / tour / apply check it, not only the page. Public form posts are rate-limited (#122).
 - **Role escalation**: `saveGrant` took the role from the request; an org admin could post
   `PLATFORM_ADMIN`. Server-side allowlist; property scope limited to the org's own properties.
 - **`?property=`** is checked once, before routing, against the reader's scope and organization
-  (`guardPropertyParam`) instead of in twenty-two handlers that mostly did not (#120).
+  (`guardPropertyParam`) instead of in twenty-two handlers that mostly did not (#123).
 - **Simulator jobs** refuse a live org inside `runJob`, not only in the scheduler ("Run now" had
   invented leads and a bank transaction in a live org).
 - **Passwords**: `/me` has a password change (shared demo logins excepted); admin resets revoke
   sessions; new orgs created by the platform get a one-time password, not `demo1234`; the seeded
-  platform account takes `STAYLEASED_PLATFORM_PASSWORD` and is rotated from it at boot (#121).
+  platform account takes `STAYLEASED_PLATFORM_PASSWORD` and is rotated from it at boot (#124).
 - Cookies are `Secure` on any real deployment (the service runs `MODE=demo`, so they were not);
   HSTS behind https; login is also limited per account; signup has a global limit; the limiter
   map is swept. Webhook URLs must be https and public, redirects are not followed. Zip inflation
@@ -2291,7 +2359,7 @@ org's 219 pages produced no 5xx from the crawl. What was wrong was at the edges.
   `render.yaml` points the health check at it. SIGTERM/SIGINT drain and close the database.
 - `job_runs` logged every poller pass — ~30,000 rows per org per day. A run is logged when its
   result changes, on failure, or when started by hand; history older than 60 days is pruned, and
-  expired sessions with it (#122).
+  expired sessions with it (#125).
 - Validation, closed-period and permission errors answer 400/403 or a flash on the form they came
   from, not "500 Something went wrong".
 - Report PDFs: `→ ✓ −` in static notes made the balance sheet, income statement and cash flow
@@ -2309,7 +2377,7 @@ org's 219 pages produced no 5xx from the crawl. What was wrong was at the edges.
 - **Labels**: sixty hand-written `<label>` + control pairs (sign-in and sign-up among them) were
   not associated. `associateLabels()` pairs them where every HTML response already passes; bare
   inputs take their placeholder as a name; unnamed sort buttons on blank columns are gone.
-  Pages with an unlabeled input: 369 of 420 → 4 (#123).
+  Pages with an unlabeled input: 369 of 420 → 4 (#126).
 - Phone: the dashboard's AI rows truncated to "Re…"; the action has its own line. Property-site
   nav, marketing grids and one unbreakable slash-word no longer push pages sideways. The live
   activity feed ellipsizes instead of being cut mid-word.
@@ -2332,7 +2400,7 @@ apply `propFilter`. Staff-started applications in a live org still reach simulat
 Tests: `tests/hardening.test.ts` (17) — one per finding. Gates: `tsc --noEmit` clean · unit
 601/601 · full seeded e2e (see the PR for the count) · crawl re-run on a fresh signup · one
 inspection round and one confirmation round, desktop and phone, light and dark. DECISIONS
-#118–#123 appended against the current tail.
+#121–#126 appended against the current tail.
 
 ## 2026-11-18 — Audit, second pass: what an independent review found in the fixes
 
@@ -2342,7 +2410,7 @@ regressions, each claim verified a second time. Fifteen held up; all are fixed h
 - **Ledger scope** — the `?property=` guard closed the named-id case only. With no property
   named, the ledger readers dropped the filter, so a manager scoped to two buildings of five still
   got all five. `ledgerScope()` now narrows the trial balance, statements, T-12, cash flow, the
-  journal list and the two accounting report definitions to the reader's grant (#124). This closes
+  journal list and the two accounting report definitions to the reader's grant (#127). This closes
   the "consolidated views" item the first pass logged as open.
 - **`safeHtml` balances its output** — stray `</div>`s closed the draft box and its cards; an
   unclosed `<a>` made the rest of the page a link. Unpaired closers are dropped, open tags closed.
@@ -2362,4 +2430,4 @@ regressions, each claim verified a second time. Fifteen held up; all are fixed h
 
 Tests: `tests/hardening.test.ts` now 21. Gates: `tsc --noEmit` clean · unit 605/605 · scoped
 seeded e2e (smoke, accounting, reports, finfeatures, homescreen, applications, modes, marketing
-batch). DECISIONS #124 appended against the current tail.
+batch). DECISIONS #127 appended against the current tail.

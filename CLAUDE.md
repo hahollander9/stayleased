@@ -99,10 +99,10 @@ own summary page.
   env-gated + marketing-only + CSP-gated on the same env var; og-image regenerates via
   `scripts/og-image.mjs`, never hand-edited.
 - **Security**: stored rich text (AI drafts, message bodies) renders through `safeHtml()`,
-  never `raw()` (#118); every `/p/:slug/*` route resolves through `publicProperty()` and live
+  never `raw()` (#121); every `/p/:slug/*` route resolves through `publicProperty()` and live
   properties are unpublished by default; simulated rails are fenced where they WRITE
-  (`collectFees`, `runJob`), not only where they are offered (#119); `?property=` is checked
-  once in `guardPropertyParam` (#120); assignable roles are an allowlist.
+  (`collectFees`, `runJob`), not only where they are offered (#122); `?property=` is checked
+  once in `guardPropertyParam` (#123); assignable roles are an allowlist.
   CSP is nonce-based (send() injects per-response); public Ask has its own
   token cap (`STAYLEASED_AI_PUBLIC_DAILY_TOKEN_CAP`); `DEBUG_ERRORS` stays unset in prod;
   uploads are magic-byte sniffed; org isolation on every query (`canAccessProperty`).
@@ -137,7 +137,7 @@ commit and note it in BUILDLOG. Sweep first:
 GitHub `hahollander9/stayleased` @ main → Render auto-deploy → https://stayleased.com
 (bare domain is canonical; `STAYLEASED_SITE_ORIGIN` overrides). Prod env:
 `STAYLEASED_DB=/data/stayleased.db`, `STAYLEASED_SIGNUP_CODE`, `ANTHROPIC_API_KEY`
-(+`STAYLEASED_AI_MODEL`), `STAYLEASED_PLATFORM_PASSWORD` (rotates the platform account at boot — #121),
+(+`STAYLEASED_AI_MODEL`), `STAYLEASED_PLATFORM_PASSWORD` (rotates the platform account at boot — #124),
 optional `STAYLEASED_GA_ID` (GA4 — everything about it is OFF
 until this is set), optional `STAYLEASED_STRIPE_SECRET_KEY` + `STAYLEASED_STRIPE_WEBHOOK_SECRET`
 (billing is inert without them; `STAYLEASED_BILLING_UNIT_PRICE_CENTS` defaults to 600 = $6/unit,
@@ -178,7 +178,7 @@ never qualify (DECISIONS #57).
   `/for/alongside-appfolio`, `tests/hardening.test.ts`. Open from it: per-record file download
   auth, API key in query string, Stripe event ordering, `clientIp` hop, staff-started
   applications reaching simulated screening in live orgs. Ledger reads go through
-  `ledgerScope()` — "no property named" means the reader's own buildings (#124).
+  `ledgerScope()` — "no property named" means the reader's own buildings (#127).
 - Next engineering, in order: (1) live-org recovery after deploy — delete the corrupted
   Station U&O property (typed-confirm), re-import rent roll + directory, tie the strip to
   Yardi's summary (110 units · $149,365 rent · $1,260 extras · $99,367 deposits ·

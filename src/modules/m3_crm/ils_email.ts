@@ -259,6 +259,17 @@ export function normalizeWebhook(body: Record<string, any>): InboundEmail {
   };
 }
 
+/** Other modules that own an inbound address family (One Inbox's
+ * inbox-<code>@) register here. The webhook asks them, in order, when no
+ * recipient is a property's lead-intake address; the first to claim the mail
+ * answers. Same token gate, same loop/auto-reply guards, one endpoint for the
+ * provider to post to. */
+export type InboundFallback = (mail: InboundEmail) => Record<string, unknown> | null;
+const inboundFallbacks: InboundFallback[] = [];
+export function registerInboundFallback(fn: InboundFallback): void {
+  if (!inboundFallbacks.includes(fn)) inboundFallbacks.push(fn);
+}
+
 export function routes(r: Router): void {
   /** Inbound-email provider webhook (Postmark JSON or generic
    * {to,from,subject,text}). Public; gated by server token + per-property
@@ -276,7 +287,13 @@ export function routes(r: Router): void {
       prop = resolveIntakeAddress(addr);
       if (prop) { matched = addr; break; }
     }
-    if (!prop) return jsonRes({ ok: false, error: 'no recipient matches a property intake address' }, 404);
+    if (!prop) {
+      for (const claim of inboundFallbacks) {
+        const res = claim(mail);
+        if (res) return jsonRes(res);
+      }
+      return jsonRes({ ok: false, error: 'no recipient matches a property intake address' }, 404);
+    }
     const parsed = parseLeadEmail(mail);
     const { leadId, deduped } = applyInboundLead(prop, parsed, { to: matched, subject: mail.subject });
     audit(sysCtx(prop.org_id), 'lead', leadId, 'ils_email_in', null, { source: parsed.source, to: matched, deduped });
