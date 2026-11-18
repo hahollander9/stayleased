@@ -29,6 +29,7 @@ import * as m14 from '../modules/m14_reports/pages.ts'; // also registers metric
 import * as hubs from '../modules/m14_reports/hubs.ts'; // module overview hubs (Overview leads every tab)
 import * as m17 from '../modules/m17_ai/pages.ts'; // also registers ai_call_analysis job + agent event hooks
 import * as m18 from '../modules/m18_verticals/pages.ts'; // also registers affordable_recerts job + PCS lease action
+import * as orgExport from '../modules/m1_admin/export.ts'; // the way out: every org record as CSV
 import * as m20 from '../modules/m20_billing/pages.ts'; // what the OPERATOR pays StayLeased (Stripe) + its webhook
 import * as m21 from '../modules/m21_home/pages.ts'; // simple mode: the five-answer home screen
 import * as m22 from '../modules/m22_weekly/pages.ts'; // weekly cash & collections action report, alongside AppFolio
@@ -47,6 +48,7 @@ import '../modules/m19_scoring/service.ts'; // registers score_delinquency job (
 /** Phase modules mount here as they are built (Phase 1+). Keeping the list in
  * one place makes the build order visible. */
 export function registerModules(r: Router): void {
+  orgExport.routes(r); // full data export (before m1's own /admin/* so nothing shadows it)
   m2.routes(r); // Phase 1: portfolio & units + dashboards
   people.routes(r); // Phase 2: residents & leases (ledger)
   m9.routes(r); // Phase 2: GL browser + invariants

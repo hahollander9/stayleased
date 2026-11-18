@@ -159,7 +159,7 @@ export function routes(r: Router): void {
               ['Price', html`${usd(account.unit_price_cents)} <span class="muted">per unit, per month</span>`],
               ['Minimum', account.minimum_cents ? usd(account.minimum_cents) : html`<span class="muted">None</span>`],
               ['Billing', 'Monthly, in advance'],
-              ['Your records', html`Yours. <a href="/reports">Export anything</a>, any time, plan or no plan.`],
+              ['Your records', html`Yours. <a href="/admin/export">Download everything</a> as spreadsheet files, any time, plan or no plan.`],
             ])}
             ${planActions(account, mode, m.units)}`)}
         </div>

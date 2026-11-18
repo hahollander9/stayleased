@@ -3,6 +3,7 @@ import { redirect, type Router, type Rq } from '../../lib/http.ts';
 import { requireStaff, can, type Ctx } from '../../lib/auth.ts';
 import { q1 } from '../../lib/db.ts';
 import { getSetting, setSetting } from '../../lib/settings.ts';
+import { on } from '../../lib/events.ts';
 import { shell, card } from '../../ui/ui.ts';
 
 /** Guided go-live checklist for new (live) orgs. Progress is DETECTED from
@@ -84,6 +85,18 @@ export function onboardingProgress(ctx: Ctx): { done: number; total: number; req
   const done = steps.filter((s) => s.done).length;
   const required = steps.filter((s) => !s.optional);
   return { done, total: steps.length, required_done: required.every((s) => s.done) };
+}
+
+// A real company's residents are not billed a fee nobody chose. The defaults
+// (a 15% month-to-month premium) are right for the demo, where they show the
+// feature; applied silently to an imported rent roll they put a charge on a
+// real ledger that the operator never set. A new live org starts at zero and
+// turns it on in Settings — the same reasoning as auto_enroll_migrated.
+on('org.created', (ctx) => {
+  if (orgKindOf(ctx.orgId) === 'live') setSetting(ctx, 'mtm_premium_pct', 0);
+});
+function orgKindOf(orgId: string): string {
+  return q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', orgId)?.kind || 'demo';
 }
 
 /** Slim dashboard banner while a live org is still onboarding. */
