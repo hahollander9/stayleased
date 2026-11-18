@@ -9,6 +9,35 @@ const MUTED = rgb(0.42, 0.46, 0.52);
 const LINE = rgb(0.88, 0.9, 0.92);
 const ACCENT = rgb(0.016, 0.471, 0.341); // StayLeased brand emerald #047857
 
+/** The built-in PDF fonts speak WinAnsi and throw on anything else — and the
+ * report notes say "→", "✓" and "−". One arrow in a static footnote made every
+ * balance sheet, income statement and cash-flow PDF a 500. Text is translated
+ * to what the font can draw before it is measured or drawn, so a character
+ * nobody anticipated costs a "?" on paper rather than the whole document. */
+const SUBS: Record<string, string> = {
+  '→': '->', '←': '<-', '↔': '<->', '⇒': '=>', '↑': '^', '↓': 'v', '−': '-', '‑': '-', '✓': 'yes', '✔': 'yes', '✗': 'no', '✕': 'x',
+  '≤': '<=', '≥': '>=', '≠': '!=', '≈': '~', '×': 'x', '✦': '*', '★': '*', '·': '·', '\u00a0': ' ', '\u202f': ' ', '\u2009': ' ', '\t': ' ',
+};
+function printable(font: PDFFont): void {
+  const encode = font.encodeText.bind(font);
+  const width = font.widthOfTextAtSize.bind(font);
+  const ok = new Map<string, string>();
+  const one = (ch: string): string => {
+    const hit = ok.get(ch);
+    if (hit !== undefined) return hit;
+    let out = SUBS[ch] ?? ch;
+    try { encode(out); } catch {
+      out = ch.normalize('NFKD').replace(/[\u0300-\u036f]/g, '');
+      try { encode(out); } catch { out = '?'; }
+    }
+    ok.set(ch, out);
+    return out;
+  };
+  const clean = (t: string): string => Array.from(String(t ?? '').replace(/[\r\n]+/g, ' ')).map(one).join('');
+  font.encodeText = (t: string) => encode(clean(t));
+  font.widthOfTextAtSize = (t: string, size: number) => width(clean(t), size);
+}
+
 export interface PdfTableCol {
   label: string;
   w: number; // fraction of width, sums ~1
@@ -35,6 +64,8 @@ export class Pdf {
     p.doc.setTitle(title);
     p.font = await p.doc.embedFont(StandardFonts.Helvetica);
     p.bold = await p.doc.embedFont(StandardFonts.HelveticaBold);
+    printable(p.font);
+    printable(p.bold);
     p.addPage();
     return p;
   }

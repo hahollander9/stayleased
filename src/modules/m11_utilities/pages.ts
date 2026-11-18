@@ -4,7 +4,7 @@ import { requirePerm, can, propFilter, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j } from '../../lib/db.ts';
 import { fmtDate, fmtMonth, monthKey, addMonths } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
-import { shell, card, tbl, dl, statusBadge, field, select, input, registerNav, kpis, tabs, emptyState } from '../../ui/ui.ts';
+import { shell, card, tbl, dl, statusBadge, field, select, input, registerNav, kpis, tabs, emptyState, noProperties } from '../../ui/ui.ts';
 import { lines as lineChart, bars } from '../../lib/charts.ts';
 import { unitFor } from '../../lib/sim/submeter.ts';
 import { SERVICES, ingestMonth, estimateRead, acceptRead, rubsPreview, saveRubsRun, postRubsRun, recoveryReport, unitUsage } from './service.ts';
@@ -24,6 +24,7 @@ export function routes(r: Router): void {
   r.get('/utilities', requirePerm('utilities:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const props = propsFor(ctx);
+    if (!props.length) return noProperties(rq, 'Utilities', '/utilities');
     const propId = rq.query.get('property') || props[0]?.id;
     const months: string[] = [];
     for (let i = 11; i >= 0; i--) months.push(monthKey(addMonths(ctx.businessDate, -i - 1)));
@@ -230,6 +231,7 @@ export function routes(r: Router): void {
   r.get('/utilities/recovery', requirePerm('utilities:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const props = propsFor(ctx);
+    if (!props.length) return noProperties(rq, 'Vacant-unit cost recovery', '/utilities');
     const propId = rq.query.get('property') || props[0]?.id;
     const rep = recoveryReport(ctx, propId, 6);
     return shell(rq, {

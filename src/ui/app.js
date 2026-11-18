@@ -1029,3 +1029,49 @@
     }
   });
 })();
+
+// Sub-nav: a module with more pages than the row holds scrolls inside the row.
+// Bring the current page into view on load (no animation — it is where you
+// already are), and fade whichever edge has more behind it.
+(function () {
+  var nav = document.querySelector('.subnav');
+  if (!nav) return;
+  var cur = nav.querySelector('a.active');
+  if (cur && nav.scrollWidth > nav.clientWidth) {
+    nav.scrollLeft = Math.max(0, cur.offsetLeft - (nav.clientWidth - cur.offsetWidth) / 2);
+  }
+  function edges() {
+    nav.classList.toggle('more-l', nav.scrollLeft > 4);
+    nav.classList.toggle('more-r', nav.scrollLeft + nav.clientWidth < nav.scrollWidth - 4);
+  }
+  edges();
+  nav.addEventListener('scroll', edges, { passive: true });
+  window.addEventListener('resize', edges);
+})();
+
+// One click, one post. A second click on "Record payment" before the page
+// came back posted the payment twice — two receipts, two journal entries. A
+// form that has been sent is not sent again, and its buttons say so by going
+// quiet. Forms handled in-page (they cancel the submit themselves) are left
+// alone, and a page restored from the back/forward cache is re-armed.
+(function () {
+  document.addEventListener('submit', function (e) {
+    var f = e.target;
+    if (!f || f.tagName !== 'FORM' || e.defaultPrevented) return;
+    if ((f.getAttribute('method') || 'get').toLowerCase() !== 'post') return;
+    if (f.dataset.sent === '1') { e.preventDefault(); return; }
+    f.dataset.sent = '1';
+    setTimeout(function () {
+      f.querySelectorAll('button:not([type=button]), input[type=submit]').forEach(function (b) {
+        b.setAttribute('aria-disabled', 'true');
+        b.classList.add('is-busy');
+      });
+    }, 0);
+  });
+  window.addEventListener('pageshow', function () {
+    document.querySelectorAll('form[data-sent]').forEach(function (f) {
+      delete f.dataset.sent;
+      f.querySelectorAll('.is-busy').forEach(function (b) { b.removeAttribute('aria-disabled'); b.classList.remove('is-busy'); });
+    });
+  });
+})();

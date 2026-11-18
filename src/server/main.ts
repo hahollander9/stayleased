@@ -1,9 +1,10 @@
+import * as nodeFs from 'node:fs';
 import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, dirname, isAbsolute } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { Router, createApp, fileRes, notFound, redirect, type Rq } from '../lib/http.ts';
-import { attachSession, requireStaff, type Ctx } from '../lib/auth.ts';
-import { db, ROOT, q1, closeDb } from '../lib/db.ts';
+import { Router, createApp, fileRes, jsonRes, notFound, redirect, type Rq } from '../lib/http.ts';
+import { attachSession, guardPropertyParam, requireStaff, verifyPassword, hashPassword, type Ctx } from '../lib/auth.ts';
+import { db, ROOT, q, q1, run, closeDb } from '../lib/db.ts';
 import { startPoller, syncLiveOrgClocks } from '../lib/jobs.ts';
 import { html } from '../lib/html.ts';
 import { shell, card, emptyState } from '../ui/ui.ts';
@@ -43,6 +44,27 @@ export function buildRouter(): Router {
   }
   r.get('/favicon.ico', () => fileRes(readFileSync(join(ROOT, 'src/ui/favicon.svg')), 'image/svg+xml', { inline: true, cache: true }));
 
+  // Liveness for the host's health check and an uptime monitor. Public and
+  // deliberately dull: it says whether the database answers and how full the
+  // data disk is, and nothing about who is in it. A database that cannot answer
+  // is a 503 (the host should restart us); a nearly full disk is a 200 marked
+  // "degraded", because restarting does not free space and a restart loop on a
+  // full disk is worse than the full disk — the monitor alerts on the word.
+  r.get('/healthz', () => {
+    let dbOk = false;
+    try { dbOk = q1<{ ok: number }>('SELECT 1 AS ok')?.ok === 1; } catch { dbOk = false; }
+    const disk = diskFree();
+    const low = disk !== null && (disk.freePct < 10 || disk.freeMb < 100);
+    const out = jsonRes({
+      ok: dbOk,
+      status: !dbOk ? 'down' : low ? 'degraded' : 'ok',
+      db: dbOk ? 'ok' : 'unreachable',
+      disk_free_pct: disk ? disk.freePct : null,
+    }, dbOk ? 200 : 503);
+    out.headers['cache-control'] = 'no-store';
+    return out;
+  });
+
   auth.routes(r);
   admin.routes(r);
   registerModules(r); // phase modules mount here as they are built
@@ -62,12 +84,38 @@ export function buildRouter(): Router {
   return r;
 }
 
+/** Free space on the volume that holds the database, or null where the
+ * platform cannot say. */
+export function diskFree(): { freePct: number; freeMb: number } | null {
+  try {
+    const file = env('DB') || 'data/stayleased.db';
+    // statfsSync is in Node 18.15+, ahead of the type package this repo pins
+    const statfs = (nodeFs as unknown as { statfsSync?: (p: string) => { blocks: number | bigint; bavail: number | bigint; bsize: number | bigint } }).statfsSync;
+    if (!statfs) return null;
+    const st = statfs(dirname(isAbsolute(file) ? file : join(ROOT, file)));
+    if (!st.blocks) return null;
+    return {
+      freePct: Math.round((Number(st.bavail) / Number(st.blocks)) * 1000) / 10,
+      freeMb: Math.round((Number(st.bavail) * Number(st.bsize)) / 1048576),
+    };
+  } catch { return null; }
+}
+
 export function startServer(port: number): ReturnType<typeof createApp> {
   db(); // open + apply schema
   const router = buildRouter();
   const app = createApp({
     router,
-    before: [attachSession],
+    before: [
+      attachSession,
+      guardPropertyParam,
+      // /pricing is the staff pricing desk, but it is also the first URL a
+      // visitor types to find the price — and it sent them to a sign-in form.
+      // Only the bare typed URL: a deep link, an in-app click or an expired
+      // session still goes to sign-in and comes back where it was headed.
+      (rq) => (!rq.user && rq.method === 'GET' && rq.path === '/pricing' && ![...rq.query.keys()].length && !rq.cookies['sl_s'] && !rq.raw.headers.referer
+        ? redirect('/#pricing') : undefined),
+    ],
     onError: (e, rq) => log.error('request_failed', e, { method: rq.method, path: rq.path, ip: rq.ip }),
   });
   app.listen(port, () => {
@@ -96,6 +144,31 @@ function seedIfEmpty(): void {
   log.info('Seed complete.');
 }
 
+/** The platform account that shipped in the first seed has the password from
+ * the public demo-logins file, and it can open every organization. On a real
+ * deployment, set STAYLEASED_PLATFORM_PASSWORD and the next boot rotates it;
+ * until then every boot says so in the log, loudly. Local runs are left alone. */
+function securePlatformAccount(): void {
+  try {
+    const real = process.env.RENDER === 'true' || env('MODE') === 'production';
+    if (!real) return;
+    const rows = q<{ id: string; email: string; password_hash: string }>(`SELECT id, email, password_hash FROM users WHERE kind='platform' AND active=1`);
+    const set = env('PLATFORM_PASSWORD');
+    for (const u of rows) {
+      if (!verifyPassword('demo1234', u.password_hash)) continue;
+      if (set && set !== 'demo1234') {
+        run('UPDATE users SET password_hash=? WHERE id=?', hashPassword(set), u.id);
+        run('DELETE FROM sessions WHERE user_id=?', u.id);
+        log.info('platform account password rotated from STAYLEASED_PLATFORM_PASSWORD', { email: u.email });
+      } else {
+        log.error('platform_account_default_password', new Error(`${u.email} still has the public demo password — set STAYLEASED_PLATFORM_PASSWORD or change it at /me`));
+      }
+    }
+  } catch (e) { log.error('platform_account_check', e); }
+}
+
+let poller: { stop: () => void } | undefined;
+
 const isMain = process.argv[1] && import.meta.url.endsWith(process.argv[1].split('/').pop() || '@@');
 if (isMain) {
   // Crash safety (CODE-1): a stray rejection or throw must be logged, not
@@ -106,12 +179,28 @@ if (isMain) {
   process.on('uncaughtException', (err) => log.error('uncaughtException', err));
   const port = parseInt(process.env.PORT || '3000', 10);
   if (env('MODE') !== 'test') seedIfEmpty();
-  startServer(port);
+  const server = startServer(port);
+  if (env('MODE') !== 'test') securePlatformAccount();
   if (env('MODE') !== 'test') {
-    startPoller(60000);
+    poller = startPoller(60000);
     // catch live orgs up to today shortly after boot (poller repeats this)
     setTimeout(() => {
       try { syncLiveOrgClocks(); } catch (e) { log.error('clock_sync', e); }
     }, 2000);
   }
+  // A deploy sends SIGTERM. Without a handler the process died mid-request and
+  // could stop a job halfway; now it stops taking work, lets what is in flight
+  // finish, closes the database cleanly, and only then exits.
+  let stopping = false;
+  const shutdown = (signal: string): void => {
+    if (stopping) return;
+    stopping = true;
+    log.info(`${signal} received — shutting down`);
+    poller?.stop();
+    const done = (): void => { try { closeDb(); } catch { /* already closed */ } process.exit(0); };
+    server.close(done);
+    (setTimeout(done, 8000) as unknown as { unref: () => void }).unref(); // keep-alive sockets must not hold a deploy hostage
+  };
+  process.on('SIGTERM', () => shutdown('SIGTERM'));
+  process.on('SIGINT', () => shutdown('SIGINT'));
 }

@@ -165,6 +165,7 @@ export function routes(r: Router): void {
 
   r.post('/myday/:id/photo', requirePerm('workorders:work'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    if (!q1('SELECT id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId)) return notFound();
     const up = rq.uploads.find((u) => u.field === 'photo' && u.data.length > 0);
     if (!up) return redirect(`/myday/${rq.params.id}`, 'No photo attached.', 'err');
     putFile(ctx, up.data, { name: up.filename || 'photo.jpg', mime: up.mime, entity: 'work_order', entityId: rq.params.id!, visibility: 'resident' });
@@ -174,6 +175,7 @@ export function routes(r: Router): void {
 
   r.post('/myday/:id/note', requirePerm('workorders:work'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    if (!q1('SELECT id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId)) return notFound();
     woEvent(ctx, rq.params.id!, 'note', String(rq.body.body || ''));
     return redirect(`/myday/${rq.params.id}`, 'Note added.');
   });

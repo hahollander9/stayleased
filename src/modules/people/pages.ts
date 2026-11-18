@@ -361,6 +361,7 @@ export function routes(r: Router): void {
     if (!res.user_id) return redirect(`/residents/${res.id}`, 'No portal account yet — create one first.', 'err');
     const pw = ctx.orgKind === 'live' ? tempPassword() : 'demo1234';
     run('UPDATE users SET password_hash=? WHERE id=?', hashPassword(pw), res.user_id);
+    run('DELETE FROM sessions WHERE user_id=?', res.user_id);
     audit(ctx, 'user', String(res.user_id), 'password_reset', null, { via: 'resident_page' });
     return redirect(
       `/residents/${res.id}`,

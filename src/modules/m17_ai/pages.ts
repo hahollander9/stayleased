@@ -1,4 +1,4 @@
-import { html, raw, when, join } from '../../lib/html.ts';
+import { html, raw, when, join, safeHtml } from '../../lib/html.ts';
 import { redirect, notFound, localPath, type Router, type Rq, jsonRes } from '../../lib/http.ts';
 import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j, js } from '../../lib/db.ts';
@@ -141,7 +141,7 @@ export function routes(r: Router): void {
         <div class="split" style="display:flex;gap:20px;flex-wrap:wrap">
           <div style="flex:1;min-width:280px">
             ${when(output.draft, () => html`<div class="small muted" style="margin-bottom:4px">Draft (${a.autonomy === 'draft' ? 'draft-only dial: approve = reviewed, human sends' : 'sends on approval'}):</div>
-              <div style="border:1px solid var(--line-2);border-radius:10px;padding:10px;background:var(--surface-2);max-height:220px;overflow:auto">${raw(String(output.draft))}</div>`)}
+              <div style="border:1px solid var(--line-2);border-radius:10px;padding:10px;background:var(--surface-2);max-height:220px;overflow:auto">${safeHtml(output.draft)}</div>`)}
             ${when(output.tour, () => html`<p class="small">📅 Will also book: <b>${(output.tour as any).date} at ${(output.tour as any).startTime}</b></p>`)}
             ${when(output.installments, () => html`<p class="small">Plan: ${(output.installments as any[]).map((i) => `${fmtDate(i.dueDate)} — $${(i.amountCents / 100).toFixed(2)}`).join(' · ')}</p>`)}
             ${when(a.rationale, () => html`<p class="small" style="border-left:2px solid var(--accent);padding-left:8px;margin:8px 0"><b>Why:</b> ${a.rationale}</p>`)}

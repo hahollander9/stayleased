@@ -202,6 +202,12 @@ export function routes(r: Router): void {
     const account = billingAccount(ctx);
     const units = meter(ctx).units;
     if (!units) return redirect('/admin/billing', 'There are no units to bill for yet — add a property first.', 'err');
+    // Hiding the button is not a guard. An account that already has a
+    // subscription and posts here again would be given a second one, and be
+    // billed twice while this page tracked only the newer.
+    if (account.stripe_subscription_id && (account.status === 'active' || account.status === 'past_due')) {
+      return redirect('/admin/billing', 'This account already has a subscription — use “Manage payment” to change it.', 'err');
+    }
     if (stripeMode() === 'off') return redirect('/admin/billing', 'Payments are not configured on this deployment.', 'err');
     try {
       const url = await checkoutUrl(ctx, account, units, originOf(rq));

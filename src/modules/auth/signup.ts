@@ -75,6 +75,10 @@ export function signupRoutes(r: Router): void {
     if (!rateLimit(`signup:${rq.ip}`, 10, 60000)) {
       return redirect('/signup', 'Too many attempts — wait a minute and try again.', 'err');
     }
+    // invite-code guessing, whatever address it claims to come from
+    if (!rateLimit('signup:all', 60, 3600000)) {
+      return redirect('/signup', 'Sign-up is busy right now — please try again in a little while.', 'err');
+    }
     if (!signupEnabled()) return signupPage(rq, ['Signup is currently closed.']);
     const b = rq.body;
     const errs: string[] = [];

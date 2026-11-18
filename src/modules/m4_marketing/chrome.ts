@@ -65,6 +65,7 @@ export const MK_NAV: MkNavGroup[] = [
       ['Small management companies', '/for/small-management-companies', 'Hundreds of doors on a two-person office'],
       ['Growing portfolios', '/for/growing-portfolios', 'Institutional-grade books without the headcount'],
       ['Switching from Buildium / AppFolio', '/for/switching-from-buildium-appfolio', 'Your rent roll imports in one afternoon'],
+      ['Alongside AppFolio', '/for/alongside-appfolio', 'The weekly cash report, from AppFolio’s own exports'],
       ['Switching from spreadsheets', '/for/switching-from-spreadsheets', 'Keep the spreadsheet — upload it, we build the rest'],
     ],
   },
@@ -209,7 +210,7 @@ export function mkFooter(): Raw {
     </div>
   </div>
   <div class="mk-wrap mk-foot-base">
-    <span>${logo(18, '#5C7266')} © 2026 StayLeased · Property management, run by AI</span>
+    <span>${logo(18, '#5C7266')} © 2026 StayLeased · Property management that does the work</span>
     <span>⌂ Equal Housing Opportunity</span>
   </div>
 </footer>`;

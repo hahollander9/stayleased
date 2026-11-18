@@ -156,7 +156,8 @@ export function createPaymentRun(
   ctx: Ctx,
   opts: { runDate: string; method: 'check' | 'ach'; invoiceIds: string[]; payFromPropertyId?: string | null },
 ): string {
-  const invoices = opts.invoiceIds.map((iid) => {
+  // a repeated id would pay the same invoice twice in one run
+  const invoices = [...new Set(opts.invoiceIds)].map((iid) => {
     const inv = q1<any>(`SELECT * FROM vendor_invoices WHERE id=? AND org_id=? AND status='approved'`, iid, ctx.orgId);
     if (!inv) throw new Error(`invoice ${iid} is not approved/payable`);
     return inv;

@@ -79,7 +79,9 @@ export async function deliverWebhooks(ctx: Ctx): Promise<number> {
   for (const d of pending) {
     const sig = createHmac('sha256', String(d.secret)).update(String(d.payload)).digest('hex');
     try {
+      if (!(await webhookUrlAllowed(String(d.url)))) throw new Error('endpoint address not allowed');
       const resp = await fetch(String(d.url), {
+        redirect: 'manual',
         method: 'POST',
         headers: {
           'content-type': 'application/json',
@@ -116,4 +118,42 @@ function retry(d: any, code: number): void {
       d.id,
     );
   }
+}
+
+/** Where this server is willing to send a webhook. The URL is typed by a
+ * customer and fetched from inside our network every minute, so on a real
+ * deployment it must be https and must not resolve to this machine, the
+ * private network, or the cloud metadata address — and redirects are not
+ * followed, since a public URL can simply answer "go to 169.254.169.254".
+ * Local and test runs may post to http://localhost, which is how they are
+ * tested. */
+export function webhookUrlShape(url: string): string | null {
+  let u: URL;
+  try { u = new URL(url); } catch { return 'Enter a full URL, starting with https://'; }
+  const real = process.env.RENDER === 'true' || process.env.STAYLEASED_MODE === 'production';
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && !real)) return 'A webhook URL must start with https://';
+  if (u.username || u.password) return 'A webhook URL cannot carry a username or password.';
+  if (real && (isPrivateHost(u.hostname) || /(^|\.)(localhost|local|internal)$/i.test(u.hostname))) return 'That address is not reachable from the public internet.';
+  return null;
+}
+function isPrivateHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, '').toLowerCase();
+  const m = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(h);
+  if (m) {
+    const a = Number(m[1]), b = Number(m[2]);
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+  }
+  if (h.includes(':')) return h === '::1' || h === '::' || h.startsWith('fc') || h.startsWith('fd') || h.startsWith('fe80') || h.startsWith('::ffff:');
+  return false;
+}
+export async function webhookUrlAllowed(url: string): Promise<boolean> {
+  if (webhookUrlShape(url)) return false;
+  const real = process.env.RENDER === 'true' || process.env.STAYLEASED_MODE === 'production';
+  if (!real) return true;
+  try {
+    const dnsName = 'node:dns';
+    const dns = (await import(dnsName)) as { promises: { lookup: (h: string, o: { all: true }) => Promise<{ address: string }[]> } };
+    const addrs = await dns.promises.lookup(new URL(url).hostname, { all: true });
+    return addrs.length > 0 && addrs.every((a) => !isPrivateHost(a.address));
+  } catch { return false; }
 }

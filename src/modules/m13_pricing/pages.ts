@@ -7,8 +7,7 @@ import { usd, parseUsd } from '../../lib/money.ts';
 import { getSetting } from '../../lib/settings.ts';
 import {
   shell, card, tbl, dl, statusBadge, field, select, input, textarea, moneyInput,
-  registerNav, kpis, tabs, emptyState,
-} from '../../ui/ui.ts';
+  registerNav, kpis, tabs, emptyState, noProperties } from '../../ui/ui.ts';
 import { lines as lineChart, bars } from '../../lib/charts.ts';
 import {
   ensureCompSets, generateCompObservations, compAverage, runPricingEngine,
@@ -166,6 +165,7 @@ export function routes(r: Router): void {
   r.get('/pricing/terms', requirePerm('pricing:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const props = propsFor(ctx);
+    if (!props.length) return noProperties(rq, 'Pricing', '/pricing');
     const propId = rq.query.get('property') || props[0]?.id;
     const units = q<any>(
       `SELECT u.id, u.unit_number FROM units u WHERE u.property_id=? AND (u.status LIKE 'vacant%' OR EXISTS (
@@ -221,6 +221,7 @@ export function routes(r: Router): void {
   r.get('/pricing/renewals', requirePerm('pricing:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const props = propsFor(ctx);
+    if (!props.length) return noProperties(rq, 'Pricing', '/pricing');
     const propId = rq.query.get('property') || props[0]?.id;
     const windowDays = 120;
     const expiring = q<any>(
@@ -296,6 +297,7 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     ensureCompSets(ctx.orgId);
     const props = propsFor(ctx);
+    if (!props.length) return noProperties(rq, 'Pricing', '/pricing');
     const propId = rq.query.get('property') || props[0]?.id;
     const comps = q<any>('SELECT * FROM comp_sets WHERE property_id=? AND active=1 ORDER BY distance_miles', propId);
     const bedsList = q<any>('SELECT DISTINCT beds FROM floorplans WHERE property_id=? ORDER BY beds', propId).map((x) => x.beds as number);
@@ -355,6 +357,7 @@ export function routes(r: Router): void {
   r.get('/pricing/analytics', requirePerm('pricing:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const props = propsFor(ctx);
+    if (!props.length) return noProperties(rq, 'Pricing', '/pricing');
     const propId = rq.query.get('property') || props[0]?.id;
     const a = revenueAnalytics(ctx, propId!);
     const tradeTbl = (rows: { unit: string; prior: number; next: number }[], empty: string): ReturnType<typeof tbl> =>

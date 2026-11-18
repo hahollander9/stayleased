@@ -378,6 +378,7 @@ export function routes(r: Router): void {
 
   r.post('/workorders/:id/note', requirePerm('workorders:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    if (!q1('SELECT id FROM work_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId)) return notFound();
     insert('wo_events', {
       id: id('woe'), org_id: ctx.orgId, work_order_id: rq.params.id!, kind: 'note',
       body: String(rq.body.body || ''), actor: ctx.userName,

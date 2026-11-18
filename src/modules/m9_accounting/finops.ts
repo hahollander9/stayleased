@@ -115,7 +115,7 @@ export function routes(r: Router): void {
           })), { empty: '' },
         ), { flush: true }))}
         ${when(!total, () => emptyState('All clear', 'Purchase orders, vendor invoices, large journal entries, and deposit deadlines will queue here when they need a decision.'))}
-        <p class="small muted" style="margin-top:10px">Thresholds live in Settings: POs route here over <code>po_approval_threshold_cents</code>, invoices over <code>invoice_approval_threshold_cents</code>, manual JEs over <code>je_approval_threshold_cents</code>. Deposit deadlines follow each property's state law.</p>`,
+        <p class="small muted" style="margin-top:10px">A purchase order, vendor invoice or manual journal entry waits here when it is over the amount set under <a href="/admin/settings?section=approval-thresholds">Settings → Approval thresholds</a>. Deposit deadlines follow each property's state law.</p>`,
     });
   });
 

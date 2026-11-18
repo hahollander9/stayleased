@@ -107,3 +107,23 @@ automatic. Nothing in the app changes.
 - **Locking it down:** if you don't want strangers clicking around, the
   simplest options are keeping the URL private, or fronting it with
   Cloudflare Access / an access password at the host level.
+
+## Health check, uptime, and the platform password (2026-11-18)
+
+- **`GET /healthz`** — public, no session. `{"ok":true,"status":"ok","db":"ok","disk_free_pct":…}`.
+  `503` only when the database cannot answer (the host should restart). A nearly full disk is a
+  `200` with `"status":"degraded"`, because a restart does not free space: point the uptime
+  monitor at `/healthz` and alert on the keyword `degraded` (or on anything that is not `"ok"`).
+  `render.yaml` uses it as `healthCheckPath`; a service created by hand needs the same change in
+  the dashboard (Settings → Health Check Path).
+- **Disk** — the blueprint still says 1 GB. Resize in the Render dashboard (it only grows);
+  `disk_free_pct` in `/healthz` is the number to watch afterwards.
+- **`STAYLEASED_PLATFORM_PASSWORD`** — set it. The platform operator account
+  (`platform@stayleased.demo`) was seeded with the public demo password and can open every
+  organization. With this variable set, the next boot rotates it and signs that account out;
+  until it is set, every boot logs `platform_account_default_password`. It can also be changed
+  at `/me` after signing in.
+- **Live property sites are unpublished by default.** A live org's `/p/<slug>` page, and its
+  inquiry, tour and application forms, answer 404 until the operator publishes the site in
+  Marketing → Sites.
+

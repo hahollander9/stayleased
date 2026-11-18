@@ -164,7 +164,7 @@ export function routes(r: Router): void {
           <form method="post" action="/ap/runs/new">
             ${tbl(
               [{ label: '' }, { label: 'Vendor' }, { label: 'Invoice' }, { label: 'Due' }, { label: 'Amount', num: true }],
-              payable.map((v) => ({ cells: [html`<input type="checkbox" name="invoice_ids" value="${v.id}" checked>`, v.vendor, () => html`<span class="mono">${v.invoice_number}</span>`, fmtDate(v.due_date), usd(v.total_cents)] })),
+              payable.map((v) => ({ cells: [html`<input type="checkbox" name="invoice_ids" value="${v.id}" aria-label="Include ${v.vendor} invoice ${v.invoice_number}" checked>`, v.vendor, () => html`<span class="mono">${v.invoice_number}</span>`, fmtDate(v.due_date), usd(v.total_cents)] })),
             )}
             <div class="toolbar">
               ${field('Method', select('method', [['check', 'Check run'], ['ach', 'ACH batch']], 'check'))}

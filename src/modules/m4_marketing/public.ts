@@ -1,7 +1,7 @@
 import { html, raw, esc, when, join, type Raw } from '../../lib/html.ts';
 import { htmlRes, redirect, notFound, textRes, type Router, type Rq, type Res, takeFlash } from '../../lib/http.ts';
 import { q, q1, val, j } from '../../lib/db.ts';
-import { sysCtx, type Ctx } from '../../lib/auth.ts';
+import { sysCtx, rateLimit, type Ctx } from '../../lib/auth.ts';
 import { fmtDate, addDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { hasRealAddress, formatAddress } from '../../lib/address.ts';
@@ -47,7 +47,29 @@ export const DEFAULT_MARKETING: Marketing = {
 };
 
 export function marketingOf(prop: any): Marketing {
-  return { ...DEFAULT_MARKETING, ...j<Partial<Marketing>>(prop.marketing, {}) };
+  const stored = j<Partial<Marketing>>(prop.marketing, {});
+  const mk = { ...DEFAULT_MARKETING, ...stored };
+  // A real operator's building is not on the public web until they put it
+  // there. The demo world publishes by default because the pages are the demo;
+  // an imported live property did too, which listed a customer's availability
+  // and rents at /p/<name> and in the sitemap the moment the rent roll applied.
+  if (stored.published === undefined && prop.org_id
+    && q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', prop.org_id)?.kind === 'live') mk.published = false;
+  return mk;
+}
+
+/** The property behind a public /p/:slug URL — only if its site is published.
+ * Every public route goes through this, forms included: the page being hidden
+ * while its inquiry and application endpoints still answered was the gap. */
+export function publicProperty(slug: string | undefined): any | null {
+  const prop = slug ? q1<any>('SELECT * FROM properties WHERE slug=?', slug) : null;
+  return prop && marketingOf(prop).published ? prop : null;
+}
+
+/** One visitor, a handful of form posts per ten minutes. Each inquiry creates
+ * a lead and asks the leasing agent for a draft, which costs real tokens. */
+export function publicFormAllowed(rq: Rq): boolean {
+  return rateLimit(`pubform:${rq.ip}`, 12, 600000);
 }
 
 interface FpAvail {
@@ -165,7 +187,7 @@ export function routes(r: Router): void {
       <section id="contact"><h2>Get in touch</h2>${inquiryForm(prop, '')}</section>
       ${siteFooter(prop)}`;
     return siteDoc(prop, mk, `${prop.name} — Apartments in ${prop.city}, ${prop.state}`, body,
-      raw(`<script type="application/ld+json">${JSON.stringify(ld)}</script>`));
+      raw(`<script type="application/ld+json">${JSON.stringify(ld).replaceAll('<', '\\u003c')}</script>`));
   });
 
   function tourSection(prop: any): Raw {
@@ -201,19 +223,20 @@ export function routes(r: Router): void {
   }
 
   r.get('/p/:slug/inquire', (rq) => {
-    const prop = q1<any>('SELECT * FROM properties WHERE slug=?', rq.params.slug!);
+    const prop = publicProperty(rq.params.slug);
     if (!prop) return notFound();
     const mk = marketingOf(prop);
     const plan = rq.query.get('plan') || '';
     return siteDoc(prop, mk, `Inquire — ${prop.name}`, html`
       ${siteNav(prop)}
-      <section><h2>Request info${plan ? ` — ${plan} floorplan` : ''}</h2>${inquiryForm(prop, plan)}</section>
+      <section><h1>Request info${plan ? ` — ${plan} floorplan` : ''}</h1>${inquiryForm(prop, plan)}</section>
       ${siteFooter(prop)}`);
   });
 
   r.post('/p/:slug/inquire', (rq) => {
-    const prop = q1<any>('SELECT * FROM properties WHERE slug=?', rq.params.slug!);
+    const prop = publicProperty(rq.params.slug);
     if (!prop) return notFound();
+    if (!publicFormAllowed(rq)) return redirect(`/p/${prop.slug}#contact`, 'That is a lot of requests in a few minutes — please try again shortly.', 'err');
     const ctx = sysCtx(prop.org_id);
     const schema = v.object({ first_name: v.string({ min: 1 }), last_name: v.string({ min: 1 }), email: v.email() });
     const parsed = schema.safe(rq.body);
@@ -229,8 +252,9 @@ export function routes(r: Router): void {
   });
 
   r.post('/p/:slug/tour', (rq) => {
-    const prop = q1<any>('SELECT * FROM properties WHERE slug=?', rq.params.slug!);
+    const prop = publicProperty(rq.params.slug);
     if (!prop) return notFound();
+    if (!publicFormAllowed(rq)) return redirect(`/p/${prop.slug}#tour`, 'That is a lot of requests in a few minutes — please try again shortly.', 'err');
     const ctx = sysCtx(prop.org_id);
     const schema = v.object({ first_name: v.string({ min: 1 }), last_name: v.string({ min: 1 }), email: v.email(), date: v.date() });
     const parsed = schema.safe(rq.body);

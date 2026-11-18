@@ -84,10 +84,17 @@ export function ensureJobRows(orgId: string): void {
   }
 }
 
-export function runJob(ctx: Ctx, key: string, date: string): { status: string; summary: string; ms: number } {
+export function runJob(ctx: Ctx, key: string, date: string, opts?: { manual?: boolean }): { status: string; summary: string; ms: number } {
   const def = registry.get(key);
   if (!def) return { status: 'missing', summary: `no job ${key}`, ms: 0 };
+  // The fence lives here, not only in the scheduler: "Run now" on the jobs page
+  // calls this directly, and in a real operator's org it invented Zillow leads
+  // and a bank transaction.
+  if (SIM_ONLY_JOBS.has(key) && (ctx.orgKind === 'live' || orgKind(ctx.orgId) === 'live')) {
+    return { status: 'skipped', summary: 'Simulator job — not run in a live organization.', ms: 0 };
+  }
   const start = Date.now();
+  const before = q1<{ last_run_date: string | null; last_status: string | null }>('SELECT last_run_date, last_status FROM jobs WHERE org_id=? AND key=?', ctx.orgId, key);
   let status = 'ok';
   let summary = '';
   try {
@@ -107,16 +114,25 @@ export function runJob(ctx: Ctx, key: string, date: string): { status: string; s
     ctx.orgId,
     key,
   );
-  insert('job_runs', {
-    id: id('jrn'),
-    org_id: ctx.orgId,
-    job_key: key,
-    date,
-    status,
-    summary: summary.slice(0, 500),
-    ms,
-    at: nowIso(),
-  });
+  // The poller re-runs every job each minute (they are idempotent), and logging
+  // each pass wrote ~30,000 rows per organization per day onto a 1 GB disk. The
+  // history keeps what a person would look for: the first run of a day, any
+  // failure, a run someone started by hand, and any run whose result differs
+  // from the one before it — a pass that says the same thing again is not news.
+  const repeat = before?.last_run_date === date && before?.last_status === status && status === 'ok' && !opts?.manual
+    && q1<{ summary: string }>('SELECT summary FROM job_runs WHERE org_id=? AND job_key=? AND date=? ORDER BY at DESC LIMIT 1', ctx.orgId, key, date)?.summary === summary.slice(0, 500);
+  if (!repeat) {
+    insert('job_runs', {
+      id: id('jrn'),
+      org_id: ctx.orgId,
+      job_key: key,
+      date,
+      status,
+      summary: summary.slice(0, 500),
+      ms,
+      at: nowIso(),
+    });
+  }
   return { status, summary, ms };
 }
 
@@ -199,6 +215,8 @@ export function syncLiveOrgClocks(): number {
 /** wall-clock poller: keep live-org clocks current, re-run today's jobs
  * periodically (idempotent), and deliver webhooks */
 export function startPoller(intervalMs = 60000): { stop: () => void } {
+  let ticks = 0;
+  let draining = true; // clear any backlog after boot, then hourly
   const t = setInterval(() => {
     try {
       syncLiveOrgClocks();
@@ -211,6 +229,20 @@ export function startPoller(intervalMs = 60000): { stop: () => void } {
       }
     } catch (e) {
       log.error('poller', e);
+    }
+    // Retention, in its own try so a failure here never costs a tick of real
+    // work, and in bounded bites so clearing a backlog (the first deploy after
+    // months of a row a minute) cannot hold the one thread everyone shares.
+    try {
+      if (draining || ticks % 60 === 0) {
+        const cutoff = new Date(Date.now() - 60 * 86400000).toISOString();
+        const gone = run('DELETE FROM job_runs WHERE id IN (SELECT id FROM job_runs WHERE at < ? LIMIT 5000)', cutoff) as unknown as { changes?: number } | undefined;
+        run('DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at < ? LIMIT 5000)', new Date().toISOString());
+        draining = Number(gone?.changes || 0) >= 5000;
+      }
+      ticks++;
+    } catch (e) {
+      log.error('poller_retention', e);
     }
   }, intervalMs);
   return { stop: () => clearInterval(t as unknown as number) };
