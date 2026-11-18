@@ -53,7 +53,7 @@ test('gate: logged-out root serves the marketing homepage with every section', a
   // oversight.") making one point. It is one band now, so the pin moves from
   // those headlines to the substance that had to survive the merge: the three
   // levels, and the floor beneath them that no setting changes.
-  assert.match(body, /Three levels, set by you/);
+  assert.match(body, /Three levels, set by the operator/);
   assert.match(body, /What no setting can switch off/);
   assert.match(body, /One control halts all AI activity instantly/);
   assert.doesNotMatch(body, /Governance and oversight\./, 'the duplicate headline is gone, not relocated');

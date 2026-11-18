@@ -1129,7 +1129,7 @@ function ctaRow(large = false): Raw {
     <a class="mk-btn mk-btn-solid${lg}" href="/#walkthrough">Book a live demo</a>
     ${signupOpen
       ? html`<a class="mk-btn mk-btn-line${lg}" href="/signup">Create your company</a>`
-      : html`<a class="mk-btn mk-btn-line${lg}" href="/login">Explore the live demo</a>`}
+      : html`<a class="mk-btn mk-btn-line${lg}" href="/login?demo=1">Explore the live demo</a>`}
   </div>`;
 }
 
@@ -1185,7 +1185,7 @@ ${mkHeader()}
 
 <section class="mk-band mk-band-alt">
   <div class="mk-wrap mk-reveal">
-    <h2 class="mk-h2">What you get</h2>
+    <h2 class="mk-h2">What is included</h2>
     <p class="mk-lead">Every claim below is a working screen in the product — open the demo and check.</p>
     <div class="mk-grid3">
       ${p.features.map((f) => html`<div class="mk-card"><h3>${f.t}</h3><p>${f.b}</p></div>`)}

@@ -323,9 +323,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
             { empty: '', sort: false },
           )}
           ${when(behind.length > 5, () => html`<p class="sm-note"><a href="/receivables">See all ${behind.length}</a></p>`)}`)}
-        <p class="sm-note sm-tie">A unit's own income and costs side by side is coming in a later pass; it needs a
-          line for building-wide costs that are not split per unit, or the numbers would look like they add up to the
-          building's total when they do not.</p>`)}`,
+`)}`,
   });
 }
 

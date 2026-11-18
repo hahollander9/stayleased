@@ -125,9 +125,11 @@ function statNum(v: string) {
   return raw(v.replace(/(\d+(?:\.\d+)?)/g, (m) => `<i class="mk-n" data-count="${m}">${m}</i>`));
 }
 
-/** Numbered band kicker — the page reads as a guided argument, 01 → 12. */
-function kick(n: string, label: string) {
-  return raw(`<span class="mk-kn">${n}</span>${label}`);
+/** Band kicker. */
+function kick(_n: string, label: string) {
+  // The numbers ran 01–08 with holes (the demo form and the FAQ had none), so
+  // they read as a page missing pieces rather than as a sequence.
+  return raw(label);
 }
 
 export function marketingHome(rq: Rq): Res {
@@ -138,7 +140,6 @@ export function marketingHome(rq: Rq): Res {
   const SALES_CHIPS = ['What does it cost?', 'How do I switch from Buildium or AppFolio?', 'What does the AI do?'];
 
   const body = html`
-<div id="mkprog" aria-hidden="true"></div>
 ${mkHeader()}
 
 <section class="mk-hero" id="top">
@@ -150,10 +151,9 @@ ${mkHeader()}
       <p class="mk-sub">AI agents staff the leasing desk, collections, maintenance intake, and the books — drafting into an approval queue the operator controls, on one system of record built for small multifamily.</p>
       <div class="mk-cta-row">
         <a class="mk-btn mk-btn-solid mk-btn-lg" href="#walkthrough">Book a live demo</a>
-        ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/login">Explore the live demo</a>`}
+        ${signupOpen ? html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>` : html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/login?demo=1">Explore the live demo</a>`}
       </div>
       <div class="mk-hero-note">Portfolios import from Buildium, AppFolio, or spreadsheets in a single afternoon.${when(signupOpen, () => html` <a href="/login">Self-guided demo →</a>`)}</div>
-      <a class="mk-scrollcue" href="#segment" aria-label="Continue to the next section"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12l7 7 7-7"/></svg></a>
     </div>
   </div>
   <!-- The product, actually. This was three hand-built vignette cards
@@ -162,11 +162,11 @@ ${mkHeader()}
        viewport, which the copy alone took a full screen to do. -->
   <div class="mk-wrap mk-shotwrap">
     <figure class="mk-shot">
-      <img src="/assets/mk/hero-dashboard.png" width="1600" height="1030"
-        alt="The StayLeased dashboard: a portfolio of 394 units at 93.1% occupancy, with six AI drafts — a leasing reply, a renewal, a payment plan, a maintenance triage — waiting in an approval queue beside the live portfolio map."
+      <img src="/assets/mk/hero-home.png" width="1280" height="800"
+        alt="The StayLeased home screen for a 394-unit portfolio: a one-line status — eleven items waiting on the operator’s OK, thirty-four households owing rent, twenty-seven units empty — above the approval queue, where each AI-drafted message and each bill waits with its reason and an OK button."
         loading="eager" decoding="async" />
     </figure>
-    <p class="mk-shot-cap">The operator’s dashboard. Every AI draft waits here for approval.</p>
+    <p class="mk-shot-cap">The operator’s home screen. Every draft and every bill waits here for an OK.</p>
   </div>
 </section>
 
@@ -178,7 +178,7 @@ ${mkHeader()}
       <p class="mk-lead" style="margin-bottom:22px">Agents read what arrives, draft the response, and queue it — Approve, Edit, or Reject. Every figure in every draft comes from the live system, and every action lands on the audit trail.</p>
       <div class="mk-cta-row" style="margin-top:24px">
         <a class="mk-btn mk-btn-solid" href="/agents/new-to-ai">How the AI operates</a>
-        <a class="mk-btn mk-btn-line" href="/login">Observe it in the demo</a>
+        <a class="mk-btn mk-btn-line" href="/login?demo=1">Observe it in the demo</a>
       </div>
     </div>
     <div class="mk-nta-card" aria-hidden="true">
@@ -198,7 +198,7 @@ ${mkHeader()}
        instead of one promise with its mechanism and its floor. -->
   <div class="mk-wrap mk-gov2">
     <div class="mk-gov2-col">
-      <h3 class="mk-h3">Three levels, set by you</h3>
+      <h3 class="mk-h3">Three levels, set by the operator</h3>
       <p class="mk-sm">Per property and per function; widened only by explicit authorization, narrowed at any time.</p>
       <div class="mk-levels">
         ${MODES.map((lv, i) => html`<div class="mk-level">
@@ -369,7 +369,7 @@ ${mkHeader()}
       <h2 class="mk-h2">See it do the work in a live demo.</h2>
       <p class="mk-lead">A live demo runs in the working system — every screen live, every agent at work, on a fully populated portfolio. Describe the portfolio and we will set one up.</p>
       <div class="mk-cta-row">
-        <a class="mk-btn mk-btn-line mk-btn-lg" href="/login">Explore the self-guided demo</a>
+        <a class="mk-btn mk-btn-line mk-btn-lg" href="/login?demo=1">Explore the self-guided demo</a>
         ${when(signupOpen, () => html`<a class="mk-btn mk-btn-line mk-btn-lg" href="/signup">Create your company</a>`)}
       </div>
     </div>

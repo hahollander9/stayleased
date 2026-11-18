@@ -27,6 +27,20 @@ function sharedDemoLogin(rq: Rq): boolean {
   return ctx.orgKind !== 'live' && u.kind !== 'platform' && String(u.email).endsWith('.demo');
 }
 
+function demoPicker(personas: { email: string; name: string; role: string }[], open: boolean): ReturnType<typeof html> {
+  const chip = (p: { email: string; name: string; role: string }): ReturnType<typeof html> =>
+    html`<button type="button" class="chip" data-email="${p.email}" data-password="demo1234">${p.name} · ${ROLE_LABELS[p.role as Role] ?? p.role}</button>`;
+  return html`<details class="demo-personas${open ? ' lead' : ''}" ${open ? 'open' : ''}>
+    <summary class="dp-head">${open ? 'Explore the demo — pick a role' : 'Explore the demo — choose a role to sign in'}</summary>
+    ${when(open, () => html`<p class="dp-note">A fully populated sample company. Nothing here is real, and anything changed resets.</p>`)}
+    <div class="chips">
+      ${(open ? personas.slice(0, 5) : personas).map(chip)}
+    </div>
+    ${when(open && personas.length > 5, () => html`<details class="dp-more"><summary>More roles (${personas.length - 5})</summary>
+      <div class="chips">${personas.slice(5).map(chip)}</div></details>`)}
+  </details>`;
+}
+
 export function routes(r: Router): void {
   signupRoutes(r);
   r.get('/login', (rq) => {
@@ -39,6 +53,9 @@ export function routes(r: Router): void {
            WHERE u.active=1 AND u.email LIKE '%@summitridge.demo' GROUP BY u.id ORDER BY u.created_at LIMIT 14`,
         )
       : [];
+    // Arriving from a "see the demo" button: the roles come first and open. The
+    // button used to land on a bare sign-in form with the way in folded shut below.
+    const demoFirst = rq.query.get('demo') === '1';
     return authShell(
       'Sign in',
       html`
@@ -46,20 +63,16 @@ export function routes(r: Router): void {
         <div class="auth-brand">${wordmark(28)}</div>
         <div class="auth-sub">Property management that does the work.</div>
         ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
+        ${when(personas.length && demoFirst, () => demoPicker(personas, true))}
+        ${when(personas.length && demoFirst, () => html`<div class="auth-or">Have an account?</div>`)}
         <form method="post" action="/login">
           <input type="hidden" name="next" value="${rq.query.get('next') || ''}" />
-          <div class="field"><label>Email</label><input name="email" type="email" required autofocus /></div>
-          <div class="field"><label>Password</label><input name="password" type="password" required /></div>
+          <div class="field"><label>Email</label><input name="email" type="email" required ${demoFirst ? '' : 'autofocus'} autocomplete="username" /></div>
+          <div class="field"><label>Password</label><input name="password" type="password" required autocomplete="current-password" /></div>
           <button class="btn" style="width:100%;justify-content:center">Sign in</button>
         </form>
         ${when(!!env('SIGNUP_CODE'), () => html`<p class="small muted" style="margin-top:12px;text-align:center">New to StayLeased? <a href="/signup">Create your company</a></p>`)}
-        ${when(personas.length, () => html`
-          <details class="demo-personas">
-            <summary class="dp-head">Explore the demo — choose a role to sign in</summary>
-            <div class="chips">
-              ${personas.map((p) => html`<button type="button" class="chip" data-email="${p.email}" data-password="demo1234">${p.name} · ${ROLE_LABELS[p.role as Role] ?? p.role}</button>`)}
-            </div>
-          </details>`)}
+        ${when(personas.length && !demoFirst, () => demoPicker(personas, false))}
       `,
     );
   });

@@ -106,7 +106,7 @@ test('the page makes each argument once', async () => {
   // the material from the other two is inside it rather than deleted.
   const nta = await page.locator('#newtoai').textContent() || '';
   assert.match(nta, /Nothing reaches a resident without sign-off/);
-  assert.match(nta, /Three levels, set by you/, 'the autonomy levels moved in');
+  assert.match(nta, /Three levels, set by the operator/, 'the autonomy levels moved in');
   assert.match(nta, /What no setting can switch off/, 'so did the guardrails');
   assert.match(nta, /audit trail/i);
 

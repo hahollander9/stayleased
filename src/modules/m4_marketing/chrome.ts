@@ -166,6 +166,7 @@ export function mkHeader(): Raw {
         </div><a class="mk-drop-all" href="${m.href}">Everything in ${m.label} <span aria-hidden="true">→</span></a></div>
       </div>`)}
       <a class="mk-item-link" href="/#how">How it works</a>
+      <a class="mk-item-link" href="/#pricing">Pricing</a>
     </nav>
     <div class="mk-nav-cta">
       <button class="mk-theme" data-theme-toggle type="button" aria-label="Toggle light or dark theme" title="Light / dark theme">${raw('<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 2.5v2.5M12 19v2.5M4.3 4.3l1.8 1.8M17.9 17.9l1.8 1.8M2.5 12H5M19 12h2.5M4.3 19.7l1.8-1.8M17.9 6.1l1.8-1.8"/></svg>')}</button>
@@ -182,6 +183,7 @@ export function mkHeader(): Raw {
         <div class="mk-mm-links">${m.items.map(([label2, href]) => html`<a href="${href}">${label2}</a>`)}<a class="mk-mm-all" href="${m.href}">Everything in ${m.label} →</a></div>
       </details>`)}
       <a class="mk-mm-link" href="/#how">How it works</a>
+      <a class="mk-mm-link" href="/#pricing">Pricing</a>
       <div class="mk-mm-cta">
         <a class="mk-btn mk-btn-line" href="/login">Sign in</a>
         ${when(signupOpen, () => html`<a class="mk-btn mk-btn-line" href="/signup">Create your company</a>`)}
