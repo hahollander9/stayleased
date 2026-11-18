@@ -2253,3 +2253,71 @@ maintenance, the no-subsidy-column path, and the HTTP routes (form, sample, samp
 
 Gates: `tsc --noEmit` clean · unit suite green · e2e smoke + modes · screenshots desk (dark) and
 phone (light), plus a printed PDF. DECISIONS #116–#117 appended against the current tail.
+
+## 2026-11-16 — One Inbox (a forwarded shared mailbox, alongside AppFolio)
+
+Second add-on for the Scope design-partner track (their words: property managers break first,
+on email volume and non-standard channels). `/one-inbox` (Residents → One Inbox in Standard;
+Messages → One Inbox in Advanced):
+
+- **Setup**: upload a tenant directory (CSV/Excel; title rows, `-> Property` section rows,
+  "Last, First", several emails/phones per cell); a per-org forwarding address
+  `inbox-<code>@<inbound domain>`; paste-an-email lane for when forwarding is not switched on;
+  load/clear a fictional sample; delete all data (typed DELETE).
+- **Matching** (#119): address → phone in body → property + unit → unique display name;
+  otherwise "Pick who" (candidates offered) or "Unsorted". Manual forwards ("Fwd:") are unwrapped
+  to the original sender. Filing by hand can remember the address, sweeps up other waiting mail
+  from it, and re-labels the email by the sender's kind.
+- **Sorting**: Repair / Payment / Agency / Owner / Leasing / Other by best keyword fit (sender
+  kind first, mailbox name last); Urgent on danger words (no heat, water through a ceiling, gas,
+  abated payments, lockout…).
+- **Suggested reply** to copy or open in the operator's own mail client — only once a person is
+  identified. Nothing is sent from StayLeased.
+- **Record**: earlier emails for the same unit on every message; a banner when forwarded mail
+  has not arrived in 48h (the "rule silently stopped" failure).
+
+Inbound path: `/hooks/inbound-email` gained a fallback registry (`registerInboundFallback`), so
+One Inbox claims mail addressed to its family after lead-intake addresses are tried; no new
+unauthenticated route (#118). Forwarding goes live when `STAYLEASED_INBOUND_TOKEN` and an
+inbound-email provider pointed at that endpoint exist — neither is set in prod today, and the
+setup screen says so instead of showing an address that would silently drop mail.
+
+Schema: `oi_config`, `oi_contacts`, `oi_messages` (append-only CREATE TABLEs). Also: a CSP-safe
+`[data-copy]` clipboard helper in `app.js`.
+
+Files: `src/modules/m23_oneinbox/{engine,service,pages,sample}.ts`, `src/modules/m3_crm/ils_email.ts`,
+`src/server/modules.ts`, `src/ui/{ui.ts,app.js,theme.css}`, `src/db/schema.sql`.
+
+Tests: `tests/one_inbox.test.ts` (22) — what must NOT match (body mentions, shared names, unit
+prefixes, property-only, thread-only), forwards, sorting, replies, roster parsing, the sample's
+expected piles, org isolation on read and write, learning + re-upload, dedupe, purge, the
+upload form, and the webhook (403 on a bad token, auto-reply skipped, unknown address 404).
+
+Gates: `tsc --noEmit` clean · unit suite green · e2e smoke + modes + comms · screenshots desk and
+phone. DECISIONS #118–#119 appended against the current tail.
+
+## 2026-11-16 — Placement Scorecard (tenant outcomes by agent and source)
+
+Third add-on for the Scope design-partner track (their words: screening and tenant placement is
+what most people overlook, especially through outside agents). `/placement-scorecard`
+(Leasing → Placement scorecard; People → New renters in Standard). Stateless like the weekly
+action report: a tenant export in, a comparison out, nothing stored.
+
+- **Inputs**: tenant export with a Unit column and at least one of Leasing Agent / Lead Source /
+  Screening Decision (required); delinquency export (optional, reuses m22's reader).
+- **Per group**: placements, households behind and the rate, percentage points above or below
+  everyone else, household balance, average months behind against the tenant's own share of the
+  rent, and tenants who left within a year (only those with a full year of history).
+- **Rules** (#120): three group-by dimensions and no others; no subsidy column is ever read;
+  agency balances excluded from "behind"; groups under 5 are listed, not compared; labels group
+  case-insensitively and display as first typed.
+- `/placement-scorecard/sample` on the fictional portfolio (shares m22's sample delinquency);
+  sample CSVs downloadable.
+
+Depends on the export carrying an agent or source column. Whether AppFolio's tenant reports
+include one for a given operator is unconfirmed — ask before promising this to anyone.
+
+Files: `src/modules/m24_placement/{scorecard,sample,pages}.ts`, `src/server/modules.ts`, `src/ui/ui.ts`.
+
+Tests: `tests/placement_scorecard.test.ts` (9). Gates: `tsc --noEmit` clean · unit suite green ·
+e2e smoke + modes + navmenus · screenshots desk and phone. DECISIONS #120.

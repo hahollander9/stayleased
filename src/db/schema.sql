@@ -2310,3 +2310,61 @@ CREATE TABLE IF NOT EXISTS billing_events (
   received_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_billingevt ON billing_events(received_at);
+
+-- ============================================================
+-- M23 — One Inbox (alongside another system of record)
+-- A shared mailbox the operator forwards to StayLeased. Messages are matched
+-- to a contact list the operator uploads (NOT to residents/leads — an
+-- alongside-AppFolio org has none of its own here). Org-scoped; purgeable.
+-- ============================================================
+CREATE TABLE IF NOT EXISTS oi_config (
+  org_id TEXT PRIMARY KEY,
+  code TEXT NOT NULL UNIQUE,           -- inbox-<code>@<inbound domain>
+  last_received_at TEXT,               -- last message that arrived by forwarding
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS oi_contacts (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  emails TEXT NOT NULL DEFAULT '[]',   -- JSON array, lowercased
+  phones TEXT NOT NULL DEFAULT '[]',   -- JSON array, 10 digits each
+  property TEXT NOT NULL DEFAULT '',
+  unit TEXT NOT NULL DEFAULT '',
+  kind TEXT NOT NULL DEFAULT 'tenant', -- tenant|agency|owner|vendor|other
+  source TEXT NOT NULL DEFAULT 'upload', -- upload|manual
+  is_sample INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_oi_contacts ON oi_contacts(org_id, property, unit);
+
+CREATE TABLE IF NOT EXISTS oi_messages (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  received_at TEXT NOT NULL,
+  via TEXT NOT NULL DEFAULT 'forward', -- forward|manual|sample
+  mailbox TEXT,                        -- the shared address it was sent to
+  from_email TEXT NOT NULL,
+  from_name TEXT NOT NULL DEFAULT '',
+  forwarded_by TEXT,
+  subject TEXT NOT NULL DEFAULT '',
+  body TEXT NOT NULL DEFAULT '',
+  subject_key TEXT NOT NULL DEFAULT '',
+  category TEXT NOT NULL,              -- repair|payment|agency|owner|leasing|other
+  urgency TEXT NOT NULL,               -- urgent|normal
+  match_status TEXT NOT NULL,          -- matched|ambiguous|unsorted
+  contact_id TEXT,
+  candidates TEXT NOT NULL DEFAULT '[]',
+  match_reason TEXT NOT NULL DEFAULT '',
+  filed_by TEXT,                       -- user id when a person filed it
+  status TEXT NOT NULL DEFAULT 'open', -- open|done
+  done_by TEXT,
+  done_at TEXT,
+  dedupe_key TEXT NOT NULL,
+  is_sample INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  UNIQUE(org_id, dedupe_key)
+);
+CREATE INDEX IF NOT EXISTS idx_oi_messages ON oi_messages(org_id, status, received_at);
+CREATE INDEX IF NOT EXISTS idx_oi_messages_contact ON oi_messages(org_id, contact_id, received_at);
