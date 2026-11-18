@@ -1,4 +1,5 @@
 import { html, when } from '../../lib/html.ts';
+import { ledgerScope } from '../../lib/auth.ts';
 import { notFound, type Router } from '../../lib/http.ts';
 import { requirePerm, propFilter, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val } from '../../lib/db.ts';
@@ -52,7 +53,7 @@ export function routes(r: Router): void {
     const propId = rq.query.get('property') || ctx.currentPropertyId || '';
     const params: unknown[] = [ctx.orgId, basis];
     let where = 'je.org_id=? AND je.basis=?';
-    if (propId) { where += ' AND je.property_id=?'; params.push(propId); }
+    { const sc = ledgerScope(ctx, propId, 'je.property_id'); where += sc.sql; params.push(...sc.params); }
     if (source) { where += ' AND je.source_kind=?'; params.push(source); }
     if (period) { where += ' AND je.period_key=?'; params.push(period); }
     if (account) { where += ' AND EXISTS (SELECT 1 FROM journal_lines jx WHERE jx.entry_id=je.id AND jx.account_code=?)'; params.push(account); }

@@ -1,4 +1,5 @@
 import { q } from '../../lib/db.ts';
+import { ledgerScope } from '../../lib/auth.ts';
 import { addMonths, monthKey, lastOfMonth, firstOfMonth } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { COA } from './coa.ts';
@@ -67,7 +68,7 @@ function balances(
 ): Map<string, number> {
   const params: unknown[] = [ctx.orgId, opts.basis];
   let where = 'jl.org_id=? AND je.basis=?';
-  if (opts.propertyId) { where += ' AND jl.property_id=?'; params.push(opts.propertyId); }
+  { const sc = ledgerScope(ctx, opts.propertyId, 'jl.property_id'); where += sc.sql; params.push(...sc.params); }
   if (opts.from) { where += ' AND je.date>=?'; params.push(opts.from); }
   if (opts.to) { where += ' AND je.date<=?'; params.push(opts.to); }
   const rows = q<any>(
@@ -171,7 +172,7 @@ export function t12(ctx: Ctx, opts: { propertyId?: string | null; to: string; ba
   for (let i = 11; i >= 0; i--) months.push(monthKey(addMonths(opts.to, -i)));
   const params: unknown[] = [ctx.orgId, opts.basis, `${months[0]}-01`, lastOfMonth(`${months[11]}-15`)];
   let where = `jl.org_id=? AND je.basis=? AND je.date>=? AND je.date<=?`;
-  if (opts.propertyId) { where += ' AND jl.property_id=?'; params.push(opts.propertyId); }
+  { const sc = ledgerScope(ctx, opts.propertyId, 'jl.property_id'); where += sc.sql; params.push(...sc.params); }
   const rows = q<any>(
     `SELECT jl.account_code AS code, substr(je.date,1,7) AS mk, SUM(jl.debit_cents - jl.credit_cents) AS net
      FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id WHERE ${where}
@@ -221,7 +222,7 @@ export function cashFlow(ctx: Ctx, opts: { propertyId?: string | null; from: str
   // classify each JE touching cash by its counter-account mix
   const params: unknown[] = [ctx.orgId, opts.basis, opts.from, opts.to];
   let where = `je.org_id=? AND je.basis=? AND je.date>=? AND je.date<=?`;
-  if (opts.propertyId) { where += ' AND je.property_id=?'; params.push(opts.propertyId); }
+  { const sc = ledgerScope(ctx, opts.propertyId, 'je.property_id'); where += sc.sql; params.push(...sc.params); }
   const lines = q<any>(
     `SELECT jl.entry_id, jl.account_code, jl.debit_cents, jl.credit_cents
      FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id
@@ -261,7 +262,7 @@ export function cashFlow(ctx: Ctx, opts: { propertyId?: string | null; from: str
 
   const openingParams: unknown[] = [ctx.orgId, opts.basis, opts.from];
   let ow = `jl.org_id=? AND je.basis=? AND je.date<? AND jl.account_code IN ('1010','1020')`;
-  if (opts.propertyId) { ow += ' AND jl.property_id=?'; openingParams.push(opts.propertyId); }
+  { const sc = ledgerScope(ctx, opts.propertyId, 'jl.property_id'); ow += sc.sql; openingParams.push(...sc.params); }
   const opening = Number(q<any>(
     `SELECT COALESCE(SUM(jl.debit_cents - jl.credit_cents),0) AS n FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id WHERE ${ow}`,
     ...openingParams,

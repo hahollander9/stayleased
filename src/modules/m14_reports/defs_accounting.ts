@@ -1,4 +1,5 @@
 import { q, q1, val, j } from '../../lib/db.ts';
+import { ledgerScope } from '../../lib/auth.ts';
 import { addMonths, monthKey, fmtMonth } from '../../lib/dates.ts';
 import { registerReport, propScope, type ReportResult, type ReportCol } from './engine.ts';
 import { balanceSheet, incomeStatement, t12, cashFlow } from '../m9_accounting/statements.ts';
@@ -26,7 +27,7 @@ registerReport({
   run(ctx, p): ReportResult {
     const params: unknown[] = [ctx.orgId, p.basis, p.date];
     let where = `jl.org_id=? AND je.basis=? AND je.date <= ?`;
-    if (p.property !== 'all') { where += ' AND jl.property_id=?'; params.push(p.property); }
+    { const sc = ledgerScope(ctx, p.property, 'jl.property_id'); where += sc.sql; params.push(...sc.params); }
     const nets = new Map<string, number>(q<any>(
       `SELECT jl.account_code AS code, SUM(jl.debit_cents - jl.credit_cents) AS net
        FROM journal_lines jl JOIN journal_entries je ON je.id=jl.entry_id WHERE ${where} GROUP BY code`,
@@ -153,7 +154,7 @@ registerReport({
   run(ctx, p): ReportResult {
     const params: unknown[] = [ctx.orgId, p.basis, p.account, p.from, p.to];
     let where = `jl.org_id=? AND je.basis=? AND jl.account_code=? AND je.date BETWEEN ? AND ?`;
-    if (p.property !== 'all') { where += ' AND jl.property_id=?'; params.push(p.property); }
+    { const sc = ledgerScope(ctx, p.property, 'jl.property_id'); where += sc.sql; params.push(...sc.params); }
     const lines = q<any>(
       `SELECT jl.*, je.date, je.memo AS je_memo, je.source_kind FROM journal_lines jl
        JOIN journal_entries je ON je.id=jl.entry_id WHERE ${where}

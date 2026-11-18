@@ -140,6 +140,7 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const email = String(rq.body.email || '').trim().toLowerCase();
     if (q1('SELECT id FROM users WHERE email=?', email)) return redirect('/admin/staff/new', 'That email is already in use.', 'err');
+    askedRole(rq);
     const uid = id('usr');
     const live = ctx.orgKind === 'live';
     const pw = live ? tempPassword() : 'demo1234';
@@ -175,6 +176,7 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const u = q1<any>('SELECT * FROM users WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!u) return notFound();
+    askedRole(rq);
     const before = { name: u.name, email: u.email, active: u.active };
     update('users', u.id, {
       name: String(rq.body.name || u.name),
@@ -1102,13 +1104,20 @@ export function routes(r: Router): void {
  * platform operator's role and the roles that belong to non-staff accounts. */
 const ASSIGNABLE_ROLES: Role[] = ROLES.filter((x) => !['PLATFORM_ADMIN', 'RESIDENT', 'APPLICANT', 'GUARANTOR', 'VENDOR'].includes(x));
 
+/** Called by each handler BEFORE its first write: the edit path deletes the
+ * person's existing grants and then saves the new one, so refusing a role
+ * halfway through left them with no role at all. */
+function askedRole(rq: Rq): Role {
+  const asked = String(rq.body.role || 'LEASING_AGENT') as Role;
+  if (!ASSIGNABLE_ROLES.includes(asked)) throw new VError([{ path: 'role', message: 'that role cannot be assigned here' }]);
+  return asked;
+}
+
 function saveGrant(ctx: Ctx, userId: string, rq: Rq): void {
   // The form's select only offers staff roles, but a select is a suggestion:
   // the role arrived straight from the request, so an org admin could post
   // role=PLATFORM_ADMIN for themselves and open every customer's organization.
-  const asked = String(rq.body.role || 'LEASING_AGENT') as Role;
-  if (!ASSIGNABLE_ROLES.includes(asked)) throw new VError([{ path: 'role', message: 'that role cannot be assigned here' }]);
-  const role = asked;
+  const role = askedRole(rq);
   const scope = String(rq.body.scope_type || 'org');
   // and a property scope may only name this organization's own properties
   const own = new Set(q<{ id: string }>('SELECT id FROM properties WHERE org_id=?', ctx.orgId).map((p) => p.id));

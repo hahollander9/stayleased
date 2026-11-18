@@ -161,6 +161,19 @@ export function canAccessProperty(ctx: Ctx, propertyId: string): boolean {
   return ctx.allProperties || ctx.propertyIds.includes(propertyId);
 }
 
+/** Which properties a ledger read covers. A named property is that property;
+ * with none named, it is every property the reader may see — not every
+ * property in the organization. The readers used to drop the filter entirely
+ * when no property was given, so a manager scoped to two buildings of five got
+ * all five by simply not asking for one. Jobs and integrity checks run as the
+ * system, which sees everything, and are unaffected. */
+export function ledgerScope(ctx: Ctx, propertyId: string | null | undefined, col: string): { sql: string; params: string[] } {
+  if (propertyId && propertyId !== 'all') return { sql: ` AND ${col}=?`, params: [propertyId] };
+  if (ctx.allProperties) return { sql: '', params: [] };
+  if (!ctx.propertyIds.length) return { sql: ' AND 1=0', params: [] };
+  return { sql: ` AND ${col} IN (${ctx.propertyIds.map(() => '?').join(',')})`, params: [...ctx.propertyIds] };
+}
+
 /** SQL fragment limiting property-scoped queries to accessible properties.
  * Usage: const pf = propFilter(ctx, 'p.id'); ...WHERE org_id=? ${pf.sql}...  */
 export function propFilter(ctx: Ctx, col = 'property_id'): { sql: string; params: string[] } {
@@ -308,6 +321,22 @@ export function rateLimit(key: string, max: number, windowMs: number): boolean {
   cur.n++;
   return cur.n <= max;
 }
+
+/** The two halves of a limiter that counts failures only. `rateLimit` counts
+ * every call, which for a per-account login limit meant anyone could lock a
+ * customer out of their own account by posting their email thirty times —
+ * and their own successful sign-ins counted against them too. */
+export function rateLimited(key: string, max: number): boolean {
+  const cur = attempts.get(key);
+  return !!cur && cur.reset >= Date.now() && cur.n >= max;
+}
+export function rateStrike(key: string, windowMs: number): void {
+  const now = Date.now();
+  const cur = attempts.get(key);
+  if (!cur || cur.reset < now) attempts.set(key, { n: 1, reset: now + windowMs });
+  else cur.n++;
+}
+export function rateClear(key: string): void { attempts.delete(key); }
 
 export function setSessionCookie(r: Rq, t: string): void {
   r.setCookies.push(cookie(SESSION_COOKIE, t, { maxAge: SESSION_DAYS * 86400 }));

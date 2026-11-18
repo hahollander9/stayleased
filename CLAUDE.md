@@ -176,8 +176,9 @@ never qualify (DECISIONS #57).
   residents table parity, "Resident directory" naming) + the headline change.
 - 2026-11-18 audit shipped (BUILDLOG): `/healthz`, graceful shutdown, first-run Home,
   `/for/alongside-appfolio`, `tests/hardening.test.ts`. Open from it: per-record file download
-  auth, API key in query string, Stripe event ordering, `clientIp` hop, `propFilter` on
-  consolidated ledger views, staff-started applications reaching simulated screening in live orgs.
+  auth, API key in query string, Stripe event ordering, `clientIp` hop, staff-started
+  applications reaching simulated screening in live orgs. Ledger reads go through
+  `ledgerScope()` — "no property named" means the reader's own buildings (#124).
 - Next engineering, in order: (1) live-org recovery after deploy — delete the corrupted
   Station U&O property (typed-confirm), re-import rent roll + directory, tie the strip to
   Yardi's summary (110 units · $149,365 rent · $1,260 extras · $99,367 deposits ·

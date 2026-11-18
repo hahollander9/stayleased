@@ -216,14 +216,9 @@ export function syncLiveOrgClocks(): number {
  * periodically (idempotent), and deliver webhooks */
 export function startPoller(intervalMs = 60000): { stop: () => void } {
   let ticks = 0;
+  let draining = true; // clear any backlog after boot, then hourly
   const t = setInterval(() => {
     try {
-      // once an hour: drop run history older than 60 days and dead sessions
-      if (ticks++ % 60 === 0) {
-        const cutoff = new Date(Date.now() - 60 * 86400000).toISOString();
-        run('DELETE FROM job_runs WHERE at < ?', cutoff);
-        run('DELETE FROM sessions WHERE expires_at < ?', new Date().toISOString());
-      }
       syncLiveOrgClocks();
       const orgs = q<{ id: string; business_date: string }>('SELECT id, business_date FROM orgs');
       for (const org of orgs) {
@@ -234,6 +229,20 @@ export function startPoller(intervalMs = 60000): { stop: () => void } {
       }
     } catch (e) {
       log.error('poller', e);
+    }
+    // Retention, in its own try so a failure here never costs a tick of real
+    // work, and in bounded bites so clearing a backlog (the first deploy after
+    // months of a row a minute) cannot hold the one thread everyone shares.
+    try {
+      if (draining || ticks % 60 === 0) {
+        const cutoff = new Date(Date.now() - 60 * 86400000).toISOString();
+        const gone = run('DELETE FROM job_runs WHERE id IN (SELECT id FROM job_runs WHERE at < ? LIMIT 5000)', cutoff) as unknown as { changes?: number } | undefined;
+        run('DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at < ? LIMIT 5000)', new Date().toISOString());
+        draining = Number(gone?.changes || 0) >= 5000;
+      }
+      ticks++;
+    } catch (e) {
+      log.error('poller_retention', e);
     }
   }, intervalMs);
   return { stop: () => clearInterval(t as unknown as number) };

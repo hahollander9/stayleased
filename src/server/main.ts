@@ -111,7 +111,10 @@ export function startServer(port: number): ReturnType<typeof createApp> {
       guardPropertyParam,
       // /pricing is the staff pricing desk, but it is also the first URL a
       // visitor types to find the price — and it sent them to a sign-in form.
-      (rq) => (!rq.user && rq.method === 'GET' && rq.path === '/pricing' ? redirect('/#pricing') : undefined),
+      // Only the bare typed URL: a deep link, an in-app click or an expired
+      // session still goes to sign-in and comes back where it was headed.
+      (rq) => (!rq.user && rq.method === 'GET' && rq.path === '/pricing' && ![...rq.query.keys()].length && !rq.cookies['sl_s'] && !rq.raw.headers.referer
+        ? redirect('/#pricing') : undefined),
     ],
     onError: (e, rq) => log.error('request_failed', e, { method: rq.method, path: rq.path, ip: rq.ip }),
   });

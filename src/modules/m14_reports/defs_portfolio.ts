@@ -212,7 +212,10 @@ registerReport({
   run(ctx, p): ReportResult {
     const rows: ReportResult['rows'] = [];
     for (const jr of q<any>(
-      `SELECT job_key, COUNT(*) runs, SUM(CASE WHEN status='ok' THEN 1 ELSE 0 END) ok, MAX(date) last
+      // job_runs records a run when its result changes, not every pass, so the
+      // honest unit is days, not rows
+      `SELECT job_key, COUNT(DISTINCT date) runs,
+              COUNT(DISTINCT date) - COUNT(DISTINCT CASE WHEN status NOT IN ('ok','skipped') THEN date END) ok, MAX(date) last
        FROM job_runs WHERE org_id=? AND date BETWEEN ? AND ? GROUP BY job_key ORDER BY runs DESC`,
       ctx.orgId, p.from, p.to,
     )) {
@@ -220,7 +223,7 @@ registerReport({
         kind: 'Scheduled jobs',
         what: jr.job_key.replaceAll('_', ' '),
         volume: jr.runs,
-        outcome: `${jr.ok}/${jr.runs} ok · last ${jr.last}`,
+        outcome: `ok on ${jr.ok} of ${jr.runs} days · last ${jr.last}`,
         __href: '/admin/jobs',
       });
     }

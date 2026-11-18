@@ -1,4 +1,5 @@
 import { q, q1, insert, val, tx, run } from '../../lib/db.ts';
+import { ledgerScope } from '../../lib/auth.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, monthKey } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
@@ -116,7 +117,7 @@ export function trialBalance(
   const basis = opts.basis || 'accrual';
   const params: unknown[] = [ctx.orgId, basis];
   let where = 'jl.org_id=? AND je.basis=?';
-  if (opts.propertyId) { where += ' AND jl.property_id=?'; params.push(opts.propertyId); }
+  { const sc = ledgerScope(ctx, opts.propertyId, 'jl.property_id'); where += sc.sql; params.push(...sc.params); }
   if (opts.asOf) { where += ' AND je.date<=?'; params.push(opts.asOf); }
   const rows = q<any>(
     `SELECT jl.account_code AS code, a.name, a.type, SUM(jl.debit_cents) AS dr, SUM(jl.credit_cents) AS cr

@@ -1051,7 +1051,7 @@ export const MK_PAGES: MkPage[] = [
     features: [
       { t: 'Who owes what, by payer', b: 'Household balances and housing-agency balances reported separately, so a collections call never goes to a household for money an agency owes. Where the export cannot support the split, the balance is shown as “not split” — never estimated.' },
       { t: 'What agencies owe, by program', b: 'One row per program — voucher, VASH, rapid rehousing — with the balance aged in months of subsidy unpaid, because one call to a program covers every unit under it.' },
-      { t: 'Expected against received', b: 'The rent roll compared with the month’s receipts, by payer: no agency payment after the 10th, an agency payment that arrived short, no household payment after the 5th, and receipts for units the rent roll does not carry.' },
+      { t: 'Expected against received', b: 'The rent roll compared with the month’s receipts, by payer: no agency payment by the 10th, an agency payment that arrived short, no household payment after the 5th, and receipts for units the rent roll does not carry.' },
       { t: 'A ranked follow-up list', b: 'Ordered by amount and age, with payment plans weighted down and conservative next-step wording. Downloadable as a spreadsheet; the work of the call stays with the team that knows the household.' },
       { t: 'Since last week', b: 'With last week’s delinquency export alongside: who is newly behind, whose balance grew, who paid down, and who paid off.' },
       { t: 'Repairs that need a push', b: 'From the work-order export: urgent requests open more than a day, orders idle a week or longer, and vendors who have gone quiet.' },

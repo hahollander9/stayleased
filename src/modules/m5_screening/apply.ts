@@ -51,7 +51,7 @@ function closedScreen(rq: Rq, prop: any): Res {
     <div class="card"><div class="card-body">
       <p><b>Online applications are not open for this community yet.</b></p>
       <p class="muted">The leasing office is taking applications directly. Send a note and the team will be in touch with next steps.</p>
-      <a class="btn" href="/p/${prop.slug}/inquire">Contact the leasing office</a>
+      ${when(marketingOf(prop).published, () => html`<a class="btn" href="/p/${prop.slug}/inquire">Contact the leasing office</a>`)}
     </div></div>`, { propName: prop.name });
 }
 
@@ -114,6 +114,9 @@ export function routes(r: Router): void {
     const isPrimary = applicant.kind === 'primary';
 
     if (app.status !== 'draft') return statusScreen(rq, app, applicant, prop, unit);
+    // a draft in a live org goes no further: the steps collect identity and
+    // income documents for an application that cannot be submitted
+    if (!onlineApplicationsOpen(prop)) return closedScreen(rq, prop);
 
     const step = applicant.step;
     if (step === 1) {
@@ -195,6 +198,7 @@ export function routes(r: Router): void {
   r.post('/apply/:token/step1', (rq) => {
     const loaded = loadByToken(rq.params.token!);
     if (!loaded) return notFound();
+    if (!onlineApplicationsOpen(loaded.prop)) return closedScreen(rq, loaded.prop);
     const { applicant } = loaded;
     update('applicants', applicant.id, {
       first_name: String(rq.body.first_name || '').trim(), last_name: String(rq.body.last_name || '').trim(),
@@ -207,6 +211,7 @@ export function routes(r: Router): void {
   r.post('/apply/:token/step2', (rq) => {
     const loaded = loadByToken(rq.params.token!);
     if (!loaded) return notFound();
+    if (!onlineApplicationsOpen(loaded.prop)) return closedScreen(rq, loaded.prop);
     const { app, applicant, prop } = loaded;
     const ctx = sysCtx(prop.org_id);
     const income = v.cents({ min: 0 }).safe(rq.body.income);
@@ -230,6 +235,7 @@ export function routes(r: Router): void {
   r.post('/apply/:token/invite', (rq) => {
     const loaded = loadByToken(rq.params.token!);
     if (!loaded) return notFound();
+    if (!onlineApplicationsOpen(loaded.prop)) return closedScreen(rq, loaded.prop);
     const { app, prop } = loaded;
     const ctx = sysCtx(prop.org_id);
     const email = v.email().safe(rq.body.email);
@@ -242,6 +248,7 @@ export function routes(r: Router): void {
   r.post('/apply/:token/step3', (rq) => {
     const loaded = loadByToken(rq.params.token!);
     if (!loaded) return notFound();
+    if (!onlineApplicationsOpen(loaded.prop)) return closedScreen(rq, loaded.prop);
     update('applicants', loaded.applicant.id, { step: 4 });
     return redirect(`/apply/${rq.params.token}`);
   });

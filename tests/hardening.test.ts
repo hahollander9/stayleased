@@ -246,3 +246,59 @@ test('the shared demo sign-ins cannot have their password changed', async () => 
   assert.equal(r.status, 403);
   assert.ok((await loginAs(base, email)) !== '');
 });
+
+// ---- second pass: defects an independent review found in the fixes above ----
+
+test('safeHtml output is balanced: stray closers dropped, open tags and links closed', () => {
+  const out = safeHtml('</div></div></div><h3>Session expired</h3><a href="https://evil.example/login">Sign in again').s;
+  assert.ok(!out.startsWith('</div>'), out);
+  assert.equal((out.match(/<a /g) || []).length, (out.match(/<\/a>/g) || []).length, 'every link is closed');
+  assert.equal((out.match(/<h3>/g) || []).length, (out.match(/<\/h3>/g) || []).length);
+  assert.equal(safeHtml('<p>one<br>two</p>').s, '<p>one<br>two</p>');
+  assert.equal(safeHtml('<p><b>bold').s, '<p><b>bold</b></p>');
+});
+
+test('with no property named, a scoped reader gets their own buildings’ ledger, not the organization’s', async () => {
+  const { trialBalance } = await import('../src/modules/m9_accounting/service.ts');
+  const { ensureCoa } = await import('../src/modules/m9_accounting/coa.ts');
+  const { postJE } = await import('../src/modules/m9_accounting/service.ts');
+  const sys = sysCtx(demoOrg);
+  ensureCoa(demoOrg);
+  postJE(sys, { propertyId: demoProp, date: '2026-07-20', basis: 'accrual', memo: 'mine', sourceKind: 'manual', sourceId: 'hard-1', lines: [{ account: '1010', debit: 11100 }, { account: '4010', credit: 11100 }] });
+  postJE(sys, { propertyId: demoProp2, date: '2026-07-20', basis: 'accrual', memo: 'not mine', sourceKind: 'manual', sourceId: 'hard-2', lines: [{ account: '1010', debit: 99900 }, { account: '4010', credit: 99900 }] });
+  const cash = (rows: { code: string; debit: number }[]): number => rows.find((r) => r.code === '1010')?.debit || 0;
+  assert.equal(cash(trialBalance(sys, {})), 111000, 'the system sees both');
+  const scopedCtx = { ...sys, allProperties: false, propertyIds: [demoProp], currentPropertyId: null };
+  assert.equal(cash(trialBalance(scopedCtx, {})), 11100, 'a scoped reader sees only their property');
+  assert.equal(cash(trialBalance({ ...scopedCtx, propertyIds: [] }, {})), 0, 'no grant, no ledger');
+  const cookie = await loginAs(base, scoped);
+  const page = await get(base, '/gl', cookie);
+  assert.equal(page.status, 200);
+  assert.ok(!page.text.includes('999.00'), 'the other property’s cash is not on the page');
+});
+
+test('a refused role leaves the person’s existing role in place', async () => {
+  const cookie = await loginAs(base, adminDemo);
+  const me = q1<{ id: string }>('SELECT id FROM users WHERE email=?', adminDemo)!.id;
+  await post(base, `/admin/staff/${me}`, { name: 'Admin demo', role: 'PLATFORM_ADMIN', scope_type: 'org' }, cookie);
+  const roles = q<{ role: string }>('SELECT role FROM role_assignments WHERE user_id=?', me).map((r) => r.role);
+  assert.deepEqual(roles, ['ORG_ADMIN']);
+});
+
+test('the account limit counts wrong passwords, so nobody can lock an owner out by naming them', async () => {
+  const { rateLimited, rateStrike, rateClear } = await import('../src/lib/auth.ts');
+  const key = `login-acct:limit-${sfx}@example.test`;
+  assert.equal(rateLimited(key, 30), false);
+  for (let i = 0; i < 29; i++) rateStrike(key, 60000);
+  assert.equal(rateLimited(key, 30), false, 'twenty-nine wrong passwords: still open');
+  rateStrike(key, 60000);
+  assert.equal(rateLimited(key, 30), true, 'the thirtieth pauses the account');
+  rateClear(key);
+  assert.equal(rateLimited(key, 30), false, 'a correct sign-in clears the count');
+  // and through the door: correct sign-ins never count as strikes
+  for (let i = 0; i < 8; i++) await post(base, '/login', { email: adminDemo, password: 'demo1234' });
+  assert.equal(rateLimited(`login-acct:${adminDemo}`, 1), false);
+  await post(base, '/login', { email: adminDemo, password: 'wrong' });
+  assert.equal(rateLimited(`login-acct:${adminDemo}`, 1), true);
+  rateClear(`login-acct:${adminDemo}`);
+});

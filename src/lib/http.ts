@@ -396,6 +396,9 @@ async function handle(req: IncomingMessage, res: ServerResponse, opts: AppOption
     // does not import the modules that define them.
     const kind = err?.constructor?.name || '';
     try {
+      // a refused permission and an entry that does not balance are still worth
+      // a line in the log: one is someone probing, the other is our arithmetic
+      if ((kind === 'PermError' || kind === 'UnbalancedEntry') && opts.onError && r) opts.onError(err, r);
       if (kind === 'PermError') { send(res, r, errorPage(403, 'You do not have permission to do that.')); return; }
       if (kind === 'URIError') { send(res, r, errorPage(400, 'That address is not valid.')); return; }
       if (['VError', 'ClosedPeriod', 'UnbalancedEntry', 'PaymentRejected'].includes(kind)) {

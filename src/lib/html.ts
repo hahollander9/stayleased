@@ -113,5 +113,19 @@ export function safeHtml(s: unknown): Raw {
     .replace(new RegExp(`&lt;(/?)(${SAFE_TAGS})\\s*/?&gt;`, 'gi'), (_m, close: string, tag: string) => `<${close}${tag.toLowerCase()}>`)
     .replace(/&lt;a href=(?:&quot;|&#39;)((?:https?:\/\/|mailto:|\/(?!\/))[^\s<>]*?)(?:&quot;|&#39;)&gt;/gi, (_m, href: string) => `<a href="${href}" rel="noopener noreferrer">`)
     .replace(/&lt;\/a&gt;/gi, '</a>');
-  return raw(out);
+  // Balance what was let back in. Unpaired tags are still markup: three stray
+  // </div>s closed the draft box and the cards around it, and an unclosed <a>
+  // turned the rest of the page into a link to wherever the sender liked. A
+  // closer with nothing open is dropped; anything left open is closed here.
+  const open: string[] = [];
+  const balanced = out.replace(/<(\/?)([a-z0-9]+)(?: [^>]*)?>/g, (m, close: string, tag: string) => {
+    if (tag === 'br' || tag === 'hr') return close ? '' : m;
+    if (!close) { open.push(tag); return m; }
+    const at = open.lastIndexOf(tag);
+    if (at < 0) return '';
+    let closers = '';
+    while (open.length > at) closers += `</${open.pop()}>`;
+    return closers;
+  });
+  return raw(balanced + open.reverse().map((t) => `</${t}>`).join(''));
 }

@@ -6,7 +6,7 @@ import {
 } from '../../lib/http.ts';
 import {
   verifyPassword, hashPassword, tokenHash, dummyVerify, createSession, destroySession, setSessionCookie, clearSessionCookie,
-  getSessionToken, attachSession, requireUser, requirePerm, rateLimit,
+  getSessionToken, attachSession, requireUser, requirePerm, rateLimit, rateLimited, rateStrike, rateClear,
   type UserRow, type Ctx, canAccessProperty,
 } from '../../lib/auth.ts';
 import { q, q1, run } from '../../lib/db.ts';
@@ -72,12 +72,15 @@ export function routes(r: Router): void {
     if (!rateLimit(`login:${rq.ip}:${email}`, 20, 60000)) {
       return redirect('/login', 'Too many attempts — wait a minute and try again.', 'err');
     }
-    // and on the account alone: the address above comes from a header a caller
-    // can forge, which made the per-IP bucket unlimited guesses for anyone who
-    // rotated it. The shared demo logins are exempt — they are public, and one
-    // visitor must not be able to lock the demo for the rest.
-    if (!email.endsWith('.demo') && !rateLimit(`login-acct:${email}`, 30, 15 * 60000)) {
-      return redirect('/login', 'Too many attempts on this account — wait fifteen minutes and try again.', 'err');
+    // and on the account alone, counting failed attempts only: the address
+    // above comes from a header a caller can forge, so the per-IP bucket was
+    // unlimited guesses for anyone who rotated it. Thirty wrong passwords in
+    // fifteen minutes pauses that account; a correct sign-in clears the count.
+    // The shared demo logins are exempt — they are public.
+    const acct = `login-acct:${email}`;
+    const guarded = !email.endsWith('.demo');
+    if (guarded && rateLimited(acct, 30)) {
+      return redirect('/login', 'Too many wrong passwords on this account — wait fifteen minutes and try again.', 'err');
     }
     const user = q1<UserRow>('SELECT * FROM users WHERE email=? AND active=1', email);
     if (!user) {
@@ -85,8 +88,10 @@ export function routes(r: Router): void {
       return redirect('/login', 'Invalid email or password.', 'err');
     }
     if (!verifyPassword(password, user.password_hash)) {
+      if (guarded) rateStrike(acct, 15 * 60000);
       return redirect('/login', 'Invalid email or password.', 'err');
     }
+    rateClear(acct);
     const t = createSession(user.id);
     setSessionCookie(rq, t);
     run('UPDATE users SET last_login_at=? WHERE id=?', nowIso(), user.id);

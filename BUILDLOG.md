@@ -2333,3 +2333,33 @@ Tests: `tests/hardening.test.ts` (17) — one per finding. Gates: `tsc --noEmit`
 601/601 · full seeded e2e (see the PR for the count) · crawl re-run on a fresh signup · one
 inspection round and one confirmation round, desktop and phone, light and dark. DECISIONS
 #118–#123 appended against the current tail.
+
+## 2026-11-18 — Audit, second pass: what an independent review found in the fixes
+
+The audit commit was reviewed by separate agents asked to defeat the new defenses and find
+regressions, each claim verified a second time. Fifteen held up; all are fixed here.
+
+- **Ledger scope** — the `?property=` guard closed the named-id case only. With no property
+  named, the ledger readers dropped the filter, so a manager scoped to two buildings of five still
+  got all five. `ledgerScope()` now narrows the trial balance, statements, T-12, cash flow, the
+  journal list and the two accounting report definitions to the reader's grant (#124). This closes
+  the "consolidated views" item the first pass logged as open.
+- **`safeHtml` balances its output** — stray `</div>`s closed the draft box and its cards; an
+  unclosed `<a>` made the rest of the page a link. Unpaired closers are dropped, open tags closed.
+- **The account login limit counted every attempt**, so posting someone's email thirty times
+  locked them out, and their own correct sign-ins counted too. It counts wrong passwords only and
+  a correct sign-in clears it.
+- **A refused role deleted the person's existing role** (the edit path deleted grants, then
+  threw). The role is validated before the first write.
+- The application wizard's token steps are closed for live orgs, not only its entrance and submit.
+- Permission refusals and unbalanced entries are logged again; the job-activity report counts
+  days rather than log rows; retention runs in its own `try`, in bounded bites, after the tick's
+  work; the `/pricing` redirect applies to a bare typed URL only; the sub-nav focus ring is inset.
+- First-run Home: the step number is the step's own position, "PDF" is offered only when the live
+  model is connected, the summary check is stated conditionally, and the weekly-report link shows
+  only to people who can open it. Marketing copy: "no agency payment by the 10th" (the engine's
+  rule), not "after".
+
+Tests: `tests/hardening.test.ts` now 21. Gates: `tsc --noEmit` clean · unit 605/605 · scoped
+seeded e2e (smoke, accounting, reports, finfeatures, homescreen, applications, modes, marketing
+batch). DECISIONS #124 appended against the current tail.

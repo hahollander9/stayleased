@@ -9,7 +9,8 @@ import { audit } from '../../lib/audit.ts';
 import { on } from '../../lib/events.ts';
 import { shell, card, tbl, emptyState } from '../../ui/ui.ts';
 import { moneyApprovals, canApproveMoney } from '../m9_accounting/finops.ts';
-import { onboardingProgress, onboardingBanner } from '../setup/onboarding.ts';
+import { onboardingSteps, onboardingBanner } from '../setup/onboarding.ts';
+import { llmStatus } from '../../lib/sim/llm.ts';
 import {
   monthEarnings, cashPosition, owedToYou, vacantUnits, notPaying, agentDrafts,
 } from './service.ts';
@@ -86,7 +87,9 @@ function sum(terms: [string, number][], total: [string, number], opts?: { tone?:
 /** Home before the first building exists. */
 function firstRun(rq: Rq, orgName: string): ReturnType<typeof shell> {
   const ctx = rq.ctx as Ctx;
-  const p = onboardingProgress(ctx);
+  const steps = onboardingSteps(ctx);
+  const stepNo = steps.findIndex((x) => x.key === 'properties') + 1;
+  const pdf = llmStatus().live; // PDF rent rolls are read by the live model only
   const manage = can(ctx, 'properties:manage');
   const answers: [string, string][] = [
     ['What you made this month', 'Money that came in, less money that went out — with last month beside it.'],
@@ -106,9 +109,9 @@ function firstRun(rq: Rq, orgName: string): ReturnType<typeof shell> {
       </div>
       <div class="card sm-first">
         <div class="sm-first-main">
-          <div class="sm-first-step">Step ${Math.min(p.done + 1, p.total)} of ${p.total}</div>
+          <div class="sm-first-step">Step ${stepNo} of ${steps.length}</div>
           <h2 class="sm-first-h">Upload a rent roll</h2>
-          <p class="sm-first-p">Excel, CSV or PDF, from AppFolio, Buildium, Yardi, Rent Manager or a spreadsheet of your own. It is read and laid out for review first; nothing is saved until you approve it, and the totals are checked against the report’s own summary.</p>
+          <p class="sm-first-p">${pdf ? 'Excel, CSV or PDF' : 'Excel or CSV'}, from AppFolio, Buildium, Yardi, Rent Manager or a spreadsheet of your own. It is read and laid out for review first, and nothing is saved until you approve it. Where the report prints its own summary, the totals are checked against it.</p>
           ${manage
             ? html`<div class="btn-row">
                 <a class="btn" href="/setup/import">Upload a rent roll</a>
@@ -121,8 +124,8 @@ function firstRun(rq: Rq, orgName: string): ReturnType<typeof shell> {
           ${answers.map(([t, d]) => html`<li><b>${t}</b><span>${d}</span></li>`)}
         </ol>
       </div>
-      <p class="sm-note">Only want a collections list from the system you already run? The
-        <a href="/weekly-report">weekly action report</a> reads AppFolio exports and saves nothing.</p>`,
+      ${when(can(ctx, 'reports:view'), () => html`<p class="sm-note">Only want a collections list from the system you already run? The
+        <a href="/weekly-report">weekly action report</a> reads AppFolio exports and saves nothing.</p>`)}`,
   });
 }
 
