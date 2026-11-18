@@ -980,3 +980,27 @@
     best.zone.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   });
 })();
+
+// [data-print] — a print button that works under the nonce CSP (no inline
+// onclick). Used by the weekly action report, whose printed copy is the one a
+// principal reads; the print stylesheet hides the chrome and the buttons.
+(function () {
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('[data-print]') : null;
+    if (!b) return;
+    e.preventDefault();
+    window.print();
+  });
+  // A folded list prints as its fold. Lists marked [data-print-open] are part
+  // of the printed copy, so they open for the print (from the button or the
+  // browser's own menu) and fold back afterwards.
+  var opened = [];
+  window.addEventListener('beforeprint', function () {
+    opened = Array.prototype.filter.call(document.querySelectorAll('details[data-print-open]'), function (d) { return !d.open; });
+    opened.forEach(function (d) { d.open = true; });
+  });
+  window.addEventListener('afterprint', function () {
+    opened.forEach(function (d) { d.open = false; });
+    opened = [];
+  });
+})();
