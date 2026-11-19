@@ -463,7 +463,10 @@ export function voidPayment(ctx: Ctx, paymentId: string, date: string, reason: s
   if (!['pending', 'settled'].includes(p.status)) throw new Error(`this payment is already ${String(p.status).replaceAll('_', ' ')}`);
   if (!reason.trim()) throw new Error('say why the payment is being voided');
   tx(() => {
-    postPaymentReversal(ctx, p, date, 'void', 'payment_void');
+    // journal source 'nsf' is the books' kind for "a receipt undone": the AR
+    // control invariant (m9 runInvariants) nets receipts by that kind, so a
+    // void filed under any other would read as a subledger break
+    postPaymentReversal(ctx, p, date, 'void', 'nsf');
     run(`UPDATE payments SET status='voided', nsf_date=? WHERE id=?`, date, p.id);
     releasePlanInstallments(ctx, p);
   });

@@ -221,7 +221,19 @@ export function canDownload(ctx: Ctx | undefined, row: FileRow): boolean {
   if (ctx.orgId !== row.org_id && ctx.kind !== 'platform') return false;
   if (ctx.kind === 'staff' || ctx.kind === 'platform' || ctx.kind === 'system') return true;
   if (row.owner_user_id && row.owner_user_id === ctx.userId) return true;
-  if (row.visibility === 'resident' && ctx.kind === 'resident' && row.owner_user_id === ctx.userId) return true;
+  // A document filed on a lease for residents (the executed lease packet) has
+  // no single owner: everyone on that household may read it. A renewal's
+  // packet is filed on the new lease before the household is carried over at
+  // activation, so membership of the lease it renews counts too.
+  if (row.visibility === 'resident' && ctx.kind === 'resident' && row.entity === 'lease' && row.entity_id) {
+    const member = q1(
+      `SELECT 1 FROM household_members hm JOIN residents r ON r.id=hm.resident_id JOIN leases l ON l.id=hm.lease_id
+       WHERE r.user_id=? AND l.org_id=? AND hm.role != 'occupant'
+         AND (l.id=? OR l.id=(SELECT renewal_of_lease_id FROM leases WHERE id=? AND org_id=?))`,
+      ctx.userId, row.org_id, row.entity_id, row.entity_id, row.org_id,
+    );
+    if (member) return true;
+  }
   if (row.visibility === 'vendor' && ctx.kind === 'vendor') return true;
   return false;
 }

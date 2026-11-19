@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { q, q1, insert, val, run, update, tx, j, js } from '../../lib/db.ts';
 import { id, token } from '../../lib/ids.ts';
-import { nowIso, addDays, addMonths, fmtDate, monthKey, diffDays } from '../../lib/dates.ts';
+import { nowIso, addDays, addMonths, fmtDate, monthKey, diffDays, daysInMonth, parts } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { sysCtx, hashPassword , tempPassword } from '../../lib/auth.ts';
@@ -18,6 +18,7 @@ import { PDFDocument } from 'pdf-lib';
 import { createCharge, postMonthlyChargesForLease, leaseBalance } from '../m8_receivables/service.ts';
 import { recordPayment } from '../m8_receivables/payments.ts';
 import { assertAffordableCompliance, maxTenantRent } from '../m18_verticals/service.ts';
+import { postBothBases } from '../m9_accounting/service.ts';
 
 /** M6 services: templates, packet assembly, built-in e-sign with a
  * tamper-evident SHA-256 trail, the lease lifecycle state machine,
@@ -452,6 +453,7 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
       // ledger continuity: balance-forward the prior lease's remaining balance
       // onto the renewal lease (offsetting AR↔AR pair — GL is untouched) so the
       // household's running balance never "disappears" at rollover.
+      creditRenewalOverlap(ctx, lease);
       const carry = leaseBalance(ctx, lease.renewal_of_lease_id);
       if (carry !== 0) {
         createCharge(ctx, {
@@ -490,7 +492,9 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
 
     // money (fresh leases): security deposit charge + holding-deposit credit.
     // Renewals keep the deposit already held on file — never re-charge it.
-    if (!lease.renewal_of_lease_id && !alt && lease.deposit_cents > 0 && !q1(`SELECT id FROM charges WHERE lease_id=? AND kind='deposit'`, leaseId)) {
+    // A deposit that was already in the bank when the lease was entered by
+    // hand is recorded as held at entry (createLeaseManual) — never billed.
+    if (!lease.renewal_of_lease_id && !alt && !lease.deposit_on_hand && lease.deposit_cents > 0 && !q1(`SELECT id FROM charges WHERE lease_id=? AND kind='deposit'`, leaseId)) {
       createCharge(ctx, {
         leaseId, kind: 'deposit', label: 'Security deposit', amountCents: lease.deposit_cents,
         date: lease.start_date, dueDate: lease.start_date, source: 'move_in',
@@ -505,7 +509,21 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
         }
       }
     }
-    postMonthlyChargesForLease(ctx, { ...lease, status: 'active' }, monthKey(lease.start_date));
+    // First charges. A renewal bills from its own start date (the row carries
+    // the household's original move-in, which would bill the whole first
+    // month on top of the prior term's). Billing begins at the lease start —
+    // or at "start billing from" on a lease entered by hand — and catches up
+    // to the current month, so a lease activated after its first month is not
+    // left with a gap the daily run (current month only) would never fill.
+    const billed = { ...lease, status: 'active', ...(lease.renewal_of_lease_id ? { move_in_date: lease.start_date } : {}) };
+    const firstBilled = lease.billing_start_date && lease.billing_start_date > lease.start_date ? lease.billing_start_date : lease.start_date;
+    const lastMk = monthKey(ctx.businessDate);
+    let mk = monthKey(firstBilled);
+    for (let i = 0; i < 24; i++) {
+      postMonthlyChargesForLease(ctx, billed, mk);
+      mk = monthKey(addMonths(mk + '-01', 1));
+      if (mk > lastMk) break;
+    }
 
     // move-in checklist (fresh move-ins only — a renewal household is already home)
     if (!lease.renewal_of_lease_id && !q1(`SELECT id FROM move_checklists WHERE lease_id=? AND kind='move_in'`, leaseId)) {
@@ -529,6 +547,261 @@ export function activateLease(ctx: Ctx, leaseId: string): void {
   }
   emit(ctx, 'lease.activated', 'lease', leaseId, { unitId: lease.unit_id, propertyId: lease.property_id, renewal: !!lease.renewal_of_lease_id });
   audit(ctx, 'lease', leaseId, 'activated');
+}
+
+/** A renewal that starts mid-month: the prior term was billed for the whole
+ * month on the 1st, and the renewal now bills the days from its start. Credit
+ * the prior term for the days the renewal covers, so no day is billed twice.
+ * Only what was over-billed is credited — a prior-term charge that was already
+ * prorated to its end date is left alone. */
+function creditRenewalOverlap(ctx: Ctx, lease: any): void {
+  const { y, m, day } = parts(lease.start_date);
+  if (day === 1) return;
+  const dim = daysInMonth(y, m);
+  const keepDays = day - 1;
+  const thirty = getSetting<string>(ctx, 'prorate_method', lease.property_id) === 'thirty_day';
+  const frac = thirty ? Math.min(1, keepDays / 30) : keepDays / dim;
+  const rows = q<any>(
+    `SELECT c.id, c.kind, c.label, c.amount_cents, lc.amount_cents AS full_cents FROM charges c
+     JOIN lease_charges lc ON lc.id=c.lease_charge_id
+     WHERE c.org_id=? AND c.lease_id=? AND c.month_key=? AND c.status='active' AND c.source='recurring'`,
+    ctx.orgId, lease.renewal_of_lease_id, monthKey(lease.start_date),
+  );
+  for (const c of rows) {
+    const over = c.amount_cents - Math.round(c.full_cents * frac);
+    if (over <= 0) continue;
+    createCharge(ctx, {
+      leaseId: lease.renewal_of_lease_id, kind: c.kind,
+      label: `${c.label} — credit for ${dim - keepDays} days billed on the renewal`,
+      amountCents: -over, date: lease.start_date, dueDate: lease.start_date, source: 'oneoff',
+    });
+  }
+}
+
+// ---------- a lease entered by hand ----------
+
+export interface ManualLeasePerson {
+  firstName: string;
+  lastName: string;
+  email?: string | null;
+  phone?: string | null;
+  role: 'primary' | 'co' | 'occupant' | 'guarantor';
+}
+
+export interface ManualLeaseInput {
+  unitId: string;
+  people: ManualLeasePerson[];
+  householdName?: string | null;
+  startDate: string;
+  endDate: string;
+  /** when the household actually moved in, if not the lease start */
+  moveInDate?: string | null;
+  rentCents: number;
+  depositCents: number;
+  /** true = the deposit is already in the bank; false = bill it at move-in */
+  depositOnHand: boolean;
+  /** first month to bill, for a tenancy already under way (default: lease start) */
+  billingStartDate?: string | null;
+  /** what the household already owes today (negative = a credit) */
+  openingBalanceCents?: number;
+  /** true = signed on paper, make it active; false = save a draft to send for e-signature */
+  signed: boolean;
+}
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+/** Create a lease for a unit without an application or an import: the
+ * household, its people, the term, rent and deposit. A lease signed on paper
+ * becomes active on its start date (today, if that has passed) through the
+ * same activation every other lease uses — unit occupied, rent billed by the
+ * rent run, move-in checklist. A deposit already on hand is recorded as held
+ * (escrow cash / deposit liability, both books) instead of being billed. */
+export function createLeaseManual(ctx: Ctx, input: ManualLeaseInput): { leaseId: string; status: string } {
+  const unit = q1<any>('SELECT * FROM units WHERE id=? AND org_id=?', input.unitId, ctx.orgId);
+  if (!unit) throw new Error('Choose a unit.');
+  for (const [label, d] of [['lease start', input.startDate], ['lease end', input.endDate]] as const) {
+    if (!ISO_DATE.test(d || '')) throw new Error(`Enter the ${label} date.`);
+  }
+  if (input.endDate <= input.startDate) throw new Error('The lease end date must be after the start date.');
+  const moveIn = input.moveInDate || input.startDate;
+  if (!ISO_DATE.test(moveIn)) throw new Error('Enter the move-in date as a date.');
+  if (!Number.isInteger(input.rentCents) || input.rentCents <= 0) throw new Error('Enter the monthly rent.');
+  if (!Number.isInteger(input.depositCents) || input.depositCents < 0) throw new Error('Enter the deposit as an amount (0 if there is none).');
+  const billingStart = input.billingStartDate || null;
+  if (billingStart && !ISO_DATE.test(billingStart)) throw new Error('Enter "start billing from" as a date.');
+  if (billingStart && billingStart < input.startDate) throw new Error('"Start billing from" cannot be before the lease start.');
+  const opening = input.openingBalanceCents || 0;
+  if (!Number.isInteger(opening)) throw new Error('Enter the balance owed as an amount.');
+  if (opening !== 0 && (!input.signed || input.startDate > ctx.businessDate)) {
+    throw new Error('A balance already owed can only be entered on a signed lease that has started.');
+  }
+  const people = input.people
+    .map((p) => ({ ...p, firstName: p.firstName.trim(), lastName: p.lastName.trim(), email: (p.email || '').trim().toLowerCase() || null, phone: (p.phone || '').trim() || null }))
+    .filter((p) => p.firstName || p.lastName);
+  const primaries = people.filter((p) => p.role === 'primary');
+  if (primaries.length !== 1) throw new Error('Name one primary resident — the person responsible for the lease.');
+  for (const p of people) {
+    if (!p.firstName || !p.lastName) throw new Error('Each person needs a first and last name.');
+    if (p.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(p.email)) throw new Error(`"${p.email}" is not an email address.`);
+  }
+  // the unit must be free for this term
+  const occupying = q1<any>(
+    `SELECT household_name FROM leases WHERE org_id=? AND unit_id=? AND status IN ('active','month_to_month','notice')
+       AND (move_out_date IS NULL OR move_out_date >= ?) LIMIT 1`,
+    ctx.orgId, unit.id, input.startDate,
+  );
+  if (occupying) throw new Error(`Unit ${unit.unit_number} already has a current lease (${occupying.household_name}). Record its move-out first, or start this lease after it.`);
+  const pending = q1<any>(
+    `SELECT household_name FROM leases WHERE org_id=? AND unit_id=? AND renewal_of_lease_id IS NULL
+       AND status IN ('draft','out_for_signature','partially_signed','fully_executed') LIMIT 1`,
+    ctx.orgId, unit.id,
+  );
+  if (pending) throw new Error(`Unit ${unit.unit_number} already has a lease in progress (${pending.household_name}).`);
+  // an existing tenancy needs a billing start, or we would re-bill its history
+  const firstBilled = billingStart && billingStart > input.startDate ? billingStart : input.startDate;
+  if (input.signed && firstBilled < addMonths(ctx.businessDate.slice(0, 8) + '01', -12)) {
+    throw new Error('This lease started more than a year ago. Set "start billing from" to the first month this system should bill, and enter what is already owed as the balance.');
+  }
+
+  const primary = primaries[0]!;
+  const householdName = (input.householdName || '').trim()
+    || (people.filter((p) => ['primary', 'co'].includes(p.role)).length > 1 ? `${primary.lastName} household` : `${primary.firstName} ${primary.lastName}`);
+  const termMonths = Math.max(1, Math.round((diffDays(input.endDate, input.startDate) + 1) / 30.4375));
+  const onHand = input.depositOnHand && input.depositCents > 0;
+  const leaseId = id('lse');
+  let status = input.signed ? 'fully_executed' : 'draft';
+  tx(() => {
+    insert('leases', {
+      id: leaseId, org_id: ctx.orgId, property_id: unit.property_id, unit_id: unit.id,
+      household_name: householdName, status,
+      start_date: input.startDate, end_date: input.endDate, move_in_date: moveIn,
+      rent_cents: input.rentCents, deposit_cents: input.depositCents, deposit_alternative: 0,
+      term_months: termMonths, billing_start_date: billingStart, deposit_on_hand: onHand ? 1 : 0,
+      // The deposits workbench counts a deposit that arrived already held by
+      // this marker (it was written for imports: "held, with no deposit
+      // charge"). A hand-entered deposit on hand is the same fact.
+      import_batch_id: onHand ? MANUAL_ENTRY_BATCH : null,
+      created_at: nowIso(),
+    });
+    insert('lease_charges', {
+      id: id('lc'), org_id: ctx.orgId, lease_id: leaseId, kind: 'rent',
+      label: `Rent — ${unit.unit_number}`, amount_cents: input.rentCents, created_at: nowIso(),
+    });
+    for (const p of people) {
+      const rid = id('res');
+      insert('residents', {
+        id: rid, org_id: ctx.orgId, property_id: unit.property_id, user_id: null,
+        first_name: p.firstName, last_name: p.lastName, email: p.email, phone: p.phone,
+        kind: p.role === 'guarantor' ? 'guarantor' : p.role === 'occupant' ? 'occupant' : 'adult', created_at: nowIso(),
+      });
+      insert('household_members', { id: id('hm'), org_id: ctx.orgId, lease_id: leaseId, resident_id: rid, role: p.role, created_at: nowIso() });
+    }
+    if (onHand) {
+      postBothBases(ctx, {
+        propertyId: unit.property_id, date: ctx.businessDate,
+        memo: `Security deposit already held — ${householdName} (lease entered by hand)`,
+        sourceKind: 'deposit_on_hand', sourceId: leaseId,
+        lines: [
+          { account: '1020', debit: input.depositCents, memo: 'Security deposit cash on hand' },
+          { account: '2100', credit: input.depositCents, memo: 'Security deposits held' },
+        ],
+      });
+    }
+    if (opening !== 0) {
+      createCharge(ctx, {
+        leaseId, kind: 'opening_balance',
+        label: opening > 0 ? 'Balance owed when the lease was entered' : 'Credit on account when the lease was entered',
+        amountCents: opening, date: ctx.businessDate, dueDate: ctx.businessDate, source: 'conversion',
+      });
+    }
+    audit(ctx, 'lease', leaseId, 'create_manual', null, {
+      unit: unit.unit_number, household: householdName, start: input.startDate, end: input.endDate,
+      rentCents: input.rentCents, depositCents: input.depositCents, depositOnHand: onHand, signed: input.signed,
+      billingStart, openingBalanceCents: opening,
+    });
+    if (input.signed && input.startDate <= ctx.businessDate) {
+      activateLease(ctx, leaseId);
+      status = 'active';
+    }
+  });
+  emit(ctx, 'lease.drafted', 'lease', leaseId, { manual: true });
+  return { leaseId, status };
+}
+
+/** leases.import_batch_id for a hand-entered lease whose deposit was already held */
+export const MANUAL_ENTRY_BATCH = 'manual-entry';
+
+// ---------- notice to vacate & move-out, recorded by staff ----------
+
+/** Put a lease on notice with its planned move-out date — the same three
+ * things the resident's own notice does: the lease, the unit, and the event
+ * that opens the make-ready. Calling it again on a lease already on notice
+ * changes the planned date. */
+export function recordNotice(ctx: Ctx, leaseId: string, moveOutDate: string, opts: { noticeDate?: string | null; source?: string } = {}): void {
+  const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  if (!lease) throw new Error('Lease not found.');
+  if (!['active', 'month_to_month', 'notice'].includes(lease.status)) throw new Error('Notice can only be recorded on a current lease.');
+  if (!ISO_DATE.test(moveOutDate || '')) throw new Error('Enter the planned move-out date.');
+  const noticeDate = opts.noticeDate || lease.notice_date || ctx.businessDate;
+  if (!ISO_DATE.test(noticeDate)) throw new Error('Enter the date notice was given.');
+  if (noticeDate > ctx.businessDate) throw new Error('The notice date cannot be in the future.');
+  if (moveOutDate < noticeDate) throw new Error('The move-out date cannot be before the notice date.');
+  if (moveOutDate < (lease.move_in_date || lease.start_date)) throw new Error('The move-out date is before the move-in date.');
+  tx(() => {
+    run(`UPDATE leases SET status='notice', notice_date=?, move_out_date=? WHERE id=? AND org_id=?`, noticeDate, moveOutDate, leaseId, ctx.orgId);
+    run(`UPDATE units SET status='notice' WHERE id=? AND org_id=? AND status='occupied'`, lease.unit_id, ctx.orgId);
+    // an open make-ready follows a changed date
+    run(`UPDATE turns SET move_out_date=? WHERE org_id=? AND lease_id=? AND status='scheduled'`, moveOutDate, ctx.orgId, leaseId);
+  });
+  audit(ctx, 'lease', leaseId, 'notice_to_vacate', { status: lease.status, move_out: lease.move_out_date }, { status: 'notice', notice_date: noticeDate, move_out: moveOutDate, source: opts.source || 'staff' });
+  emit(ctx, 'lease.notice', 'lease', leaseId, { moveOut: moveOutDate, propertyId: lease.property_id, unitId: lease.unit_id });
+}
+
+/** Take back a notice: the household is staying. */
+export function withdrawNotice(ctx: Ctx, leaseId: string): void {
+  const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  if (!lease || lease.status !== 'notice') throw new Error('There is no notice on this lease to withdraw.');
+  const back = lease.mtm_since ? 'month_to_month' : 'active';
+  tx(() => {
+    run(`UPDATE leases SET status=?, notice_date=NULL, move_out_date=NULL WHERE id=? AND org_id=?`, back, leaseId, ctx.orgId);
+    run(`UPDATE units SET status='occupied' WHERE id=? AND org_id=? AND status='notice'`, lease.unit_id, ctx.orgId);
+    run(`UPDATE turns SET status='canceled' WHERE org_id=? AND lease_id=? AND status='scheduled'`, ctx.orgId, leaseId);
+  });
+  audit(ctx, 'lease', leaseId, 'notice_withdrawn', { status: 'notice', move_out: lease.move_out_date }, { status: back });
+  emit(ctx, 'lease.notice_withdrawn', 'lease', leaseId, { propertyId: lease.property_id, unitId: lease.unit_id });
+}
+
+/** The household has moved out: end the lease on the date they actually left.
+ * The unit goes vacant (not ready) with its vacancy clock on that date, and
+ * the make-ready opens if notice had never been recorded. Works with or
+ * without a prior notice — early, late or on the planned day. */
+export function recordMoveOut(ctx: Ctx, leaseId: string, moveOutDate: string): void {
+  const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  if (!lease) throw new Error('Lease not found.');
+  if (!['active', 'month_to_month', 'notice'].includes(lease.status)) throw new Error('Only a current lease can be moved out.');
+  if (!ISO_DATE.test(moveOutDate || '')) throw new Error('Enter the date the household moved out.');
+  if (moveOutDate > ctx.businessDate) throw new Error('That date is in the future — record it as notice to vacate, and the lease ends on that day.');
+  if (moveOutDate < (lease.move_in_date || lease.start_date)) throw new Error('The move-out date is before the move-in date.');
+  tx(() => {
+    run(
+      `UPDATE leases SET status='ended', move_out_date=?, notice_date=COALESCE(notice_date, ?) WHERE id=? AND org_id=?`,
+      moveOutDate, moveOutDate, leaseId, ctx.orgId,
+    );
+    // only this household's unit state: a unit already re-let is left alone
+    if (!q1(`SELECT id FROM leases WHERE org_id=? AND unit_id=? AND id != ? AND status IN ('active','month_to_month','notice')`, ctx.orgId, lease.unit_id, leaseId)) {
+      run(
+        `UPDATE units SET status='vacant_not_ready', vacant_since=?, vacant_since_source='lease' WHERE id=? AND org_id=? AND status IN ('occupied','notice')`,
+        moveOutDate, lease.unit_id, ctx.orgId,
+      );
+    }
+    run(`UPDATE turns SET move_out_date=? WHERE org_id=? AND lease_id=? AND status='scheduled'`, moveOutDate, ctx.orgId, leaseId);
+  });
+  audit(ctx, 'lease', leaseId, 'move_out', { status: lease.status, move_out: lease.move_out_date }, { status: 'ended', move_out: moveOutDate });
+  // the make-ready is opened by the notice event; raise it if it never was
+  if (lease.status !== 'notice') {
+    emit(ctx, 'lease.notice', 'lease', leaseId, { moveOut: moveOutDate, propertyId: lease.property_id, unitId: lease.unit_id });
+  }
+  emit(ctx, 'lease.ended', 'lease', leaseId, { unitId: lease.unit_id, propertyId: lease.property_id });
 }
 
 registerJob({

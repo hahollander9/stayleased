@@ -14,6 +14,7 @@ import { postJE } from '../m9_accounting/service.ts';
 import { Pdf } from '../../lib/pdf.ts';
 import { putFile, getFile } from '../../lib/files.ts';
 import { extractIncome } from '../../lib/sim/dococr.ts';
+import { esc } from '../../lib/html.ts';
 
 /** M5 services: application lifecycle, fees, screening orchestration,
  * household scorecard against versioned criteria, adverse action, unit holds. */
@@ -153,6 +154,157 @@ export function submitApplication(ctx: Ctx, applicationId: string): void {
     }
   });
   emit(ctx, 'application.submitted', 'application', applicationId, { applicants: adults.length });
+}
+
+// ---------- an application entered by staff ----------
+
+export interface StaffApplicantInput {
+  /** applicants.id of an adult already on the application */
+  applicantId: string;
+  firstName: string;
+  lastName: string;
+  email?: string | null;
+  phone?: string | null;
+  incomeMonthlyCents?: number | null;
+  /** null = the report came back with no score (thin file) or none was run */
+  creditScore?: number | null;
+  evictionFlag?: boolean;
+  evictionYearsAgo?: number | null;
+  criminalFlag?: boolean;
+}
+
+export interface StaffApplicationInput {
+  applicants: StaffApplicantInput[];
+  /** the consumer reporting agency whose report staff are transcribing; null = no report was run */
+  agency?: { name: string; address?: string | null; phone?: string | null } | null;
+  /** money actually received at the office, if any */
+  feeReceivedCents?: number;
+  holdDepositReceivedCents?: number;
+  feeReference?: string | null;
+}
+
+export function creditBand(score: number): string {
+  return score >= 740 ? 'excellent' : score >= 670 ? 'good' : score >= 580 ? 'fair' : 'poor';
+}
+
+/** The application as the leasing office takes it: on paper or over the
+ * counter, with a screening report the operator ordered from their own agency.
+ * Fills in the applicants, files what the report said (marked as entered by
+ * staff, with the agency that produced it), scores the household against the
+ * property's written criteria and moves the application to review — the same
+ * place the online path arrives at. Nothing here is simulated: no report is
+ * invented and no fee is booked unless staff say the money was received. */
+export function submitApplicationByStaff(ctx: Ctx, applicationId: string, input: StaffApplicationInput): Scorecard {
+  const app = q1<any>('SELECT * FROM applications WHERE id=? AND org_id=?', applicationId, ctx.orgId);
+  if (!app) throw new Error('Application not found.');
+  if (app.status !== 'draft') throw new Error('This application has already been submitted.');
+  const adults = q<any>(`SELECT * FROM applicants WHERE application_id=? AND kind IN ('primary','co','guarantor')`, applicationId);
+  const byId = new Map(input.applicants.map((a) => [a.applicantId, a]));
+  const agencyName = (input.agency?.name || '').trim();
+  let anyResult = false;
+  for (const a of adults) {
+    const x = byId.get(a.id);
+    if (!x) throw new Error('Fill in every applicant on the application.');
+    if (!x.firstName.trim() || !x.lastName.trim()) throw new Error('Each applicant needs a first and last name.');
+    const email = (x.email || '').trim();
+    if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) throw new Error(`"${email}" is not an email address.`);
+    if (x.incomeMonthlyCents != null && (!Number.isInteger(x.incomeMonthlyCents) || x.incomeMonthlyCents < 0)) throw new Error('Monthly income must be an amount.');
+    if (x.creditScore != null && (!Number.isInteger(x.creditScore) || x.creditScore < 300 || x.creditScore > 850)) throw new Error('A credit score is a number between 300 and 850.');
+    if (x.evictionFlag && x.evictionYearsAgo != null && (!Number.isInteger(x.evictionYearsAgo) || x.evictionYearsAgo < 0)) throw new Error('Enter how many years ago the eviction was, as a whole number.');
+    if (x.creditScore != null || x.evictionFlag || x.criminalFlag) anyResult = true;
+  }
+  if (anyResult && !agencyName) {
+    throw new Error('Name the screening agency the report came from. It is printed on the notice an applicant receives if the application is declined.');
+  }
+  const fee = input.feeReceivedCents || 0;
+  const hold = input.holdDepositReceivedCents || 0;
+  if (!Number.isInteger(fee) || fee < 0 || !Number.isInteger(hold) || hold < 0) throw new Error('Money received must be an amount.');
+  const { version } = currentCriteriaVersion(ctx, app.property_id);
+  let rec!: Scorecard;
+  tx(() => {
+    for (const a of adults) {
+      const x = byId.get(a.id)!;
+      update('applicants', a.id, {
+        first_name: x.firstName.trim(), last_name: x.lastName.trim(),
+        email: (x.email || '').trim().toLowerCase(), phone: (x.phone || '').trim() || null,
+        income_monthly_cents: x.incomeMonthlyCents ?? null, status: 'complete',
+      });
+      if (agencyName) {
+        const score = x.creditScore ?? null;
+        insert('screening_reports', {
+          id: id('scr'), org_id: ctx.orgId, application_id: applicationId, applicant_id: a.id,
+          status: 'complete', credit_score: score, credit_band: score === null ? 'thin_file' : creditBand(score),
+          criminal_flag: x.criminalFlag ? 1 : 0, eviction_flag: x.evictionFlag ? 1 : 0,
+          eviction_years_ago: x.evictionFlag ? (x.evictionYearsAgo ?? 0) : null, thin_file: score === null ? 1 : 0,
+          fraud_flags: '[]', requested_at: nowIso(), completed_at: nowIso(),
+          source: 'manual', agency_name: agencyName,
+          agency_address: (input.agency?.address || '').trim() || null, agency_phone: (input.agency?.phone || '').trim() || null,
+        });
+      }
+    }
+    // money the office actually took in — and only that
+    if (fee + hold > 0 && !app.fees_paid) {
+      for (const basis of ['accrual', 'cash'] as const) {
+        postJE(ctx, {
+          propertyId: app.property_id, date: ctx.businessDate, basis,
+          memo: `Application money received at the office (${applicationId.slice(-6)})`,
+          sourceKind: 'application_fee', sourceId: applicationId,
+          lines: [
+            { account: '1010', debit: fee + hold },
+            ...(fee > 0 ? [{ account: '4060', credit: fee, memo: 'application fee' }] : []),
+            ...(hold > 0 ? [{ account: '2200', credit: hold, memo: 'holding deposit (refundable)' }] : []),
+          ],
+        });
+      }
+      // the stored amounts become what was received, so the holding deposit
+      // later credited at move-in (or refunded) is the real figure
+      update('applications', applicationId, {
+        fees_paid: 1, app_fee_cents: fee, hold_deposit_cents: hold,
+        fee_payment_ref: (input.feeReference || '').trim() || 'received at office',
+      });
+    } else if (!app.fees_paid) {
+      // nothing was collected: no holding deposit exists to credit or refund
+      update('applications', applicationId, { hold_deposit_cents: 0 });
+    }
+    update('applications', applicationId, { submitted_at: nowIso(), criteria_version: version });
+    rec = computeScorecard(ctx, applicationId);
+    if (!agencyName) rec.flags.push('No screening report was entered — the recommendation rests on stated income alone');
+    update('applications', applicationId, { status: 'review', recommendation: rec.recommendation, recommendation_detail: js(rec) });
+  });
+  audit(ctx, 'application', applicationId, 'staff_submit', null, {
+    applicants: adults.length, agency: agencyName || null, feeReceivedCents: fee, holdDepositReceivedCents: hold,
+  });
+  emit(ctx, 'application.submitted', 'application', applicationId, { applicants: adults.length, enteredByStaff: true });
+  emit(ctx, 'application.review_ready', 'application', applicationId, { recommendation: rec.recommendation });
+  return rec;
+}
+
+/** the agency behind this application's staff-entered report, if there is one */
+export function screeningAgency(applicationId: string): { name: string; address: string | null; phone: string | null } | null {
+  const r = q1<any>(
+    `SELECT agency_name, agency_address, agency_phone FROM screening_reports
+     WHERE application_id=? AND source='manual' AND agency_name IS NOT NULL ORDER BY completed_at DESC LIMIT 1`,
+    applicationId,
+  );
+  return r ? { name: r.agency_name, address: r.agency_address, phone: r.agency_phone } : null;
+}
+
+/** The paragraph a notice must carry about the consumer report. It names the
+ * real agency when staff entered one; says so plainly when no report was
+ * used; and only in the demo world mentions the built-in simulated bureau. */
+export function consumerReportNotice(ctx: Ctx, applicationId: string): string {
+  const agency = screeningAgency(applicationId);
+  const rights = 'You have the right to obtain a free copy of your report from the agency within 60 days and to dispute incomplete or inaccurate information directly with the agency. The agency did not make this decision and cannot explain why it was made.';
+  if (agency) {
+    const contact = [agency.address, agency.phone].filter(Boolean).join(' · ');
+    return `This decision was based in whole or in part on information in a consumer report from ${agency.name}${contact ? ` (${contact})` : ''}. ${rights}`;
+  }
+  const anyReport = !!q1('SELECT id FROM screening_reports WHERE application_id=? LIMIT 1', applicationId);
+  if (!anyReport) return 'No consumer report was used in making this decision. It is based on the information provided with the application and our written rental criteria.';
+  if (ctx.orgKind === 'live') {
+    return `This decision was based in whole or in part on information provided by a consumer reporting agency. Contact the leasing office for the agency's name, address and telephone number. ${rights}`;
+  }
+  return `This decision was based in whole or in part on information provided by a consumer reporting agency (simulated bureau for this demo). ${rights}`;
 }
 
 /** bureau responses arrive asynchronously — the scheduler tick (or a manual
@@ -352,7 +504,8 @@ export async function issueAdverseAction(ctx: Ctx, applicationId: string, action
     for (const c of rec.conditions || []) pdf.text(`•  ${c}`);
   }
   pdf.space(4);
-  pdf.text('This decision was based in whole or in part on information provided by a consumer reporting agency (simulated bureau for this demo). You have the right to obtain a free copy of your report within 60 days and to dispute incomplete or inaccurate information directly with the agency. The agency did not make this decision and cannot explain why it was made.', { muted: true, size: 8.5 });
+  const reportNotice = consumerReportNotice(ctx, applicationId);
+  pdf.text(reportNotice, { muted: true, size: 8.5 });
   pdf.footerAllPages(`${app.prop_name} · adverse action record · retain per policy`);
   const bytes = await pdf.bytes();
   const file = putFile(ctx, bytes, {
@@ -363,7 +516,7 @@ export async function issueAdverseAction(ctx: Ctx, applicationId: string, action
     sendEmail(ctx, {
       to: primary.email, toName: `${primary.first_name} ${primary.last_name}`,
       subject: action === 'declined' ? `Update on your application — ${app.prop_name}` : `Your conditional approval — ${app.prop_name}`,
-      body: `<p>Dear ${primary.first_name || 'applicant'},</p><p>${action === 'declined' ? 'We were unable to approve your application at this time.' : 'Your application is approved with conditions.'} The formal notice with your rights and the specific reasons is attached to your file (ref ${file.id}).</p><p>${(rec.reasons || []).map((x: string) => `• ${x}`).join('<br/>')}</p>${action !== 'declined' ? `<p>Conditions:<br/>${(rec.conditions || []).map((x: string) => `• ${x}`).join('<br/>')}</p>` : ''}<p>You may dispute information from the screening agency; details are in the attached notice.</p>`,
+      body: `<p>Dear ${primary.first_name || 'applicant'},</p><p>${action === 'declined' ? 'We were unable to approve your application at this time.' : 'Your application is approved with conditions.'} The formal notice with the specific reasons and your rights is kept on your application file (ref ${file.id}); ask the leasing office for a copy.</p><p>${(rec.reasons || []).map((x: string) => `• ${x}`).join('<br/>')}</p>${action !== 'declined' ? `<p>Conditions:<br/>${(rec.conditions || []).map((x: string) => `• ${x}`).join('<br/>')}</p>` : ''}<p>${esc(reportNotice)}</p>`,
       propertyId: app.property_id, entity: 'application', entityId: applicationId, templateKey: 'adverse_action',
     });
   }

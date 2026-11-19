@@ -15,11 +15,13 @@ import {
   registerNav, pager, emptyState, checkbox, viewBar, rememberDensity,
 } from '../../ui/ui.ts';
 import { lines as lineChart, donut } from '../../lib/charts.ts';
-import { agingRows, leaseBalance, leaseLedger, createCharge } from './service.ts';
+import { agingRows, leaseBalance, leaseLedger, createCharge, CREDIT_CARRIER_SQL } from './service.ts';
+import { statementPdf, sodaPdf } from './statements.ts';
 import { depositDeadline, postDepositInterest } from './depositlaw.ts';
 import {
   recordPayment, PaymentRejected, lateFeeCandidates, assessLateFees, waiveLateFee, receivablesStats,
   createPaymentPlan, primaryContact, depositHeld, finalizeDeposit, openCollectionCase, reversePayment, writeOffBalance,
+  voidPayment, issueDepositRefund, pendingDepositRefund, dispositionAllowed, processorConnected, SIMULATED_METHODS,
 } from './payments.ts';
 import { registerLeaseTab, registerLeaseAction } from '../people/pages.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
@@ -55,6 +57,59 @@ registerDashboardExtras((ctx, propertyId) => {
     panels: null,
   };
 });
+
+/** the lease, if it is this organization's and the viewer may open its property */
+function leaseFor(ctx: Ctx, leaseId: string): any | null {
+  const l = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  return l && canAccessProperty(ctx, l.property_id) ? l : null;
+}
+
+function sentence(msg: string): string {
+  const m = msg.trim();
+  return m.charAt(0).toUpperCase() + m.slice(1) + (/[.!?]$/.test(m) ? '' : '.');
+}
+
+/** a typed date, or a plain-language error instead of a validation dump */
+function dateField(input: unknown, what: string): string {
+  const d = String(input ?? '').trim().slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(d) || Number.isNaN(Date.parse(d + 'T00:00:00Z'))) throw new Error(`Enter ${what} as a date.`);
+  return d;
+}
+
+/** what staff may pick when recording money received. Card and bank draft run
+ * on the simulated processor, so a live organization is not offered them
+ * (and `recordPayment` refuses them there regardless). */
+function staffMethods(ctx: Ctx): [string, string][] {
+  const m: [string, string][] = [
+    ['check', 'Check'], ['money_order', 'Money order'], ['cash_equivalent', 'Certified funds'],
+    ['bank_transfer', 'Bank transfer received'],
+  ];
+  if (processorConnected(ctx)) m.push(['ach', 'ACH (simulated)'], ['card', 'Card (simulated)']);
+  return m;
+}
+
+const CHARGE_KINDS: [string, string][] = [
+  ['other', 'Other charge'], ['utility', 'Utility'], ['amenity', 'Amenity or service'], ['damage', 'Damage'],
+  ['concession', 'Credit or concession (reduces the balance)'],
+];
+const PLAN_CADENCE: Record<string, { label: string; days?: number; months?: number }> = {
+  weekly: { label: 'Every week', days: 7 },
+  biweekly: { label: 'Every 2 weeks', days: 14 },
+  monthly: { label: 'Every month', months: 1 },
+};
+const PAYMENT_STATUS_LABEL: Record<string, string> = {
+  pending: 'pending', settled: 'deposited', nsf: 'returned by bank', chargeback: 'chargeback', voided: 'voided', failed: 'declined',
+};
+
+/** small drop-down panel used by the lease header actions */
+function actionPanel(label: string, body: Child, width = 300): Child {
+  return html`<details style="position:relative">
+    <summary class="btn btn-ghost" style="list-style:none">${label}</summary>
+    <div style="position:absolute;right:0;top:42px;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lg);padding:14px;width:${width}px">
+      ${body}
+    </div>
+  </details>`;
+}
 
 export function routes(r: Router): void {
   // ---------- receivables analytics ----------
@@ -119,10 +174,11 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const candidates = lateFeeCandidates(ctx, ctx.businessDate, ctx.currentPropertyId);
     const recentFees = q<any>(
-      `SELECT c.*, l.household_name, u.unit_number FROM charges c
+      `SELECT c.*, l.household_name, u.unit_number, fw.id AS waiver_id, fw.reason AS waiver_reason FROM charges c
        JOIN leases l ON l.id=c.lease_id JOIN units u ON u.id=l.unit_id
-       WHERE c.org_id=? AND c.kind='late_fee' AND c.status='active' ${ctx.currentPropertyId ? 'AND c.property_id=?' : ''}
-       ORDER BY c.date DESC LIMIT 30`,
+         LEFT JOIN fee_waivers fw ON fw.charge_id=c.id
+       WHERE c.org_id=? AND c.kind IN ('late_fee','nsf_fee') AND c.status='active' AND c.amount_cents>0 ${ctx.currentPropertyId ? 'AND c.property_id=?' : ''}
+       ORDER BY c.date DESC, c.created_at DESC LIMIT 30`,
       ctx.orgId, ...(ctx.currentPropertyId ? [ctx.currentPropertyId] : []),
     );
     return shell(rq, {
@@ -142,13 +198,18 @@ export function routes(r: Router): void {
           )}
           ${when(candidates.length, () => html`<div class="card-body"><form method="post" action="/receivables/latefees/assess" data-confirm="Assess ${candidates.length} late fees now?"><button class="btn">Assess ${candidates.length} fees now</button></form></div>`)}`, { flush: true })}
         ${card('Recently assessed', tbl(
-          [{ label: 'Date' }, { label: 'Household' }, { label: 'Unit' }, { label: 'Fee' }, { label: 'Amount', num: true }, { label: '', w: '120px' }],
+          [{ label: 'Date' }, { label: 'Household' }, { label: 'Unit' }, { label: 'Fee' }, { label: 'Amount', num: true }, { label: 'Waive', w: '320px' }],
           recentFees.map((f) => ({
             cells: [
               fmtDate(f.date), html`<a href="/leases/${f.lease_id}">${f.household_name}</a>`, f.unit_number, f.label, usd(f.amount_cents),
-              f.amount_cents > 0
-                ? html`<form method="post" action="/receivables/latefees/${f.id}/waive"><input type="hidden" name="reason" value="goodwill" /><button class="btn btn-sm btn-ghost" ${!(rq.ctx as Ctx).perms.has('latefees:waive') ? 'disabled' : ''}>Waive</button></form>`
-                : statusBadge(undefined, 'waiver'),
+              f.waiver_id
+                ? html`<span class="badge ok">waived</span> <span class="small muted">${f.waiver_reason}</span>`
+                : ctx.perms.has('latefees:waive')
+                  ? html`<form method="post" action="/receivables/latefees/${f.id}/waive" class="toolbar" data-confirm="Waive this ${usd(f.amount_cents)} fee? A credit for the same amount is posted to the household's ledger.">
+                      ${field('Reason for waiving', input('reason', { required: true, placeholder: 'e.g. first late payment in 2 years' }))}
+                      <button class="btn btn-sm btn-ghost">Waive</button>
+                    </form>`
+                  : html`<span class="small muted">not waived</span>`,
             ],
           })),
           { empty: 'No late fees assessed yet.' },
@@ -164,12 +225,17 @@ export function routes(r: Router): void {
 
   r.post('/receivables/latefees/:id/waive', requirePerm('latefees:waive'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const fee = q1<any>('SELECT property_id FROM charges WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!fee || !canAccessProperty(ctx, fee.property_id)) return notFound('Fee not found');
+    const reason = String(rq.body.reason || '').trim();
+    if (!reason) return redirect('/receivables/latefees', 'Enter the reason for waiving the fee.', 'err');
     try {
-      waiveLateFee(ctx, rq.params.id!, String(rq.body.reason || 'no reason given'));
+      waiveLateFee(ctx, rq.params.id!, reason);
     } catch (e) {
-      return redirect('/receivables/latefees', (e as Error).message, 'err');
+      const msg = (e as Error).message;
+      return redirect('/receivables/latefees', sentence(msg), 'err');
     }
-    return redirect('/receivables/latefees', 'Fee waived (audited).');
+    return redirect('/receivables/latefees', 'Fee waived. The credit is on the household ledger and the reason is in the audit history.');
   });
 
   // ---------- lockbox ----------
@@ -366,7 +432,14 @@ export function routes(r: Router): void {
     if (!l || !canAccessProperty(ctx, l.property_id)) return notFound('Lease not found');
     const balance = leaseBalance(ctx, l.id);
     const notes = q<any>(`SELECT * FROM delinquency_notes WHERE lease_id=? ORDER BY created_at DESC LIMIT 30`, l.id);
-    const plans = q<any>(`SELECT * FROM payment_plans WHERE lease_id=? ORDER BY created_at DESC`, l.id);
+    const plans = q<any>(`SELECT * FROM payment_plans WHERE org_id=? AND lease_id=? ORDER BY created_at DESC`, ctx.orgId, l.id);
+    const installments = q<any>(
+      `SELECT i.*, p.method AS pay_method, p.reference AS pay_ref, p.received_date AS pay_date
+       FROM payment_plan_installments i JOIN payment_plans pp ON pp.id=i.plan_id
+       LEFT JOIN payments p ON p.id=i.payment_id
+       WHERE i.org_id=? AND pp.lease_id=? ORDER BY i.due_date, i.created_at`,
+      ctx.orgId, l.id,
+    );
     const ledger = leaseLedger(ctx, l.id).slice(-12);
     const contact = primaryContact(ctx, l.id);
     return shell(rq, {
@@ -409,15 +482,25 @@ export function routes(r: Router): void {
               <div class="toolbar">
                 ${field('Total', moneyInput('total', balance, { required: true }))}
                 ${field('Installments', select('n', [['2', '2'], ['3', '3'], ['4', '4'], ['6', '6']], '3'))}
+                ${field('How often', select('every', Object.entries(PLAN_CADENCE).map(([k, c]): [string, string] => [k, c.label]), 'biweekly'))}
                 ${field('First due', input('first_due', { type: 'date', value: addDays(ctx.businessDate, 7) }))}
                 <button class="btn btn-sm">Create plan</button>
               </div>
-              <p class="small muted">Equal installments every 2 weeks, auto-charged to the household's saved method when available. Plan default after 2 missed installments.</p>
+              <p class="small muted">The total is split into equal installments. Every payment recorded after the plan starts counts toward it, oldest installment first, so the schedule below updates as money comes in. An installment not covered the day after it is due is marked missed, and the plan defaults after 2 missed installments.${processorConnected(ctx) ? ' In this demo, a household with a saved payment method is charged automatically (simulated).' : ' Nothing is charged automatically.'} A new plan replaces an active one.</p>
             </form>
-            ${when(plans.length, () => tbl(
-              [{ label: 'Created' }, { label: 'Total', num: true }, { label: 'Status' }],
-              plans.map((p) => ({ cells: [fmtDate(p.created_at.slice(0, 10)), usd(p.total_cents), statusBadge(p.status)] })),
-            ))}`)}
+            ${plans.map((p) => html`
+              <h3 style="margin:14px 0 6px;font-size:13px">Plan from ${fmtDate(p.created_at.slice(0, 10))} · ${usd(p.total_cents)} ${statusBadge(p.status)}</h3>
+              ${tbl(
+                [{ label: 'Due' }, { label: 'Amount', num: true }, { label: 'Status' }, { label: 'Covered by' }],
+                installments.filter((i) => i.plan_id === p.id).map((i) => ({
+                  cells: [
+                    fmtDate(i.due_date), usd(i.amount_cents), statusBadge(i.status),
+                    i.payment_id && i.pay_method
+                      ? html`<span class="small">${String(i.pay_method).replaceAll('_', ' ')}${i.pay_ref ? html` #${i.pay_ref}` : ''} · ${fmtDate(i.pay_date)}</span>`
+                      : '',
+                  ],
+                })),
+              )}`)}`)}
         </div>
         <div class="grid cols-2">
           ${card('Notes & promises', notes.length ? html`<ul class="timeline">${notes.map((n) => html`<li class="${n.kind === 'promise_to_pay' ? 'hot' : ''}">
@@ -465,17 +548,34 @@ export function routes(r: Router): void {
 
   r.post('/delinquency/:leaseId/plan', requirePerm('collections:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const total = v.cents({ min: 100 }).parse(rq.body.total);
-    const n = parseInt(String(rq.body.n || '3'), 10);
-    const firstDue = v.date().parse(rq.body.first_due || addDays(ctx.businessDate, 7));
-    const amounts = splitCents(total, n);
-    const installments = amounts.map((amt, i) => ({ dueDate: addDays(firstDue, i * 14), amountCents: amt }));
+    const lease = leaseFor(ctx, rq.params.leaseId!);
+    if (!lease) return notFound('Lease not found');
+    const back = `/delinquency/${lease.id}`;
     try {
-      createPaymentPlan(ctx, rq.params.leaseId!, total, installments);
+      let total: number;
+      try {
+        total = v.cents({ min: 100 }).parse(rq.body.total);
+      } catch {
+        throw new Error('Enter the plan total — at least $1.00.');
+      }
+      const n = parseInt(String(rq.body.n || '3'), 10);
+      if (![2, 3, 4, 6].includes(n)) throw new Error('Choose 2, 3, 4 or 6 installments.');
+      const cadence = PLAN_CADENCE[String(rq.body.every || 'biweekly')];
+      if (!cadence) throw new Error('Choose how often the installments fall due.');
+      const firstDue = dateField(rq.body.first_due || addDays(ctx.businessDate, 7), 'the first due date');
+      const balance = leaseBalance(ctx, lease.id);
+      if (balance <= 0) throw new Error('This household owes nothing, so there is nothing to put on a plan.');
+      if (total > balance) throw new Error(`The plan total cannot be more than the ${usd(balance)} owed.`);
+      const amounts = splitCents(total, n);
+      const installments = amounts.map((amt, i) => ({
+        dueDate: cadence.months ? addMonths(firstDue, i * cadence.months) : addDays(firstDue, i * (cadence.days || 14)),
+        amountCents: amt,
+      }));
+      createPaymentPlan(ctx, lease.id, total, installments);
+      return redirect(back, `Payment plan created: ${n} installments of about ${usd(amounts[0]!)}, ${cadence.label.toLowerCase()}, first due ${fmtDate(firstDue)}.`);
     } catch (e) {
-      return redirect(`/delinquency/${rq.params.leaseId}`, (e as Error).message, 'err');
+      return redirect(back, (e as Error).message, 'err');
     }
-    return redirect(`/delinquency/${rq.params.leaseId}`, `Payment plan created (${n} installments).`);
   });
 
   r.post('/delinquency/:leaseId/collections', requirePerm('collections:manage'), (rq) => {
@@ -509,11 +609,28 @@ export function routes(r: Router): void {
       .map((l) => ({ ...l, held: depositHeld(ctx, l.id) }))
       .filter((l) => l.held > 0 || l.deposit_alternative || l.status === 'notice' || l.status === 'ended');
     const totalHeld = rows.reduce((s, l) => s + l.held, 0);
+    const owed = q<any>(
+      `SELECT r.*, l.household_name, u.unit_number, p.name AS prop_name
+       FROM refunds r JOIN leases l ON l.id=r.lease_id JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=r.property_id
+       WHERE r.org_id=? AND r.kind='deposit' AND r.status='pending'${propFilter(ctx, 'r.property_id').sql} ORDER BY r.date`,
+      ctx.orgId, ...propFilter(ctx, 'r.property_id').params,
+    );
     return shell(rq, {
       title: 'Deposit accountability',
       active: '/deposits',
       subtitle: html`${usd(totalHeld)} held across ${rows.filter((x) => x.held > 0).length} households · return deadlines follow each property's state law`,
       content: html`
+        ${when(owed.length, () => card(html`Refunds to pay <span class="badge warn">${owed.length}</span>`, html`
+          <p class="small muted" style="margin:0 0 8px">These deposits have been settled and the amounts below are owed back. The money stays in the deposit account and on the books as held until the check is recorded here.</p>
+          ${tbl(
+            [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Settled' }, { label: 'Refund owed', num: true }, { label: 'Record the check', w: '420px' }],
+            owed.map((o) => ({
+              cells: [
+                html`<a href="/leases/${o.lease_id}?tab=deposit"><b>${o.household_name}</b></a>`, o.unit_number, o.prop_name, fmtDate(o.date), usd(o.amount_cents),
+                refundIssueForm(ctx, o, ''),
+              ],
+            })),
+          )}`))}
         ${card(null, tbl(
           [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Status' }, { label: 'Held', num: true }, { label: 'Move-out' }, { label: 'State clock' }, { label: 'Return due' }],
           rows.slice(0, 200).map((l) => {
@@ -545,42 +662,114 @@ export function routes(r: Router): void {
   // record payment / reverse / disposition actions under leases
   r.post('/leases/:id/payments', requirePerm('payments:record'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const lease = leaseFor(ctx, rq.params.id!);
+    if (!lease) return notFound('Lease not found');
     try {
+      const method = String(rq.body.method || 'check');
+      if (!staffMethods(ctx).some(([k]) => k === method)) {
+        throw new PaymentRejected(SIMULATED_METHODS.has(method)
+          ? 'Card and bank-draft payments are not connected for this account, so nothing was charged. Record money already received as a check, money order, certified funds or bank transfer.'
+          : 'Choose how the payment was received.');
+      }
+      let amountCents: number;
+      try {
+        amountCents = v.cents({ min: 1 }).parse(rq.body.amount);
+      } catch {
+        throw new PaymentRejected('Enter the amount received, for example 850.00.');
+      }
       recordPayment(ctx, {
-        leaseId: rq.params.id!,
-        amountCents: v.cents({ min: 1 }).parse(rq.body.amount),
-        method: v.oneOf('ach', 'card', 'check', 'money_order', 'cash_equivalent').parse(rq.body.method || 'check'),
-        reference: rq.body.reference ? String(rq.body.reference) : undefined,
+        leaseId: lease.id,
+        amountCents,
+        method: method as 'check',
+        reference: rq.body.reference ? String(rq.body.reference).trim().slice(0, 60) : undefined,
         receivedDate: ctx.businessDate,
         memo: rq.body.memo ? String(rq.body.memo) : 'staff entered',
       });
     } catch (e) {
-      if (e instanceof PaymentRejected) return redirect(`/leases/${rq.params.id}`, e.message, 'err');
+      if (e instanceof PaymentRejected) {
+        const msg = e.message;
+        return redirect(`/leases/${lease.id}`, sentence(msg), 'err');
+      }
       throw e;
     }
-    return redirect(`/leases/${rq.params.id}`, 'Payment recorded — receipt sent.');
+    return redirect(`/leases/${lease.id}`, 'Payment recorded.');
   });
 
   r.post('/leases/:id/charges', requirePerm('ledger:charge'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    createCharge(ctx, {
-      leaseId: rq.params.id!,
-      kind: v.oneOf('rent', 'utility', 'amenity', 'damage', 'other', 'late_fee', 'concession').parse(rq.body.kind || 'other'),
-      label: String(rq.body.label || 'Charge'),
-      amountCents: v.cents().parse(rq.body.amount),
-      date: ctx.businessDate,
-      source: 'oneoff',
-    });
-    return redirect(`/leases/${rq.params.id}`, 'Charge posted.');
+    const lease = leaseFor(ctx, rq.params.id!);
+    if (!lease) return notFound('Lease not found');
+    const back = `/leases/${lease.id}${rq.body.tab === 'deposit' ? '?tab=deposit' : ''}`;
+    const kind = String(rq.body.kind || 'other');
+    if (!['rent', 'utility', 'amenity', 'damage', 'other', 'late_fee', 'concession'].includes(kind)) {
+      return redirect(back, 'Choose what kind of charge this is.', 'err');
+    }
+    const label = String(rq.body.label || '').trim().slice(0, 120);
+    if (!label) return redirect(back, 'Describe the charge — the description is what the resident sees on the ledger.', 'err');
+    let cents: number;
+    try {
+      cents = v.cents().parse(rq.body.amount);
+    } catch {
+      return redirect(back, 'Enter an amount, for example 75.00.', 'err');
+    }
+    if (cents === 0) return redirect(back, 'Enter an amount greater than zero.', 'err');
+    const credit = kind === 'concession';
+    if (cents < 0 && !credit) {
+      return redirect(back, 'A charge cannot be negative. To reduce what the household owes, choose "Credit or concession".', 'err');
+    }
+    // a credit is typed as a plain amount and posted as a reduction
+    const amountCents = credit ? -Math.abs(cents) : cents;
+    try {
+      const chargeId = createCharge(ctx, {
+        leaseId: lease.id, kind, label, amountCents, date: ctx.businessDate,
+        source: kind === 'damage' ? 'damage' : 'oneoff',
+      });
+      audit(ctx, 'charge', chargeId, credit ? 'credit_posted' : 'charge_posted', null, { leaseId: lease.id, kind, label, amount: amountCents });
+    } catch (e) {
+      return redirect(back, `Not posted: ${(e as Error).message}`, 'err');
+    }
+    return redirect(back, credit
+      ? `Credit of ${usd(-amountCents)} posted. Balance is now ${usd(leaseBalance(ctx, lease.id))}.`
+      : `Charge of ${usd(amountCents)} posted. Balance is now ${usd(leaseBalance(ctx, lease.id))}.`);
   });
 
   r.post('/leases/:id/deposit/finalize', requirePerm('deposits:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const result = finalizeDeposit(ctx, rq.params.id!, { date: ctx.businessDate, toCollections: rq.body.to_collections === '1' });
-    return redirect(
-      `/leases/${rq.params.id}?tab=deposit`,
-      `Disposition complete: ${usd(result.applied)} applied, ${usd(result.refunded)} refunded${result.balanceDue > 0 ? `, ${usd(result.balanceDue)} still owed` : ''}.`,
-    );
+    const lease = leaseFor(ctx, rq.params.id!);
+    if (!lease) return notFound('Lease not found');
+    const back = `/leases/${lease.id}?tab=deposit`;
+    try {
+      let moveOutDate: string | null = null;
+      if (!dispositionAllowed(lease)) {
+        if (!rq.body.move_out) throw new Error('Enter the move-out date. A deposit is settled when the household leaves, and this lease is still active.');
+        moveOutDate = dateField(rq.body.move_out, 'the move-out date');
+      }
+      if (depositHeld(ctx, lease.id) <= 0 && !lease.deposit_alternative) throw new Error('There is no deposit held to settle on this lease.');
+      const result = finalizeDeposit(ctx, lease.id, { date: ctx.businessDate, toCollections: rq.body.to_collections === '1', moveOutDate });
+      const refundNote = result.refunded <= 0 ? ''
+        : result.refundStatus === 'pending'
+          ? ` ${usd(result.refunded)} is owed back to the household — write the check, then record its number below.`
+          : ` ${usd(result.refunded)} refunded (simulated check — this is a demo).`;
+      return redirect(back, `Deposit settled: ${usd(result.applied)} applied to the balance.${refundNote}${result.balanceDue > 0 ? ` ${usd(result.balanceDue)} is still owed.` : ''}`);
+    } catch (e) {
+      return redirect(back, (e as Error).message, 'err');
+    }
+  });
+
+  r.post('/refunds/:id/issue', requirePerm('deposits:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const refund = q1<any>(`SELECT * FROM refunds WHERE id=? AND org_id=? AND kind='deposit'`, rq.params.id!, ctx.orgId);
+    if (!refund || !canAccessProperty(ctx, refund.property_id)) return notFound('Refund not found');
+    const back = rq.body.back === 'lease' ? `/leases/${refund.lease_id}?tab=deposit` : '/deposits';
+    try {
+      const date = dateField(rq.body.date || ctx.businessDate, 'the check date');
+      if (!String(rq.body.check_number || '').trim()) throw new Error('Enter the check number');
+      issueDepositRefund(ctx, refund.id, { checkNumber: String(rq.body.check_number || ''), date });
+    } catch (e) {
+      const msg = (e as Error).message;
+      return redirect(back, sentence(msg), 'err');
+    }
+    return redirect(back, `Refund of ${usd(refund.amount_cents)} recorded as paid by check ${String(rq.body.check_number).trim()}. The deposit account and the deposits-held balance are reduced by that amount.`);
   });
 
   r.post('/leases/:id/deposit/interest', requirePerm('deposits:manage'), (rq) => {
@@ -593,15 +782,79 @@ export function routes(r: Router): void {
     }
   });
 
+  // a payment the bank returned: balance back, returned-payment fee, notice
   r.post('/payments/:id/reverse', requirePerm('payments:refund'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const p = q1<any>('SELECT * FROM payments WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!p) return notFound();
-    if (!['pending', 'settled'].includes(p.status)) return badRequest('payment is not reversible');
-    reversePayment(ctx, p, ctx.businessDate, p.method === 'card' ? 'chargeback' : 'nsf');
-    audit(ctx, 'payment', p.id, 'manual_reversal');
-    return redirect(`/leases/${p.lease_id}`, 'Payment reversed; balance reinstated with fee.');
+    if (!p || !canAccessProperty(ctx, p.property_id)) return notFound();
+    const back = `/leases/${p.lease_id}?tab=payments`;
+    if (p.method === 'credit') return redirect(back, 'A deposit or credit application cannot be returned.', 'err');
+    if (!['pending', 'settled'].includes(p.status)) return redirect(back, `This payment is already ${PAYMENT_STATUS_LABEL[p.status] || p.status}.`, 'err');
+    try {
+      reversePayment(ctx, p, ctx.businessDate, p.method === 'card' ? 'chargeback' : 'nsf');
+    } catch (e) {
+      return redirect(back, `Not reversed: ${(e as Error).message}`, 'err');
+    }
+    audit(ctx, 'payment', p.id, 'manual_reversal', { status: p.status }, { status: p.method === 'card' ? 'chargeback' : 'nsf' });
+    const fee = getSetting<number>(ctx, 'nsf_fee_cents', p.property_id);
+    return redirect(back, `Payment of ${usd(p.amount_cents)} marked as returned. The balance is reinstated${fee > 0 ? ` and a ${usd(fee)} returned-payment fee was charged` : ''}.`);
   });
+
+  // a payment keyed in by mistake: balance back, nothing else
+  r.post('/payments/:id/void', requirePerm('payments:refund'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const p = q1<any>('SELECT * FROM payments WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!p || !canAccessProperty(ctx, p.property_id)) return notFound();
+    const back = `/leases/${p.lease_id}?tab=payments`;
+    try {
+      voidPayment(ctx, p.id, ctx.businessDate, String(rq.body.reason || ''));
+    } catch (e) {
+      const msg = (e as Error).message;
+      return redirect(back, sentence(msg), 'err');
+    }
+    return redirect(back, `Payment of ${usd(p.amount_cents)} voided. The balance is reinstated; no fee was charged.`);
+  });
+
+  // ---------- statements a staff member can hand over ----------
+  const monthStatement = async (rq: Rq, mkRaw: string) => {
+    const ctx = rq.ctx as Ctx;
+    const lease = leaseFor(ctx, rq.params.id!);
+    if (!lease) return notFound('Lease not found');
+    const mk = mkRaw.replace(/\.pdf$/, '');
+    if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(mk)) return badRequest('Choose a month, for example 2026-08.');
+    const bytes = await statementPdf(ctx, lease.id, mk);
+    return fileRes(bytes, 'application/pdf', { filename: `statement-${mk}.pdf`, inline: true });
+  };
+  r.get('/leases/:id/statements/:mk', requirePerm('ledger:view'), (rq) => monthStatement(rq, String(rq.params.mk || '')));
+  r.get('/leases/:id/statement.pdf', requirePerm('ledger:view'), (rq) => monthStatement(rq, rq.query.get('month') || monthKey((rq.ctx as Ctx).businessDate)));
+
+  r.get('/leases/:id/ledger.csv', requirePerm('ledger:view'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const lease = leaseFor(ctx, rq.params.id!);
+    if (!lease) return notFound('Lease not found');
+    const csv = toCsv(
+      ['date', 'description', 'charge', 'payment', 'balance'],
+      leaseLedger(ctx, lease.id).map((row) => [row.date, row.label, row.charge_cents ? row.charge_cents / 100 : '', row.credit_cents ? row.credit_cents / 100 : '', row.balance / 100]),
+    );
+    return fileRes(csv, 'text/csv', { filename: `ledger-${String(lease.household_name).replace(/\W+/g, '-').toLowerCase()}-${ctx.businessDate}.csv` });
+  });
+
+  r.get('/leases/:id/soda.pdf', requirePerm('deposits:manage'), async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const lease = leaseFor(ctx, rq.params.id!);
+    if (!lease) return notFound('Lease not found');
+    const bytes = await sodaPdf(ctx, lease.id);
+    return fileRes(bytes, 'application/pdf', { filename: `final-statement-${String(lease.household_name).replace(/\W+/g, '-').toLowerCase()}.pdf`, inline: true });
+  });
+}
+
+function refundIssueForm(ctx: Ctx, refund: any, back: 'lease' | ''): Child {
+  return html`<form method="post" action="/refunds/${refund.id}/issue" class="toolbar" data-confirm="Record this ${usd(refund.amount_cents)} refund as paid? This reduces the deposit account and the deposits-held balance.">
+    <input type="hidden" name="back" value="${back}" />
+    ${field('Check number', input('check_number', { required: true, placeholder: 'e.g. 1042' }))}
+    ${field('Check date', input('date', { type: 'date', value: ctx.businessDate, required: true }))}
+    <button class="btn btn-sm">Record check</button>
+  </form>`;
 }
 
 // lease page integrations
@@ -610,53 +863,143 @@ registerLeaseTab((ctx, lease) => ({
   label: 'Deposit',
   render: () => {
     const held = depositHeld(ctx, lease.id);
-    const activity = q<any>('SELECT * FROM deposit_activity WHERE lease_id=? ORDER BY date', lease.id);
+    const activity = q<any>('SELECT * FROM deposit_activity WHERE org_id=? AND lease_id=? ORDER BY date', ctx.orgId, lease.id);
+    const refunds = q<any>(`SELECT * FROM refunds WHERE org_id=? AND lease_id=? AND kind='deposit' ORDER BY created_at`, ctx.orgId, lease.id);
+    const owed = refunds.filter((x) => x.status === 'pending');
+    const refundOwed = pendingDepositRefund(ctx, lease.id);
+    const settled = refunds.length > 0 || activity.some((a) => a.kind === 'apply' || a.kind === 'refund');
     const balance = leaseBalance(ctx, lease.id);
     const prop = q1<any>('SELECT state FROM properties WHERE id=?', lease.property_id);
     const dl2 = depositDeadline(ctx, lease.property_id, prop?.state, lease.move_out_date);
+    const canManage = ctx.perms.has('deposits:manage');
+    const leaving = dispositionAllowed(lease);
     return html`
       ${card('Deposit position', dl([
         ['Contract deposit', lease.deposit_alternative ? html`Deposit alternative <span class="badge violet">no cash deposit</span>` : usd(lease.deposit_cents)],
         ['Currently held', usd(held)],
+        ...(refundOwed > 0 ? [['Refund owed, check not yet recorded', html`<b>${usd(refundOwed)}</b>`] as [Child, Child]] : []),
         ['Account balance', html`<span class="${balance > 0 ? 'neg' : ''}">${usd(balance)}</span>`],
         ['Return deadline', html`${prop?.state || '—'} law: ${dl2.days} days after move-out${dl2.rule.note ? html` <span class="muted small">(${dl2.rule.note})</span>` : ''}${lease.move_out_date && dl2.due ? html` — due <b>${fmtDate(dl2.due)}</b> ${dl2.daysLeft! < 0 ? html`<span class="badge bad">overdue ${-dl2.daysLeft!}d</span>` : html`<span class="badge ${dl2.daysLeft! <= 7 ? 'warn' : 'ok'}">${dl2.daysLeft}d left</span>`}` : ''}`],
         ...(dl2.rule.interest ? [['Interest', html`required in ${prop?.state} — accrues at the rate under <a href="/admin/settings?section=deposits-and-move-out">Settings → Deposit interest</a>`] as [Child, Child]] : []),
-      ]))}
-      ${when(held > 0 && dl2.rule.interest, () => html`<form method="post" action="/leases/${lease.id}/deposit/interest" class="toolbar" style="margin:-6px 0 14px">
+      ]), canManage && (settled || (held > 0 && leaving)) ? {
+        actions: html`<a class="btn btn-ghost btn-sm" href="/leases/${lease.id}/soda.pdf" target="_blank" rel="noopener">${settled ? 'Final statement (PDF)' : 'Draft final statement (PDF)'}</a>`,
+      } : undefined)}
+      ${when(held > 0 && dl2.rule.interest && canManage, () => html`<form method="post" action="/leases/${lease.id}/deposit/interest" class="toolbar" style="margin:-6px 0 14px">
         <button class="btn btn-ghost btn-sm">Accrue deposit interest through today</button>
         <span class="small muted">posts DR 5720 / CR 2100 and adds to the held balance</span>
       </form>`)}
+      ${when(owed.length && canManage, () => card('Refund owed to the household', html`
+        <p class="small muted">The deposit is settled and this amount is owed back. Write the check, then record it here — that is when the deposit account and the deposits-held balance go down. Send the final statement with it${lease.move_out_date && dl2.due ? html`, by <b>${fmtDate(dl2.due)}</b>` : ''}.</p>
+        ${owed.map((o) => html`<div style="margin-top:8px"><b>${usd(o.amount_cents)}</b> ${refundIssueForm(ctx, o, 'lease')}</div>`)}`))}
       ${when(activity.length, () => card('Deposit activity', tbl(
         [{ label: 'Date' }, { label: 'Kind' }, { label: 'Memo' }, { label: 'Amount', num: true }],
         activity.map((a) => ({ cells: [fmtDate(a.date), statusBadge(undefined, a.kind), a.memo || '', usd(a.amount_cents)] })),
       ), { flush: true }))}
-      ${when(held > 0 && ['notice', 'ended', 'month_to_month', 'active'].includes(lease.status), () => card('Move-out disposition (SODA)', html`
-        <p class="small muted">Post any damage charges on the ledger first (they appear in the final statement), then finalize: the held deposit applies to the balance oldest-first, any remainder refunds by check, any shortfall can escalate to collections. An <b>itemized statement is required</b> when any portion is withheld — the SODA prints from the Statements panel below and must go out by the return deadline above.</p>
-        <form method="post" action="/leases/${lease.id}/charges" class="toolbar">
+      ${when(canManage && held > 0 && ['notice', 'ended', 'month_to_month', 'active'].includes(lease.status), () => card('Settle the deposit at move-out', html`
+        <p class="small muted">Post any damage charges first, then settle: the held deposit pays the open balance, anything left over is owed back to the household by check, and any shortfall can go to collections. An <b>itemized statement is required</b> when any part is withheld — download it from the button at the top of this tab and send it by the return deadline.</p>
+        ${when(ctx.perms.has('ledger:charge'), () => html`<form method="post" action="/leases/${lease.id}/charges" class="toolbar">
           <input type="hidden" name="kind" value="damage" />
-          ${field('Damage description', input('label', { placeholder: 'Carpet replacement — bedroom' }))}
-          ${field('Amount', moneyInput('amount'))}
+          <input type="hidden" name="tab" value="deposit" />
+          ${field('Damage description', input('label', { required: true, placeholder: 'Carpet replacement — bedroom' }))}
+          ${field('Amount', moneyInput('amount', null, { required: true }))}
           <button class="btn btn-sm btn-ghost">Post damage charge</button>
-        </form>
-        <form method="post" action="/leases/${lease.id}/deposit/finalize" data-confirm="Finalize the deposit disposition? This posts GL entries and issues any refund.">
+        </form>`)}
+        <form method="post" action="/leases/${lease.id}/deposit/finalize" data-confirm="Settle this deposit? The applied amount posts to the books now. Any refund is recorded as owed until the check is entered.">
+          ${when(!leaving, () => html`
+            <p class="small"><b>This lease is still active.</b> Enter the date the household moves out — the lease is put on notice with that date, and the deposit is settled against it.</p>
+            ${field('Move-out date', input('move_out', { type: 'date', required: true }))}`)}
           ${checkbox('to_collections', 'Open a collections case if a balance remains', true)}
-          <button class="btn">Finalize disposition</button>
+          <button class="btn">Settle deposit</button>
         </form>`))}`;
   },
 }));
 
+// payments on this lease, with the two ways to undo one, and statements
+registerLeaseTab((ctx, lease) => {
+  if (!ctx.perms.has('ledger:view')) return null;
+  return {
+    key: 'payments',
+    label: 'Payments',
+    render: () => {
+      const payments = q<any>(
+        `SELECT * FROM payments WHERE org_id=? AND lease_id=? AND NOT (${CREDIT_CARRIER_SQL}) ORDER BY received_date DESC, created_at DESC LIMIT 200`,
+        ctx.orgId, lease.id,
+      );
+      const canUndo = ctx.perms.has('payments:refund');
+      const nsfFee = getSetting<number>(ctx, 'nsf_fee_cents', lease.property_id);
+      return html`
+        ${card('Payments received', tbl(
+          [{ label: 'Received' }, { label: 'Method' }, { label: 'Reference' }, { label: 'Amount', num: true }, { label: 'Status' }, { label: 'Correct a payment', w: '300px' }],
+          payments.map((p) => ({
+            cells: [
+              html`<span class="nowrap">${fmtDate(p.received_date)}</span>`,
+              p.method === 'credit' ? 'Deposit or credit applied' : String(p.method).replaceAll('_', ' '),
+              p.method === 'credit' ? (p.memo || '') : (p.reference || '—'),
+              usd(p.amount_cents),
+              statusBadge(p.status, PAYMENT_STATUS_LABEL[p.status] || p.status),
+              canUndo && p.method !== 'credit' && ['pending', 'settled'].includes(p.status)
+                ? html`<details>
+                    <summary class="btn btn-sm btn-ghost" style="list-style:none">Void or return</summary>
+                    <form method="post" action="/payments/${p.id}/void" style="margin-top:8px" data-confirm="Void this ${usd(p.amount_cents)} payment? The balance is reinstated. No fee is charged.">
+                      ${field('Entered by mistake — reason', input('reason', { required: true, placeholder: 'e.g. posted to the wrong household' }))}
+                      <button class="btn btn-sm">Void payment</button>
+                    </form>
+                    <form method="post" action="/payments/${p.id}/reverse" style="margin-top:10px" data-confirm="Mark this ${usd(p.amount_cents)} payment as returned by the bank? The balance is reinstated${nsfFee > 0 ? ` and a ${usd(nsfFee)} returned-payment fee is charged` : ''}.">
+                      <button class="btn btn-sm btn-danger">${p.method === 'card' ? 'Charged back by the card issuer' : 'Returned by the bank (NSF)'}</button>
+                      <div class="small muted">Reinstates the balance${nsfFee > 0 ? html` and charges the ${usd(nsfFee)} returned-payment fee` : ''}.</div>
+                    </form>
+                  </details>`
+                : '',
+            ],
+          })),
+          { empty: 'No payments recorded on this lease yet.' },
+        ), { flush: true })}
+        ${card('Statements', statementForm(ctx, lease))}`;
+    },
+  };
+});
+
+function statementForm(ctx: Ctx, lease: any): Child {
+  const months: [string, string][] = [];
+  const first = monthKey(lease.move_in_date || lease.start_date || ctx.businessDate);
+  for (let i = 0; i < 36; i++) {
+    const mk = monthKey(addMonths(ctx.businessDate, -i));
+    months.push([mk, fmtMonth(mk)]);
+    if (mk <= first) break;
+  }
+  return html`<form method="get" action="/leases/${lease.id}/statement.pdf" target="_blank">
+      ${field('Statement month', select('month', months, months[0]![0]))}
+      <button class="btn" style="width:100%">Download statement (PDF)</button>
+    </form>
+    <p class="small" style="margin:10px 0 0"><a href="/leases/${lease.id}/ledger.csv">Download the full ledger (CSV)</a></p>`;
+}
+
 registerLeaseAction((ctx, lease) => {
   if (!ctx.perms.has('payments:record') || !['active', 'month_to_month', 'notice', 'ended'].includes(lease.status)) return null;
   const balance = leaseBalance(ctx, lease.id);
-  return html`<details style="position:relative">
-    <summary class="btn btn-ghost" style="list-style:none">Record payment</summary>
-    <div style="position:absolute;right:0;top:42px;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lg);padding:14px;width:300px">
+  return actionPanel('Record payment', html`
       <form method="post" action="/leases/${lease.id}/payments">
         ${field('Amount', moneyInput('amount', balance > 0 ? balance : null, { required: true }))}
-        ${field('Method', select('method', [['check', 'Check'], ['money_order', 'Money order'], ['ach', 'ACH (simulated)'], ['card', 'Card (simulated)'], ['cash_equivalent', 'Certified funds']]))}
+        ${field('Method', select('method', staffMethods(ctx)))}
         ${field('Reference #', input('reference', { placeholder: 'check number' }))}
         <button class="btn" style="width:100%">Post payment</button>
       </form>
-    </div>
-  </details>`;
+      ${when(!processorConnected(ctx), () => html`<p class="small muted" style="margin:8px 0 0">Records money already received. Card and bank-draft collection is not connected for this account.</p>`)}`);
+});
+
+registerLeaseAction((ctx, lease) => {
+  if (!ctx.perms.has('ledger:charge') || !['active', 'month_to_month', 'notice', 'ended'].includes(lease.status)) return null;
+  return actionPanel('Add charge or credit', html`
+      <form method="post" action="/leases/${lease.id}/charges">
+        ${field('Type', select('kind', CHARGE_KINDS, 'other'))}
+        ${field('Description', input('label', { required: true, placeholder: 'e.g. Lockout service call' }))}
+        ${field('Amount', moneyInput('amount', null, { required: true }))}
+        <button class="btn" style="width:100%">Post to ledger</button>
+      </form>
+      <p class="small muted" style="margin:8px 0 0">Posts today. A credit is typed as a plain amount and reduces the balance.</p>`, 320);
+});
+
+registerLeaseAction((ctx, lease) => {
+  if (!ctx.perms.has('ledger:view')) return null;
+  return actionPanel('Statement', statementForm(ctx, lease), 280);
 });

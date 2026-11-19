@@ -119,6 +119,17 @@ export function db(): DatabaseSync {
     // Insurance: staff review of resident-uploaded policies (who, and why rejected).
     "ALTER TABLE insurance_policies ADD COLUMN reviewed_by TEXT",
     "ALTER TABLE insurance_policies ADD COLUMN review_note TEXT",
+    // Leases entered by hand: 1 = the security deposit was already in the bank
+    // when the lease was typed in, so it is recorded as held (escrow cash and
+    // the deposit liability) and never billed to the household again.
+    "ALTER TABLE leases ADD COLUMN deposit_on_hand INTEGER NOT NULL DEFAULT 0",
+    // Screening results typed in by staff from a real agency's report.
+    // source NULL = the built-in (simulated) bureau; 'manual' = staff-entered.
+    // The agency's name and contact details go on the adverse-action notice.
+    "ALTER TABLE screening_reports ADD COLUMN source TEXT",
+    "ALTER TABLE screening_reports ADD COLUMN agency_name TEXT",
+    "ALTER TABLE screening_reports ADD COLUMN agency_address TEXT",
+    "ALTER TABLE screening_reports ADD COLUMN agency_phone TEXT",
   ];
   for (const m of MIGRATIONS) {
     try {

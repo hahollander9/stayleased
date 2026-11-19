@@ -1,4 +1,4 @@
-import { html, raw, when, join } from '../../lib/html.ts';
+import { html, raw, when, join, type Raw } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, fileRes, type Router, type Rq, type Res } from '../../lib/http.ts';
 import { requireResident, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, run, insert, update, js, j } from '../../lib/db.ts';
@@ -58,6 +58,11 @@ const WO_CATEGORIES: [string, string][] = [
   ['appliance', 'Appliance'], ['doors_locks', 'Doors & locks'], ['pest', 'Pest control'],
   ['grounds', 'Grounds / common areas'], ['safety', 'Safety concern'], ['other', 'Something else'],
 ];
+
+/** the property's own office number, when the operator has entered one */
+function propertyPhone(propertyId: string): string | null {
+  return (q1<{ phone: string | null }>('SELECT phone FROM properties WHERE id=?', propertyId)?.phone || '').trim() || null;
+}
 
 const EMERGENCY_WORDS = /(gas leak|smell gas|carbon monoxide|\bfire\b|flood|burst pipe|no heat|sewage|sparking|smoke)/i;
 
@@ -366,13 +371,16 @@ export function routes(r: Router): void {
   r.get('/portal/requests/new', requireResident, (rq) => {
     const pc = portalCtx(rq);
     if (!pc) return noLease(rq);
+    const officePhone = propertyPhone(pc.lease.prop_id);
     return portalShell(rq, {
       title: 'New maintenance request',
       active: '/portal/requests',
       back: '/portal/requests',
       propertyName: pc.lease.prop_name,
       content: card(null, html`
-        <div class="callout bad" style="margin-top:0"><b>Emergency?</b> Gas smell, fire, flooding, or no heat in winter — call the 24/7 line at (555) 000-9111 first.</div>
+        <div class="callout bad" style="margin-top:0"><b>Emergency?</b> For a fire or a gas smell, call 911 first. For flooding or no heat in winter, ${officePhone
+          ? html`call the property office at <a href="tel:${officePhone}">${officePhone}</a>`
+          : 'call your property office directly'} — a request sent from this page is not watched around the clock.</div>
         <form method="post" action="/portal/requests/new" enctype="multipart/form-data">
           ${field('What kind of issue?', select('category', WO_CATEGORIES, 'plumbing', { required: true }))}
           ${field('Short summary', input('summary', { required: true, placeholder: 'Kitchen sink dripping under the cabinet' }))}
@@ -419,7 +427,13 @@ export function routes(r: Router): void {
       });
     }
     emit(ctx, 'maintenance.requested', 'work_order', woId, { propertyId: lease.prop_id, category: rq.body.category, emergency, summary });
-    return redirect(`/portal/requests/${woId}`, emergency ? 'Request submitted and flagged as an emergency — the on-call team is notified.' : 'Request submitted — we will keep you posted here.');
+    // In a live account nothing pages anyone: the text-message rail is not
+    // connected, so the flag only moves the request to the top of the list.
+    const phone = propertyPhone(lease.prop_id);
+    const emergencyMsg = ctx.orgKind === 'live'
+      ? `Request submitted and flagged as an emergency. It is at the top of the maintenance list, but nobody is paged automatically — ${phone ? `call the property office at ${phone} now` : 'call your property office now'}, and 911 if anyone is in danger.`
+      : 'Request submitted and flagged as an emergency — the on-call team is notified.';
+    return redirect(`/portal/requests/${woId}`, emergency ? emergencyMsg : 'Request submitted — we will keep you posted here.');
   });
 
   r.get('/portal/requests/:id', requireResident, (rq) => {
@@ -518,11 +532,34 @@ export function routes(r: Router): void {
         ${portalPrefsCard(ctx, resident)}
 
         ${when(role !== 'occupant', () => card('Request a household change', html`
-          <form method="post" action="/portal/lease/household-request">
-            ${field('Type', select('kind', [['occupant', 'Add an occupant'], ['pet', 'Add a pet'], ['vehicle', 'Add a vehicle']], 'pet'))}
-            ${field('Details', textarea('details', { rows: 2, required: true, placeholder: 'e.g. Cat named Mochi, 8 lbs, domestic shorthair' }))}
-            <button class="btn btn-sm">Send for approval</button>
-          </form>
+          <details><summary><b>Add a pet</b></summary>
+            <form method="post" action="/portal/lease/household-request" style="margin-top:8px">
+              <input type="hidden" name="kind" value="pet" />
+              ${field('Pet’s name', input('pet_name', { required: true }))}
+              ${field('Kind of animal', select('pet_species', [['dog', 'Dog'], ['cat', 'Cat'], ['other', 'Other']], 'dog'))}
+              ${field('Breed', input('pet_breed'))}
+              ${field('Weight (lbs)', input('pet_weight', { type: 'number', min: '0', max: '400' }))}
+              <button class="btn btn-sm">Send for approval</button>
+            </form></details>
+          <details style="margin-top:8px"><summary><b>Add an occupant</b></summary>
+            <form method="post" action="/portal/lease/household-request" style="margin-top:8px">
+              <input type="hidden" name="kind" value="occupant" />
+              ${field('First name', input('occ_first', { required: true }))}
+              ${field('Last name', input('occ_last', { required: true }))}
+              ${field('Relationship to you', input('occ_relationship', { placeholder: 'Partner, child, parent…' }))}
+              ${field('Is this person 18 or older?', select('occ_adult', [['yes', 'Yes'], ['no', 'No']], 'yes'))}
+              <button class="btn btn-sm">Send for approval</button>
+            </form></details>
+          <details style="margin-top:8px"><summary><b>Add a vehicle</b></summary>
+            <form method="post" action="/portal/lease/household-request" style="margin-top:8px">
+              <input type="hidden" name="kind" value="vehicle" />
+              ${field('Make', input('veh_make', { required: true, placeholder: 'Honda' }))}
+              ${field('Model', input('veh_model', { required: true, placeholder: 'Civic' }))}
+              ${field('Color', input('veh_color'))}
+              ${field('License plate', input('veh_plate', { required: true }))}
+              ${field('Plate state', input('veh_state', { placeholder: 'CO' }))}
+              <button class="btn btn-sm">Send for approval</button>
+            </form></details>
           ${when(requests.length, () => html`<div style="margin-top:10px">${join(requests.map((x) => html`<div class="list-item"><div class="li-main"><div class="li-title" style="font-weight:500">${x.kind}: ${j<any>(x.payload, {}).details || ''}</div><div class="li-sub">${fmtDate(x.created_at.slice(0, 10))}</div></div>${statusBadge(x.status)}</div>`))}</div>`)}`))}
 
         ${when(['active', 'month_to_month'].includes(lease.status) && role === 'primary', () => card('Give notice to vacate', html`
@@ -540,10 +577,12 @@ export function routes(r: Router): void {
     const pc = portalCtx(rq);
     if (!pc) return noLease(rq);
     const { ctx, lease } = pc;
+    const kind = v.oneOf('occupant', 'pet', 'vehicle').parse(rq.body.kind);
+    const payload = householdPayload(kind, rq.body as Record<string, unknown>);
+    if (!payload) return redirect('/portal/lease', 'Fill in the required details and send the request again.', 'err');
     insert('household_requests', {
       id: id('hrq'), org_id: ctx.orgId, property_id: lease.prop_id, lease_id: lease.id,
-      kind: v.oneOf('occupant', 'pet', 'vehicle').parse(rq.body.kind),
-      payload: js({ details: String(rq.body.details || '') }),
+      kind, payload: js(payload),
       status: 'pending', created_by: ctx.userId, created_at: nowIso(),
     });
     emit(ctx, 'household.change_requested', 'lease', lease.id, { kind: rq.body.kind });
@@ -560,10 +599,11 @@ export function routes(r: Router): void {
     const earliest = addDays(ctx.businessDate, noticeDays);
     const moveOut = v.date().parse(rq.body.move_out);
     if (moveOut < earliest) return redirect('/portal/lease', `Earliest allowed move-out is ${fmtDate(earliest)} (${noticeDays}-day notice).`, 'err');
-    run('UPDATE leases SET status=?, notice_date=?, move_out_date=? WHERE id=?', 'notice', ctx.businessDate, moveOut, lease.id);
-    run('UPDATE units SET status=? WHERE id=? AND status=?', 'notice', lease.unit_id, 'occupied');
-    audit(ctx, 'lease', lease.id, 'notice_to_vacate', { status: lease.status }, { status: 'notice', move_out: moveOut });
-    emit(ctx, 'lease.notice', 'lease', lease.id, { moveOut, propertyId: lease.prop_id, unitId: lease.unit_id });
+    try {
+      recordNotice(ctx, lease.id, moveOut, { noticeDate: ctx.businessDate, source: 'resident portal' });
+    } catch (e) {
+      return redirect('/portal/lease', (e as Error).message, 'err');
+    }
     return redirect('/portal/lease', 'Notice submitted. Your property team will follow up with move-out details.');
   });
 }
@@ -577,11 +617,72 @@ function labelOf(c: { kind: string }): string {
   return map[c.kind] || 'Charge';
 }
 
+// ---------- household change requests: what the resident typed, field by field ----------
+
+const clip = (x: unknown, n = 80): string => String(x ?? '').trim().slice(0, n);
+
+/** The request as structured fields plus a one-line summary (`details`, which
+ * every list shows). null when a required field is missing. */
+function householdPayload(kind: string, b: Record<string, unknown>): Record<string, unknown> | null {
+  if (kind === 'pet') {
+    const name = clip(b.pet_name);
+    if (!name) return null;
+    const species = ['dog', 'cat', 'other'].includes(String(b.pet_species)) ? String(b.pet_species) : 'other';
+    const weight = /^\d{1,3}$/.test(clip(b.pet_weight)) ? parseInt(clip(b.pet_weight), 10) : null;
+    const breed = clip(b.pet_breed);
+    return { name, species, breed, weight, details: `${name} — ${species}${breed ? `, ${breed}` : ''}${weight ? `, ${weight} lbs` : ''}` };
+  }
+  if (kind === 'occupant') {
+    const first = clip(b.occ_first);
+    const last = clip(b.occ_last);
+    if (!first || !last) return null;
+    const relationship = clip(b.occ_relationship);
+    const adult = String(b.occ_adult) !== 'no';
+    return { first, last, relationship, adult, details: `${first} ${last}${relationship ? ` — ${relationship}` : ''}${adult ? '' : ' (under 18)'}` };
+  }
+  const make = clip(b.veh_make);
+  const model = clip(b.veh_model);
+  const plate = clip(b.veh_plate, 16).toUpperCase();
+  if (!make || !model || !plate) return null;
+  const color = clip(b.veh_color);
+  const state = clip(b.veh_state, 2).toUpperCase();
+  return { make, model, color, plate, state, details: `${color ? `${color} ` : ''}${make} ${model} — plate ${plate}${state ? ` (${state})` : ''}` };
+}
+
 // ---------- staff-side: household change approvals (M7.6) ----------
 
 import { registerLeaseTab } from '../people/pages.ts';
-import { requirePerm } from '../../lib/auth.ts';
-import { createCharge } from '../m8_receivables/service.ts';
+import { requirePerm, canAccessProperty } from '../../lib/auth.ts';
+import { recordNotice } from '../m6_leases/service.ts';
+import { parseUsd } from '../../lib/money.ts';
+
+/** The approve form: what the resident entered, editable, so what is filed is
+ * what staff confirmed — not a guess parsed out of a sentence. */
+function approveForm(ctx: Ctx, x: any): Raw {
+  const p = j<any>(x.payload, {});
+  const fields = x.kind === 'pet'
+    ? html`
+      ${field('Pet’s name', input('pet_name', { value: p.name || '', required: true }))}
+      ${field('Kind of animal', select('pet_species', [['dog', 'Dog'], ['cat', 'Cat'], ['other', 'Other']], p.species || 'dog'))}
+      ${field('Breed', input('pet_breed', { value: p.breed || '' }))}
+      ${field('Weight (lbs)', input('pet_weight', { type: 'number', min: '0', max: '400', value: p.weight ?? '' }))}
+      ${field('Monthly pet rent', moneyInput('pet_rent', ctx.orgKind === 'live' ? null : 3500), 'Added to the lease’s monthly charges from today. Leave blank or 0.00 for no pet rent.')}`
+    : x.kind === 'vehicle'
+      ? html`
+      ${field('Make', input('veh_make', { value: p.make || '', required: true }))}
+      ${field('Model', input('veh_model', { value: p.model || '', required: true }))}
+      ${field('License plate', input('veh_plate', { value: p.plate || '', required: true }))}
+      ${field('Plate state', input('veh_state', { value: p.state || '' }))}`
+      : html`
+      ${field('First name', input('occ_first', { value: p.first || '', required: true }))}
+      ${field('Last name', input('occ_last', { value: p.last || '', required: true }))}`;
+  return html`<details><summary class="btn btn-sm" style="display:inline-block">Review and approve</summary>
+      <form method="post" action="/staff/household-requests/${x.id}/approve" style="margin-top:8px;min-width:220px">
+        ${fields}
+        <button class="btn btn-sm">Approve</button>
+      </form></details>
+    <form method="post" action="/staff/household-requests/${x.id}/deny" style="margin-top:6px"><button class="btn btn-sm btn-ghost">Deny</button></form>`;
+}
 
 registerLeaseTab((ctx, lease) => {
   const pending = q<any>(`SELECT * FROM household_requests WHERE lease_id=? ORDER BY created_at DESC LIMIT 20`, lease.id);
@@ -590,17 +691,12 @@ registerLeaseTab((ctx, lease) => {
     key: 'portal-requests',
     label: `Portal requests`,
     render: () => card('Household change requests', tbl(
-      [{ label: 'Requested' }, { label: 'Type' }, { label: 'Details' }, { label: 'Status' }, { label: '', w: '190px' }],
+      [{ label: 'Requested' }, { label: 'Type' }, { label: 'Details' }, { label: 'Status' }, { label: 'Decision', w: '280px' }],
       pending.map((x) => ({
         cells: [
           fmtDate(x.created_at.slice(0, 10)), statusBadge(undefined, x.kind),
           html`<span class="small">${j<any>(x.payload, {}).details || ''}</span>`, statusBadge(x.status),
-          x.status === 'pending'
-            ? html`<div style="display:flex;gap:6px">
-                <form method="post" action="/staff/household-requests/${x.id}/approve"><button class="btn btn-sm">Approve</button></form>
-                <form method="post" action="/staff/household-requests/${x.id}/deny"><button class="btn btn-sm btn-ghost">Deny</button></form>
-              </div>`
-            : '',
+          x.status === 'pending' && ctx.perms.has('residents:manage') ? approveForm(ctx, x) : '',
         ],
       })),
     ), { flush: true }),
@@ -612,37 +708,61 @@ export function staffRoutes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const x = q1<any>('SELECT * FROM household_requests WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!x || x.status !== 'pending') return notFound();
-    const details = j<any>(x.payload, {}).details || '';
+    if (!canAccessProperty(ctx, x.property_id)) return notFound();
+    const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', x.lease_id, ctx.orgId);
+    if (!lease) return notFound();
+    const back = (msg: string) => redirect(`/leases/${x.lease_id}?tab=portal-requests`, msg, 'err');
+    // What staff confirmed on the form is what gets filed. A field left off
+    // the form falls back to what the resident entered — never to a guess.
+    const stored = j<any>(x.payload, {});
+    const b = rq.body as Record<string, unknown>;
+    const pick = (formKey: string, payloadKey: string, n = 80): string => clip(b[formKey] !== undefined ? b[formKey] : stored[payloadKey], n);
+    let petRent = 0;
     if (x.kind === 'pet') {
+      const name = pick('pet_name', 'name');
+      if (!name) return back('Enter the pet’s name before approving.');
+      const speciesRaw = pick('pet_species', 'species');
+      const weightRaw = pick('pet_weight', 'weight');
+      const rentRaw = clip(b.pet_rent);
+      if (rentRaw) {
+        try { petRent = parseUsd(rentRaw); } catch { return back('Monthly pet rent must be an amount, like 35.00.'); }
+        if (petRent < 0) return back('Monthly pet rent cannot be negative.');
+      }
       insert('pets', {
-        id: id('pet'), org_id: ctx.orgId, lease_id: x.lease_id, name: details.split(/\s+/).find((w: string) => /^[A-Z]/.test(w)) || 'Pet',
-        species: /cat/i.test(details) ? 'cat' : 'dog', breed: null, created_at: nowIso(),
+        id: id('pet'), org_id: ctx.orgId, lease_id: x.lease_id, name,
+        species: ['dog', 'cat', 'other'].includes(speciesRaw) ? speciesRaw : 'other',
+        breed: pick('pet_breed', 'breed') || null, weight_lbs: /^\d{1,3}$/.test(weightRaw) ? parseInt(weightRaw, 10) : null, created_at: nowIso(),
       });
-      const hasPetRent = q1<any>(`SELECT id FROM lease_charges WHERE lease_id=? AND kind='pet_rent'`, x.lease_id);
-      if (!hasPetRent) {
-        insert('lease_charges', { id: id('lc'), org_id: ctx.orgId, lease_id: x.lease_id, kind: 'pet_rent', label: 'Pet rent', amount_cents: 3500, start_date: ctx.businessDate, created_at: nowIso() });
+      if (petRent > 0) {
+        insert('lease_charges', { id: id('lc'), org_id: ctx.orgId, lease_id: x.lease_id, kind: 'pet_rent', label: `Pet rent — ${name}`, amount_cents: petRent, start_date: ctx.businessDate, created_at: nowIso() });
       }
     } else if (x.kind === 'vehicle') {
-      insert('vehicles', { id: id('veh'), org_id: ctx.orgId, lease_id: x.lease_id, make: details.split(' ')[0] || 'Vehicle', model: details.split(' ').slice(1, 3).join(' ') || '—', plate: 'TBD', created_at: nowIso() });
+      const make = pick('veh_make', 'make');
+      const model = pick('veh_model', 'model');
+      const plate = pick('veh_plate', 'plate', 16).toUpperCase();
+      if (!make || !model || !plate) return back('Enter the vehicle’s make, model and license plate before approving.');
+      insert('vehicles', { id: id('veh'), org_id: ctx.orgId, lease_id: x.lease_id, make, model, plate, state: pick('veh_state', 'state', 2).toUpperCase() || null, created_at: nowIso() });
     } else if (x.kind === 'occupant') {
+      const first = pick('occ_first', 'first');
+      const last = pick('occ_last', 'last');
+      if (!first || !last) return back('Enter the occupant’s first and last name before approving.');
       const rid = id('res');
-      const lease = q1<any>('SELECT * FROM leases WHERE id=?', x.lease_id);
       insert('residents', {
-        id: rid, org_id: ctx.orgId, property_id: lease.property_id, first_name: details.split(' ')[0] || 'New',
-        last_name: details.split(' ')[1] || 'Occupant', kind: 'occupant', created_at: nowIso(),
+        id: rid, org_id: ctx.orgId, property_id: lease.property_id, first_name: first,
+        last_name: last, kind: 'occupant', created_at: nowIso(),
       });
       insert('household_members', { id: id('hm'), org_id: ctx.orgId, lease_id: x.lease_id, resident_id: rid, role: 'occupant', created_at: nowIso() });
     }
     run("UPDATE household_requests SET status='approved', decided_by=?, decided_at=? WHERE id=?", ctx.userId, nowIso(), x.id);
-    audit(ctx, 'household_request', x.id, 'approve', null, { kind: x.kind });
+    audit(ctx, 'household_request', x.id, 'approve', null, { kind: x.kind, petRentCents: petRent || undefined });
     emit(ctx, 'household.change_approved', 'lease', x.lease_id, { kind: x.kind });
-    return redirect(`/leases/${x.lease_id}?tab=portal-requests`, `${x.kind} request approved${x.kind === 'pet' ? ' — pet rent added to the schedule' : ''}.`);
+    return redirect(`/leases/${x.lease_id}?tab=portal-requests`, `${x.kind[0].toUpperCase()}${x.kind.slice(1)} request approved${x.kind === 'pet' ? (petRent > 0 ? ` — ${usd(petRent)} monthly pet rent added to the lease` : ' — no pet rent added') : ''}.`);
   });
 
   r.post('/staff/household-requests/:id/deny', requirePerm('residents:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const x = q1<any>('SELECT * FROM household_requests WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!x || x.status !== 'pending') return notFound();
+    if (!x || x.status !== 'pending' || !canAccessProperty(ctx, x.property_id)) return notFound();
     run("UPDATE household_requests SET status='denied', decided_by=?, decided_at=? WHERE id=?", ctx.userId, nowIso(), x.id);
     audit(ctx, 'household_request', x.id, 'deny');
     return redirect(`/leases/${x.lease_id}?tab=portal-requests`, 'Request denied.');

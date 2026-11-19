@@ -31,6 +31,10 @@ registerDashboardExtras((ctx, propertyId) => {
   return { kpis: [{ label: 'Expiring ≤90d', value: in90, href: '/renewals', tone: in90 > 20 ? 'warn' : undefined }], panels: null };
 });
 
+function renewalStartsLater(ctx: Ctx, lease: { renewal_of_lease_id?: string | null; start_date: string }): boolean {
+  return !!lease.renewal_of_lease_id && lease.start_date > ctx.businessDate;
+}
+
 export function routes(r: Router): void {
   // ---------- generate lease from an approved application ----------
   r.post('/applications/:id/generate-lease', requirePerm('leases:manage'), async (rq) => {
@@ -74,6 +78,14 @@ export function routes(r: Router): void {
 
   r.post('/leases/:id/activate', requirePerm('leases:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const pending = q1<any>('SELECT property_id, renewal_of_lease_id, start_date FROM leases WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!pending || !canAccessProperty(ctx, pending.property_id)) return notFound('Lease not found');
+    // A renewal takes over from the current term on its start date. Activating
+    // it early retired the lease the household is still living under and put
+    // the new term's first month on the ledger as due today.
+    if (renewalStartsLater(ctx, pending)) {
+      return redirect(`/leases/${rq.params.id}`, `A renewal becomes active on its start date (${fmtDate(pending.start_date)}). Nothing to do until then — it happens automatically.`, 'err');
+    }
     try {
       activateLease(ctx, rq.params.id!);
     } catch (e) {
@@ -349,8 +361,10 @@ registerLeaseTab((ctx, lease) => {
               })),
             )}`)}
           ${card('Tamper-evident event trail', html`<ul class="timeline">${events.map((e) => html`<li><div><b>${e.action}</b> <span class="muted small">· ${e.who}</span></div><div class="t-when">${e.at?.slice(0, 19).replace('T', ' ')} · <code class="small">${String(e.hash || '').slice(0, 18)}…</code></div></li>`)}</ul>`)}`)}
-        ${when(lease.status === 'fully_executed', () => card('Activation', html`
-          <p class="small">Move-in ${fmtDate(lease.start_date)} — the scheduler activates automatically on that business day, or activate now:</p>
+        ${when(lease.status === 'fully_executed', () => card('Activation', renewalStartsLater(ctx, lease)
+          ? html`<p class="small">This renewal becomes active automatically on ${fmtDate(lease.start_date)}, when the current term ends. Until then the household stays on its current lease and nothing is billed for the new term.</p>`
+          : html`
+          <p class="small">${lease.renewal_of_lease_id ? 'Starts' : 'Move-in'} ${fmtDate(lease.start_date)} — the lease becomes active automatically on that day, or activate it now:</p>
           <form method="post" action="/leases/${lease.id}/activate"><button class="btn">Activate lease now</button></form>`))}`;
     },
   };

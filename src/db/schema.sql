@@ -602,7 +602,23 @@ CREATE TABLE IF NOT EXISTS refunds (
   method TEXT NOT NULL DEFAULT 'check',
   reference TEXT,
   date TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'issued',
+  status TEXT NOT NULL DEFAULT 'issued', -- pending (owed, check not yet written) | issued
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- One row per waived late / returned-payment fee, linking the fee to the
+-- credit that waived it. UNIQUE(charge_id) is the guard: the same fee cannot
+-- be waived (credited) twice, from any screen. A table rather than a column
+-- on charges so existing databases get it at boot with no ALTER. No foreign
+-- key on purpose: property delete and import removal clear charges without
+-- knowing this table, and an orphaned row here is inert.
+CREATE TABLE IF NOT EXISTS fee_waivers (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  charge_id TEXT NOT NULL UNIQUE,
+  waiver_charge_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
   created_by TEXT,
   created_at TEXT NOT NULL
 );

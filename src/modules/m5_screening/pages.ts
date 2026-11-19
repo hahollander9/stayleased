@@ -10,8 +10,9 @@ import {
 } from '../../ui/ui.ts';
 import {
   completeScreenings, computeScorecard, decideApplication, cancelApplication, unitHold, releaseHold,
-  createApplication, type Scorecard,
+  createApplication, submitApplicationByStaff, type Scorecard, type StaffApplicantInput,
 } from './service.ts';
+import { parseUsd } from '../../lib/money.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
 
 registerNav('Leasing', { href: '/applications', label: 'Applications', perm: 'applications:view', match: ['/applications'] });
@@ -93,7 +94,7 @@ export function routes(r: Router): void {
     );
     if (!ap || !canAccessProperty(ctx, ap.property_id)) return notFound('Application not found');
     const applicants = q<any>(
-      `SELECT a.*, s.status AS scr_status, s.credit_score, s.credit_band, s.criminal_flag, s.eviction_flag, s.eviction_years_ago, s.thin_file, s.fraud_flags, s.income_extracted_cents
+      `SELECT a.*, s.source AS scr_source, s.agency_name AS scr_agency, s.status AS scr_status, s.credit_score, s.credit_band, s.criminal_flag, s.eviction_flag, s.eviction_years_ago, s.thin_file, s.fraud_flags, s.income_extracted_cents
        FROM applicants a LEFT JOIN screening_reports s ON s.applicant_id=a.id
        WHERE a.application_id=? ORDER BY CASE a.kind WHEN 'primary' THEN 0 WHEN 'co' THEN 1 WHEN 'guarantor' THEN 2 ELSE 3 END`,
       ap.id,
@@ -104,6 +105,10 @@ export function routes(r: Router): void {
     const letters = q<any>(`SELECT * FROM files WHERE entity='application' AND entity_id=?`, ap.id);
     const canDecide = ctx.perms.has('applications:manage') && ['review', 'screening'].includes(ap.status);
     const hold = unitHold(ap.unit_id);
+    // the agency this office used last time, so it is typed once
+    const lastAgency = q1<any>(
+      `SELECT agency_name, agency_address, agency_phone FROM screening_reports
+       WHERE org_id=? AND source='manual' AND agency_name IS NOT NULL ORDER BY completed_at DESC LIMIT 1`, ctx.orgId);
     return shell(rq, {
       title: `Application — ${ap.unit_number}`,
       active: '/applications',
@@ -121,6 +126,39 @@ export function routes(r: Router): void {
         )}
         ${when(!['canceled', 'converted', 'declined'].includes(ap.status), () => html`<form method="post" action="/applications/${ap.id}/cancel" data-confirm="Cancel this application and release any hold?"><button class="btn btn-ghost">Cancel</button></form>`)}`,
       content: html`
+        ${when(ap.status === 'draft' && ctx.perms.has('applications:manage'), () => card('Enter the application', html`
+          <p class="small muted">${ctx.orgKind === 'live'
+            ? 'Online applications and automated screening are not connected for this account. Enter what the applicant gave you and what the screening report from your own agency says. Nothing is sent to the applicant from here.'
+            : 'For an application taken on paper or at the office: enter the applicant’s details and the screening report yourself instead of using the applicant link.'}</p>
+          <form method="post" action="/applications/${ap.id}/staff-submit">
+            ${applicants.filter((a) => ['primary', 'co', 'guarantor'].includes(a.kind)).map((a) => html`
+              <h3 style="font-size:14px;margin:12px 0 6px">${a.kind === 'primary' ? 'Primary applicant' : a.kind === 'co' ? 'Co-applicant' : 'Guarantor'}</h3>
+              <div class="grid cols-2">
+                ${field('First name', input(`a_${a.id}_first`, { value: a.first_name || '', required: true }))}
+                ${field('Last name', input(`a_${a.id}_last`, { value: a.last_name || '', required: true }))}
+                ${field('Email', input(`a_${a.id}_email`, { value: /@apply\.demo$/.test(a.email || '') ? '' : a.email || '', type: 'email' }))}
+                ${field('Phone', input(`a_${a.id}_phone`, { value: a.phone || '', type: 'tel' }))}
+                ${field('Monthly income', input(`a_${a.id}_income`, { value: a.income_monthly_cents ? (a.income_monthly_cents / 100).toFixed(2) : '', placeholder: '0.00' }), 'Gross, before tax.')}
+                ${field('Credit score on the report', input(`a_${a.id}_score`, { type: 'number', min: '300', max: '850' }), 'Leave blank if the report has no score.')}
+                ${field('Eviction on the report', select(`a_${a.id}_eviction`, [['no', 'No'], ['yes', 'Yes']], 'no'))}
+                ${field('If yes, how many years ago', input(`a_${a.id}_eviction_years`, { type: 'number', min: '0', max: '99' }))}
+              </div>
+              ${field('Criminal record on the report', select(`a_${a.id}_criminal`, [['no', 'No'], ['yes', 'Yes — review individually']], 'no'), 'A record never declines an application by itself; it is flagged for individual review.')}`)}
+            <h3 style="font-size:14px;margin:14px 0 6px">Screening agency</h3>
+            <p class="small muted">The company that produced the report. Its name and contact details are printed on the notice an applicant receives if the application is declined or approved with conditions. Leave blank only if no report was run.</p>
+            <div class="grid cols-2">
+              ${field('Agency name', input('agency_name', { value: lastAgency?.agency_name || '' }))}
+              ${field('Agency phone', input('agency_phone', { value: lastAgency?.agency_phone || '', type: 'tel' }))}
+            </div>
+            ${field('Agency address', input('agency_address', { value: lastAgency?.agency_address || '' }))}
+            <h3 style="font-size:14px;margin:14px 0 6px">Money received (optional)</h3>
+            <div class="grid cols-2">
+              ${field('Application fee received', input('fee_received', { placeholder: '0.00' }), 'Only what you have actually been paid. It is recorded as application fee income.')}
+              ${field('Holding deposit received', input('hold_received', { placeholder: '0.00' }), 'Credited to the household at move-in, or refunded if the application ends.')}
+            </div>
+            ${field('Check or receipt number', input('fee_reference'))}
+            <button class="btn">Save and score the application</button>
+          </form>`))}
         ${when(scorecard?.flags?.length, () => html`<div class="callout warn"><b>Review flags (never auto-decline):</b><br/>${join(scorecard!.flags.map((f) => html`• ${f}<br/>`))}</div>`)}
         <div class="grid cols-2">
           <div>
@@ -141,6 +179,7 @@ export function routes(r: Router): void {
                   ${fraud.map((f) => html`<span class="badge bad">⚠ ${f}</span> `)}
                   ${!a.criminal_flag && !a.eviction_flag && !fraud.length ? html`<span class="badge ok">no records</span>` : ''}
                 </div>`)}
+                ${when(a.scr_source === 'manual', () => html`<div class="small muted" style="margin-top:4px">Report from ${a.scr_agency}, entered by staff.</div>`)}
                 ${when(docs(a.id).length, () => html`<div class="small" style="margin-top:4px">${docs(a.id).map((d) => html`<a href="/f/${d.id}" target="_blank">📄 ${d.name}</a> `)}</div>`)}
               </div>`;
             })), { flush: false })}
@@ -198,7 +237,50 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect(`/applications/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/applications/${rq.params.id}`, 'Decision recorded.');
+    const notice = ['declined', 'approved_conditions'].includes(String(rq.body.action));
+    return redirect(`/applications/${rq.params.id}`, notice && ctx.orgKind === 'live'
+      ? 'Decision recorded. The notice to the applicant is under Letters & documents — print it or send it yourself; email delivery is not connected for this account.'
+      : 'Decision recorded.');
+  });
+
+  // the application as the office takes it: staff enter it and the screening report
+  r.post('/applications/:id/staff-submit', requirePerm('applications:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const ap = q1<any>('SELECT * FROM applications WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!ap || !canAccessProperty(ctx, ap.property_id)) return notFound('Application not found');
+    const b = rq.body as Record<string, unknown>;
+    const str = (k: string): string => String(b[k] ?? '').trim();
+    const money = (k: string, label: string): number => {
+      if (!str(k)) return 0;
+      try { return parseUsd(str(k)); } catch { throw new Error(`${label} must be an amount, like 50.00.`); }
+    };
+    const whole = (k: string, label: string): number | null => {
+      if (!str(k)) return null;
+      if (!/^\d+$/.test(str(k))) throw new Error(`${label} must be a whole number.`);
+      return parseInt(str(k), 10);
+    };
+    try {
+      const adults = q<any>(`SELECT id FROM applicants WHERE application_id=? AND kind IN ('primary','co','guarantor')`, ap.id);
+      const applicants: StaffApplicantInput[] = adults.map((a) => ({
+        applicantId: a.id, firstName: str(`a_${a.id}_first`), lastName: str(`a_${a.id}_last`),
+        email: str(`a_${a.id}_email`), phone: str(`a_${a.id}_phone`),
+        incomeMonthlyCents: str(`a_${a.id}_income`) ? money(`a_${a.id}_income`, 'Monthly income') : null,
+        creditScore: whole(`a_${a.id}_score`, 'The credit score'),
+        evictionFlag: str(`a_${a.id}_eviction`) === 'yes',
+        evictionYearsAgo: whole(`a_${a.id}_eviction_years`, 'Years since the eviction'),
+        criminalFlag: str(`a_${a.id}_criminal`) === 'yes',
+      }));
+      submitApplicationByStaff(ctx, ap.id, {
+        applicants,
+        agency: str('agency_name') ? { name: str('agency_name'), address: str('agency_address'), phone: str('agency_phone') } : null,
+        feeReceivedCents: money('fee_received', 'The application fee'),
+        holdDepositReceivedCents: money('hold_received', 'The holding deposit'),
+        feeReference: str('fee_reference'),
+      });
+    } catch (e) {
+      return redirect(`/applications/${ap.id}`, (e as Error).message, 'err');
+    }
+    return redirect(`/applications/${ap.id}`, 'Application saved and scored against the property’s criteria. Record the decision below.');
   });
 
   r.post('/applications/:id/cancel', requirePerm('applications:manage'), (rq) => {
@@ -225,9 +307,13 @@ export function routes(r: Router): void {
     const lead = q1<any>('SELECT * FROM leads WHERE id=?', quote.lead_id);
     const { applicationId, applicantToken } = createApplication(ctx, {
       propertyId: quote.property_id, unitId: quote.unit_id, leadId: quote.lead_id, quoteId: quote.id,
-      primary: { firstName: lead?.first_name, lastName: lead?.last_name, email: lead?.email || `${quote.lead_id}@apply.demo`, phone: lead?.phone },
+      // a real applicant with no email on file has no email — not an invented one
+      primary: { firstName: lead?.first_name, lastName: lead?.last_name, email: lead?.email || (ctx.orgKind === 'live' ? '' : `${quote.lead_id}@apply.demo`), phone: lead?.phone },
     });
     run(`UPDATE quotes SET status='accepted' WHERE id=?`, quote.id);
-    return redirect(`/applications/${applicationId}`, `Application created from the quote — applicant link emailed (or share /apply/${applicantToken}).`);
+    // nothing is emailed by this step in either world, so neither message says so
+    return redirect(`/applications/${applicationId}`, ctx.orgKind === 'live'
+      ? 'Application started from the quote. Online applications are not connected for this account — enter the applicant’s details and the screening report below.'
+      : `Application created from the quote — share the applicant link: /apply/${applicantToken}`);
   });
 }
