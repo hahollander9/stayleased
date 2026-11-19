@@ -73,7 +73,7 @@ export const TEMPLATES: Record<string, Tpl> = {
   },
   payment_plan_confirmed: {
     subject: 'Your payment plan is confirmed',
-    body: `<p>Hi {{first_name}},</p><p>Your payment plan for <b>{{total}}</b> is confirmed:</p>{{schedule_html}}<p>Installments will be charged to your saved payment method on each date. Thank you for working with us.</p><p>— {{property}}</p>`,
+    body: `<p>Hi {{first_name}},</p><p>Your payment plan for <b>{{total}}</b> is confirmed:</p>{{schedule_html}}<p>Please make each payment by its due date. Thank you for working with us.</p><p>— {{property}}</p>`,
     sms: '{{property}}: Payment plan confirmed — {{total}} across {{n}} installments. First: {{first_date}}.',
   },
   deposit_disposition: {

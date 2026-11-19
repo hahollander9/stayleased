@@ -9,6 +9,7 @@ import { v } from '../../lib/validate.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting, scorerMode } from '../../lib/settings.ts';
 import { notify } from '../../lib/templates.ts';
+import { isLiveOrg, deliveryNote } from '../../lib/sim/messaging.ts';
 import { toCsv } from '../../lib/csv.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea, moneyInput,
@@ -21,7 +22,7 @@ import { depositDeadline, postDepositInterest } from './depositlaw.ts';
 import {
   recordPayment, PaymentRejected, lateFeeCandidates, assessLateFees, waiveLateFee, receivablesStats,
   createPaymentPlan, primaryContact, depositHeld, finalizeDeposit, openCollectionCase, reversePayment, writeOffBalance,
-  voidPayment, issueDepositRefund, pendingDepositRefund, dispositionAllowed, processorConnected, SIMULATED_METHODS,
+  voidPayment, issueDepositRefund, pendingDepositRefund, dispositionAllowed, processorConnected, SIMULATED_METHODS, lateFeesAutomatic,
 } from './payments.ts';
 import { registerLeaseTab, registerLeaseAction } from '../people/pages.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
@@ -129,7 +130,7 @@ export function routes(r: Router): void {
       title: 'Receivables',
       active: '/receivables',
       subtitle: `Collections & payment analytics · ${fmtMonth(mk)}`,
-      actions: html`<a class="btn btn-ghost" href="/receivables/latefees">Late fee run</a> <a class="btn btn-ghost" href="/receivables/lockbox">Lockbox import</a>`,
+      actions: html`<a class="btn btn-ghost" href="/receivables/latefees">Late fee run</a> <a class="btn btn-ghost" href="/receivables/lockbox">${isLiveOrg(ctx) ? 'Record a batch of checks' : 'Lockbox import'}</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Month', select('month', months.slice().reverse().map((m): [string, string] => [m, fmtMonth(m)]), mk))}
@@ -173,6 +174,7 @@ export function routes(r: Router): void {
   r.get('/receivables/latefees', requirePerm('ledger:charge'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const candidates = lateFeeCandidates(ctx, ctx.businessDate, ctx.currentPropertyId);
+    const autoFees = lateFeesAutomatic(ctx);
     const recentFees = q<any>(
       `SELECT c.*, l.household_name, u.unit_number, fw.id AS waiver_id, fw.reason AS waiver_reason FROM charges c
        JOIN leases l ON l.id=c.lease_id JOIN units u ON u.id=l.unit_id
@@ -185,8 +187,13 @@ export function routes(r: Router): void {
       title: 'Late fees',
       active: '/receivables',
       crumbs: [['Receivables', '/receivables']],
-      subtitle: `Preview for ${fmtDate(ctx.businessDate)} — the scheduler assesses these automatically each day; this screen previews and runs on demand.`,
+      subtitle: autoFees
+        ? `Preview for ${fmtDate(ctx.businessDate)} — the scheduler assesses these automatically each day; this screen previews and runs on demand.`
+        : `Preview for ${fmtDate(ctx.businessDate)} — nothing is assessed until someone runs it from this screen.`,
       content: html`
+        ${when(!autoFees, () => html`<div class="callout info" style="margin-bottom:14px">Automatic late fees are off — no fee is charged unless you assess it here. ${ctx.perms.has('admin:settings')
+          ? html`<a href="/admin/settings?section=rent-fees-and-payments">Turn them on in Settings</a>.`
+          : 'An administrator can turn them on in Settings.'}</div>`)}
         ${card(html`Due for assessment today <span class="badge ${candidates.length ? 'warn' : 'ok'}">${candidates.length}</span>`, html`
           ${tbl(
             [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Unpaid rent', num: true }, { label: 'Days late', num: true }, { label: 'Fee', num: true }, { label: 'Type' }],
@@ -242,11 +249,12 @@ export function routes(r: Router): void {
   r.get('/receivables/lockbox', requirePerm('payments:record'), (rq) => {
     const ctx = rq.ctx as Ctx;
     return shell(rq, {
-      title: 'Lockbox import',
+      title: isLiveOrg(ctx) ? 'Record a batch of checks' : 'Lockbox import',
       active: '/receivables',
       crumbs: [['Receivables', '/receivables']],
       content: html`
-        ${card('Import a lockbox batch (simulated)', html`
+        ${card(isLiveOrg(ctx) ? 'Record a batch of checks' : 'Import a lockbox batch (simulated)', html`
+          ${when(isLiveOrg(ctx), () => html`<p class="small muted">No bank lockbox is connected to this account. This records checks already received, a batch at a time — it does not pull anything from a bank.</p>`)}
           <p class="small muted">Paste CSV rows: <code>unit_number,amount,check_number</code> — one payment per line. Payments are matched to the unit's current lease and post as pending checks.</p>
           <form method="post" action="/receivables/lockbox">
             ${field('CSV', textarea('csv', { rows: 6, placeholder: 'B-204,1525.00,4471\nC-311,800.00,1092' }))}
@@ -543,7 +551,7 @@ export function routes(r: Router): void {
     }, {
       first_name: contact.first, balance: usd(balance), days, unit: contact.unit, property: contact.propertyName,
     });
-    return redirect(`/delinquency/${leaseId}`, 'Reminder sent (see Message console).');
+    return redirect(`/delinquency/${leaseId}`, isLiveOrg(ctx) ? `Reminder saved. ${deliveryNote(ctx)}.` : 'Reminder sent (see Message console).');
   });
 
   r.post('/delinquency/:leaseId/plan', requirePerm('collections:manage'), (rq) => {

@@ -896,7 +896,7 @@ export function createRenewalOffer(ctx: Ctx, leaseId: string): string {
     sendEmail(ctx, {
       to: contact.email, toName: `${contact.first_name} ${contact.last_name}`,
       subject: `Your renewal options are ready 🏡`,
-      body: `<p>Hi ${contact.first_name},</p><p>We'd love to keep you! Your renewal options:</p><ul>${options.map((o) => `<li><b>${o.term_months} months</b> — ${usd(o.rent_cents)}/mo</li>`).join('')}</ul><p>Accept right in the resident portal (Lease tab) — or reply with questions.</p>`,
+      body: `<p>Hi ${contact.first_name},</p><p>We'd love to keep you! Your renewal options:</p><ul>${options.map((o) => `<li><b>${o.term_months} months</b> — ${usd(o.rent_cents)}/mo</li>`).join('')}</ul><p>${contact.user_id ? 'Accept right in the resident portal (Lease tab) — or reply with questions.' : 'Reply with the term that suits you, or with any questions.'}</p>`,
       propertyId: lease.property_id, entity: 'renewal_offer', entityId: offerId, personId: contact.id, templateKey: 'renewal_offer',
     });
   }

@@ -33,7 +33,7 @@ export function techShell(rq: Rq, title: string, content: Child, back?: string):
       <a class="chip" href="/">Full app</a>
       <form method="post" action="/logout"><button class="chip" type="submit">Sign out</button></form>
     </div>
-    ${when(back, () => html`<div style="margin-bottom:8px"><a href="${back}" class="small">← Back to queue</a></div>`)}
+    ${when(back, () => html`<div style="margin-bottom:8px"><a href="${back}" class="small">← Back</a></div>`)}
     ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
     <h1 style="margin-bottom:12px">${title}</h1>
     ${content}
@@ -217,7 +217,8 @@ export function routes(r: Router): void {
       ${card('My assignments', wos.length ? join(wos.map((w) => html`<a class="list-item" href="/vendor/wo/${w.id}">
         <div class="li-main"><div class="li-title">${w.summary}</div><div class="li-sub">${w.prop_name}${w.unit_number ? ` · Unit ${w.unit_number}` : ''} · ${fmtDate(w.created_date)}</div></div>
         ${statusBadge(w.status)}
-      </a>`)) : emptyState('No assignments yet'))}`);
+      </a>`)) : emptyState('No assignments yet', 'Jobs the property team assigns to you appear here.'))}
+      <p><a class="btn btn-ghost" href="/vendor/pos">Purchase orders, invoices and payments</a></p>`);
   });
 
   r.get('/vendor/wo/:id', requireVendor, (rq) => {

@@ -7,7 +7,7 @@ import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { generateReads, providerRate, unitFor } from '../../lib/sim/submeter.ts';
-import { createInvoice, approveInvoice } from '../m9_accounting/ap.ts';
+import { createInvoice, approveInvoice, submitInvoice } from '../m9_accounting/ap.ts';
 import { createCharge } from '../m8_receivables/service.ts';
 import { usd } from '../../lib/money.ts';
 
@@ -46,6 +46,90 @@ export function ensurePropertyMeters(orgId: string, propertyId: string, services
 }
 
 // ---------- reads + estimation ----------
+
+export const RUBS_METHODS = ['sqft', 'occupants', 'flat', 'submeter', 'hybrid'] as const;
+
+/** YYYY-MM, a real month, and not one that has not happened yet. */
+export function assertUsageMonth(ctx: Ctx, usageMonth: string): void {
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(usageMonth)) throw new Error('Choose a usage month.');
+  if (usageMonth > monthKey(ctx.businessDate)) throw new Error('That month has not happened yet.');
+}
+
+/** A reading typed in by staff from the meter or the submeter company's
+ * report: this month's usage for one meter. Typing it again corrects it,
+ * until that month has been billed to residents. */
+export function recordManualRead(ctx: Ctx, meterId: string, usageMonth: string, usageQty: number): 'added' | 'updated' | 'unchanged' {
+  assertUsageMonth(ctx, usageMonth);
+  if (!Number.isFinite(usageQty) || usageQty < 0) throw new Error('Usage must be zero or more.');
+  const meter = q1<any>('SELECT * FROM meters WHERE id=? AND org_id=? AND active=1', meterId, ctx.orgId);
+  if (!meter) throw new Error('meter not found');
+  if (q1(`SELECT id FROM rubs_runs WHERE org_id=? AND property_id=? AND service=? AND usage_month=? AND status='posted'`, ctx.orgId, meter.property_id, meter.service, usageMonth)) {
+    throw new Error(`${fmtMonth(usageMonth)} ${meter.service} has already been billed to residents — its readings can no longer be changed.`);
+  }
+  const existing = q1<any>('SELECT * FROM meter_reads WHERE meter_id=? AND month_key=?', meterId, usageMonth);
+  if (existing) {
+    if (Number(existing.usage_qty) === usageQty && existing.status === 'ok') return 'unchanged';
+    update('meter_reads', existing.id, { usage_qty: usageQty, source: 'manual', status: 'ok', anomaly: null, note: `entered by ${ctx.userName} (was ${existing.usage_qty})`, read_date: ctx.businessDate });
+    audit(ctx, 'meter_read', existing.id, 'manual_update', { usage_qty: existing.usage_qty, status: existing.status }, { usage_qty: usageQty });
+    return 'updated';
+  }
+  const rid = id('mrd');
+  insert('meter_reads', {
+    id: rid, org_id: ctx.orgId, meter_id: meterId, month_key: usageMonth, read_date: ctx.businessDate,
+    usage_qty: usageQty, source: 'manual', anomaly: null, status: 'ok', note: `entered by ${ctx.userName}`, created_at: nowIso(),
+  });
+  audit(ctx, 'meter_read', rid, 'manual_create', null, { meterId, usageMonth, usage_qty: usageQty });
+  return 'added';
+}
+
+/** How a property bills one utility back to its residents. One row per
+ * property and service; saving again changes the formula for runs staged
+ * from then on (a staged or posted run keeps the math it was staged with). */
+export function saveRubsConfig(
+  ctx: Ctx,
+  input: { propertyId: string; service: string; method: string; commonDeductPct: number; adminFeeCents: number; flatFeeCents: number; active: boolean },
+): string {
+  if (!(SERVICES as readonly string[]).includes(input.service)) throw new Error('Choose a utility.');
+  if (!(RUBS_METHODS as readonly string[]).includes(input.method)) throw new Error('Choose how the bill is split.');
+  if (!q1('SELECT id FROM properties WHERE id=? AND org_id=?', input.propertyId, ctx.orgId)) throw new Error('property not found');
+  if (!(input.commonDeductPct >= 0 && input.commonDeductPct <= 100)) throw new Error('The common-area share must be between 0 and 100 percent.');
+  if (!Number.isInteger(input.adminFeeCents) || input.adminFeeCents < 0) throw new Error('The billing fee cannot be negative.');
+  if (!Number.isInteger(input.flatFeeCents) || input.flatFeeCents < 0) throw new Error('The flat amount cannot be negative.');
+  if (input.method === 'flat' && input.flatFeeCents <= 0) throw new Error('Enter the flat monthly amount each home is billed.');
+  if (['submeter', 'hybrid'].includes(input.method)
+    && !q1('SELECT id FROM meters WHERE org_id=? AND property_id=? AND service=? AND unit_id IS NOT NULL AND active=1', ctx.orgId, input.propertyId, input.service)) {
+    throw new Error(`Splitting by meter reading needs a ${input.service} meter on each home — set up meters for this property first.`);
+  }
+  const vals = {
+    method: input.method, common_deduct_pct: input.commonDeductPct, admin_fee_cents: input.adminFeeCents,
+    flat_fee_cents: input.flatFeeCents, active: input.active ? 1 : 0,
+  };
+  const existing = q1<any>('SELECT * FROM rubs_configs WHERE org_id=? AND property_id=? AND service=?', ctx.orgId, input.propertyId, input.service);
+  if (existing) {
+    update('rubs_configs', existing.id, vals);
+    audit(ctx, 'rubs_config', existing.id, 'update',
+      { method: existing.method, common_deduct_pct: existing.common_deduct_pct, admin_fee_cents: existing.admin_fee_cents, flat_fee_cents: existing.flat_fee_cents, active: existing.active }, vals);
+    return existing.id as string;
+  }
+  const cid = id('rbc');
+  insert('rubs_configs', { id: cid, org_id: ctx.orgId, property_id: input.propertyId, service: input.service, ...vals, bill_vacant: 0 });
+  audit(ctx, 'rubs_config', cid, 'create', null, { service: input.service, ...vals });
+  return cid;
+}
+
+/** A preview that was staged from wrong inputs (a mistyped bill, a missing
+ * reading) is thrown away so it can be staged again. A posted run is on
+ * resident ledgers and is never discarded. */
+export function discardRubsRun(ctx: Ctx, runId: string): void {
+  const r = q1<any>('SELECT * FROM rubs_runs WHERE id=? AND org_id=?', runId, ctx.orgId);
+  if (!r) throw new Error('run not found');
+  if (r.status !== 'preview') throw new Error('This run has been posted to resident ledgers and cannot be discarded.');
+  tx(() => {
+    run('DELETE FROM rubs_lines WHERE run_id=? AND org_id=?', runId, ctx.orgId);
+    run('DELETE FROM rubs_runs WHERE id=? AND org_id=?', runId, ctx.orgId);
+  });
+  audit(ctx, 'rubs_run', runId, 'discard', { service: r.service, usage_month: r.usage_month, total_cents: r.total_cents }, null);
+}
 
 /** ingest a usage month from the SubmeterNetwork; estimate missed reads */
 export function ingestMonth(ctx: Ctx, usageMonth: string): { added: number; anomalies: number } {
@@ -109,6 +193,54 @@ export function recordProviderInvoice(
     vendor_invoice_id: apId, created_at: nowIso(),
   });
   return upId;
+}
+
+/** A provider's bill keyed in by staff from the paper or PDF. It becomes a
+ * real payable — entered in AP and routed through the normal approval rules,
+ * never auto-approved — and the total RUBS divides for that month. */
+export function enterProviderInvoice(
+  ctx: Ctx,
+  input: { propertyId: string; service: string; vendorId: string; usageMonth: string; totalCents: number; usageQty: number; invoiceNumber?: string; invoiceDate?: string },
+): { id: string; apInvoiceId: string; apStatus: string } {
+  if (!(SERVICES as readonly string[]).includes(input.service)) throw new Error('Choose a utility.');
+  assertUsageMonth(ctx, input.usageMonth);
+  if (!Number.isInteger(input.totalCents) || input.totalCents <= 0) throw new Error('Enter the total amount of the bill.');
+  if (!Number.isFinite(input.usageQty) || input.usageQty < 0) throw new Error('Usage must be zero or more.');
+  if (!q1('SELECT id FROM properties WHERE id=? AND org_id=?', input.propertyId, ctx.orgId)) throw new Error('property not found');
+  if (!q1('SELECT id FROM vendors WHERE id=? AND org_id=? AND active=1', input.vendorId, ctx.orgId)) throw new Error('Choose the utility provider this bill is from.');
+  const invoiceDate = input.invoiceDate || ctx.businessDate;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(invoiceDate)) throw new Error('Enter the bill date.');
+  if (q1('SELECT id FROM utility_provider_invoices WHERE org_id=? AND property_id=? AND service=? AND usage_month=?', ctx.orgId, input.propertyId, input.service, input.usageMonth)) {
+    throw new Error(`A ${input.service} bill for ${fmtMonth(input.usageMonth)} is already entered for this property.`);
+  }
+  const invoiceNumber = (input.invoiceNumber || '').trim() || `${input.service.toUpperCase()}-${input.usageMonth}-${input.propertyId.slice(-4)}`;
+  if (q1(`SELECT id FROM vendor_invoices WHERE org_id=? AND vendor_id=? AND lower(invoice_number)=lower(?) AND status!='void'`, ctx.orgId, input.vendorId, invoiceNumber)) {
+    throw new Error(`Bill ${invoiceNumber} from this provider is already in Payables.`);
+  }
+  const rate = input.usageQty > 0 ? (input.totalCents / input.usageQty / 100).toFixed(3) : null;
+  const upId = id('upi');
+  let apId = '';
+  let apStatus = '';
+  tx(() => {
+    apId = createInvoice(ctx, {
+      vendorId: input.vendorId, propertyId: input.propertyId, invoiceNumber, invoiceDate,
+      memo: `${input.service} service — ${fmtMonth(input.usageMonth)}`, source: 'utility',
+      lines: [{
+        glAccount: UTILITY_GL[input.service] || '5110',
+        description: `${input.service} — ${fmtMonth(input.usageMonth)}${input.usageQty > 0 ? ` (${input.usageQty} ${unitFor(input.service)})` : ''}`,
+        amountCents: input.totalCents,
+      }],
+    });
+    apStatus = submitInvoice(ctx, apId);
+    insert('utility_provider_invoices', {
+      id: upId, org_id: ctx.orgId, property_id: input.propertyId, service: input.service, vendor_id: input.vendorId,
+      usage_month: input.usageMonth, total_cents: input.totalCents, usage_qty: input.usageQty,
+      rate_note: rate ? `$${rate}/${unitFor(input.service)}` : null, weather_note: null,
+      vendor_invoice_id: apId, created_at: nowIso(),
+    });
+  });
+  audit(ctx, 'utility_provider_invoice', upId, 'create', null, { service: input.service, usageMonth: input.usageMonth, totalCents: input.totalCents, apInvoiceId: apId });
+  return { id: upId, apInvoiceId: apId, apStatus };
 }
 
 /** deterministic estimate for services billed without submeters */
@@ -246,7 +378,12 @@ export function rubsPreview(ctx: Ctx, propertyId: string, service: string, usage
     rows.push({ unit, lease, occDays, weight, basis });
   }
 
-  const totalWeight = rows.reduce((s, r) => s + r.weight, 0) || 1;
+  const weightSum = rows.reduce((s, r) => s + r.weight, 0);
+  if (config.method === 'submeter' && weightSum <= 0) {
+    throw new Error(`No ${service} meter readings are entered for ${fmtMonth(usageMonth)} — enter them before staging a bill split by meter.`);
+  }
+  if (!rows.length) throw new Error('This property has no units to bill.');
+  const totalWeight = weightSum || 1;
   const lines: RubsLine[] = [];
   let recovered = 0;
   let vacant = 0;

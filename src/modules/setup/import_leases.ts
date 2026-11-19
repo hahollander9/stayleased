@@ -16,6 +16,7 @@ import { llmGenerate, llmExtractPdf, llmStatus } from '../../lib/sim/llm.ts';
 import { createCharge } from '../m8_receivables/service.ts';
 import { postBothBases } from '../m9_accounting/service.ts';
 import { shell, card, field, input, select, statusBadge } from '../../ui/ui.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 import { moneyToCents, toIsoDate, splitName } from './mapping.ts';
 import { ensureOpeningEquityAccount, portalAccessFor, type BatchRow } from './import_apply.ts';
 
@@ -456,7 +457,9 @@ export function leasePdfRoutes(r: Router): void {
     });
     emit(ctx, 'import.applied', 'import_batch', batch.id, { kind: 'lease_pdf', leases, residents, units, skipped, portalInvites });
     const problemNote = problems.length ? ` ${problems.join(' ')}` : '';
-    return redirect(`/properties/${pid}`, `Imported ${leases} lease${leases === 1 ? '' : 's'} (${residents} resident${residents === 1 ? '' : 's'}${units ? `, ${units} new unit${units === 1 ? '' : 's'}` : ''}${depositsCents ? `, $${(depositsCents / 100).toLocaleString('en-US')} deposits held` : ''}${portalInvites ? `, ${portalInvites} portal invite${portalInvites === 1 ? '' : 's'} sent` : ''}).${problemNote}`);
+    return redirect(`/properties/${pid}`, `Imported ${leases} lease${leases === 1 ? '' : 's'} (${residents} resident${residents === 1 ? '' : 's'}${units ? `, ${units} new unit${units === 1 ? '' : 's'}` : ''}${depositsCents ? `, $${(depositsCents / 100).toLocaleString('en-US')} deposits held` : ''}${portalInvites ? `, ${isLiveOrg(ctx)
+      ? `${portalInvites} portal login${portalInvites === 1 ? '' : 's'} created — invitations are saved in the Outbox, not emailed`
+      : `${portalInvites} portal invite${portalInvites === 1 ? '' : 's'} sent`}` : ''}).${problemNote}`);
   });
 }
 

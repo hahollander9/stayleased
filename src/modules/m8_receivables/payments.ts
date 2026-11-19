@@ -595,6 +595,11 @@ export function lateFeeCandidates(ctx: Ctx, date: string, propertyId?: string | 
   return out;
 }
 
+/** whether the nightly job may assess late fees for this organization */
+export function lateFeesAutomatic(ctx: Ctx): boolean {
+  return getSetting<boolean>(ctx, 'late_fees_enabled') !== false;
+}
+
 export function assessLateFees(ctx: Ctx, date: string, propertyId?: string | null): string {
   const candidates = lateFeeCandidates(ctx, date, propertyId);
   for (const c of candidates) {
@@ -872,8 +877,11 @@ export function depositHeld(ctx: Ctx, leaseId: string): number {
   // the record ($140,081.02 on the 606-unit import read as "$0.00 held across
   // 0 households" here while the GL carried it). Reversal-safe: removing the
   // upload removes the lease, and this term with it.
+  // A lease entered by hand with "the deposit is already in the bank" is the
+  // same fact, stated on the lease itself (deposit_on_hand) — it does not
+  // depend on the 'manual-entry' batch marker being present.
   const migrated = accrued === 0 ? (val<number>(
-    `SELECT COALESCE(deposit_cents,0) FROM leases WHERE id=? AND org_id=? AND import_batch_id IS NOT NULL`,
+    `SELECT COALESCE(deposit_cents,0) FROM leases WHERE id=? AND org_id=? AND (import_batch_id IS NOT NULL OR deposit_on_hand=1)`,
     leaseId, ctx.orgId,
   ) || 0) : 0;
   // a refund the disposition has set aside is no longer available to apply,
@@ -1234,7 +1242,9 @@ registerJob({
   key: 'late_fees',
   name: 'Late fee assessment',
   describe: 'Assesses late fees per property policy (grace days, flat/percent/daily with caps) on unpaid rent.',
-  run: (ctx, date) => assessLateFees(ctx, date),
+  // the automatic run only — staff assessing from the late-fee screen call
+  // assessLateFees directly and are not gated by this switch
+  run: (ctx, date) => (lateFeesAutomatic(ctx) ? assessLateFees(ctx, date) : 'automatic late fees are off'),
 });
 
 registerJob({

@@ -44,6 +44,7 @@ export function db(): DatabaseSync {
     "ALTER TABLE vendor_invoices ADD COLUMN discount_cents INTEGER NOT NULL DEFAULT 0", // early-pay terms
     "ALTER TABLE vendor_invoices ADD COLUMN discount_by TEXT", // pay-by date to capture it
     "ALTER TABLE vendors ADD COLUMN terms TEXT", // e.g. '2/10 net 30'
+    "ALTER TABLE vendors ADD COLUMN contact_name TEXT", // vendor create/edit form: the person to ask for
     "ALTER TABLE units ADD COLUMN program TEXT", // Phase 17: affordable set-aside (lihtc|section8)
     "ALTER TABLE units ADD COLUMN ami_pct INTEGER", // set-aside band (50/60/80)
     "ALTER TABLE units ADD COLUMN utility_allowance_cents INTEGER NOT NULL DEFAULT 0", // reduces tenant rent portion

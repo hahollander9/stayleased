@@ -1,4 +1,5 @@
 import { q1, val, run, insert } from '../../lib/db.ts';
+import { recordNotice } from '../m6_leases/service.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, fmtDate } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
@@ -169,7 +170,7 @@ registerOp({
   params: [
     { key: 'lease', type: 'lease', label: 'Household', required: true },
     { key: 'amount', type: 'money', label: 'Amount', required: true },
-    { key: 'method', type: 'enum', label: 'Method', required: true, values: ['check', 'money_order', 'cash_equivalent', 'ach', 'card', 'lockbox'] },
+    { key: 'method', type: 'enum', label: 'Method', required: true, values: ['check', 'money_order', 'cash_equivalent', 'bank_transfer', 'lockbox'] },
     { key: 'reference', type: 'text', label: 'Reference', hint: 'cheque number or confirmation' },
     { key: 'date', type: 'date', label: 'Received', hint: 'defaults to the business date' },
   ],
@@ -241,11 +242,9 @@ registerOp({
   },
   apply(ctx, a) {
     const l = leaseRow(ctx, str(a.lease))!;
-    run(
-      `UPDATE leases SET status='notice', notice_date=?, move_out_date=? WHERE id=? AND org_id=?`,
-      ctx.businessDate, str(a.move_out), l.id, ctx.orgId,
-    );
-    audit(ctx, 'lease', l.id, 'notice', null, { moveOut: str(a.move_out), via: 'ask' });
+    // the same function the lease page calls: it also puts the unit on notice
+    // and starts the turn, which a bare status update never did
+    recordNotice(ctx, l.id, str(a.move_out), { source: 'ask' });
     return `${l.household_name} is on notice for ${fmtDate(str(a.move_out))}.`;
   },
 });

@@ -1,6 +1,7 @@
 import { html, when, join, type Child } from '../../lib/html.ts';
 import { notFound, redirect, fileRes, type Router } from '../../lib/http.ts';
-import { requirePerm, requireVendor, can, propFilter, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, requireVendor, can, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 import { q, q1, val, j } from '../../lib/db.ts';
 import { fmtDate, fmtMonth } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
@@ -11,7 +12,7 @@ import {
   ensureCatalog, createPo, submitPo, approvePo, acknowledgePo, receivePo,
   ocrInvoiceFromPo, matchInvoice, decideMatchException, submitPoInvoice,
   remittanceAdvice, ten99Summary, ten99Pdf, spendAnalytics,
-  listPriceAgreements, upsertPriceAgreement, endPriceAgreement,
+  listPriceAgreements, upsertPriceAgreement, endPriceAgreement, vendorHasPortal, poPdf,
 } from './service.ts';
 
 /** M16 screens: PO pipeline + detail (approve/receive), match exception queue,
@@ -22,6 +23,44 @@ registerNav('Operations', { href: '/purchasing', label: 'Purchasing', perm: 'pos
 function propsFor(ctx: Ctx): any[] {
   const pf = propFilter(ctx, 'id');
   return q<any>(`SELECT id, name FROM properties WHERE org_id=?${pf.sql} ORDER BY name`, ctx.orgId, ...pf.params);
+}
+
+/** What to say once a PO is approved. The demo's simulated mail rail "sends"
+ * it. A live org has no email provider, so nothing leaves: the operator is
+ * told to get it to the vendor themselves, or — when the vendor really has a
+ * portal sign-in — that it is waiting there. */
+function poApprovedFlash(ctx: Ctx, poId: string, demoText: string): string {
+  if (!isLiveOrg(ctx)) return demoText;
+  const po = q1<any>('SELECT po.vendor_id, v.name FROM purchase_orders po JOIN vendors v ON v.id=po.vendor_id WHERE po.id=? AND po.org_id=?', poId, ctx.orgId);
+  if (po && vendorHasPortal(ctx, po.vendor_id)) {
+    return `PO approved. ${po.name} can acknowledge it in their vendor portal. Nothing was emailed — email delivery is not connected yet, so let them know it is waiting.`;
+  }
+  return `PO approved. Nothing was sent — email delivery is not connected yet. Download the PO and send it to ${po?.name || 'the vendor'} yourself, then mark it acknowledged when they confirm.`;
+}
+
+/** The lines of a vendor invoice as typed against a PO: one row per PO line
+ * (quantity and unit price exactly as printed on the invoice) plus one
+ * optional extra charge such as freight. Blank rows are ignored. */
+function readInvoiceLines(b: Record<string, any>): { description: string; qty: number; unitPriceCents: number }[] {
+  const money = (raw: unknown): number => {
+    const t = String(raw ?? '').trim();
+    if (!t) return 0;
+    try { return parseUsd(t); } catch { return NaN; }
+  };
+  const lines: { description: string; qty: number; unitPriceCents: number }[] = [];
+  for (let i = 0; i < 40; i++) {
+    if (b[`desc_${i}`] === undefined) break;
+    const qty = Number(String(b[`qty_${i}`] ?? '').trim() || 0);
+    const price = money(b[`price_${i}`]);
+    if (!qty && !price) continue;
+    lines.push({ description: String(b[`desc_${i}`]), qty, unitPriceCents: price });
+  }
+  const extra = money(b.extra_amount);
+  if (extra) lines.push({ description: String(b.extra_desc || '').trim() || 'Other charges', qty: 1, unitPriceCents: extra });
+  if (lines.some((l) => !Number.isFinite(l.qty) || !Number.isFinite(l.unitPriceCents) || l.qty < 0 || l.unitPriceCents < 0)) {
+    throw new Error('Quantities and prices must be positive numbers.');
+  }
+  return lines;
 }
 
 export function routes(r: Router): void {
@@ -113,7 +152,7 @@ export function routes(r: Router): void {
           ${card('Lines (catalog or free-form)', html`
             <div class="tbl-wrap po-lines"><table class="tbl"><thead><tr><th>Catalog item</th><th>Free-form description</th><th>Qty</th><th>Unit price</th><th>Capital project</th></tr></thead>
             <tbody>${join([0, 1, 2, 3].map(lineRow), '')}</tbody></table></div>
-            <p class="small muted">Catalog lines carry their GL + inventory SKU; receiving restocks inventory automatically. A purchase order over the property’s <a href="/admin/settings?section=approval-thresholds">approval threshold</a> waits for sign-off before it is sent.</p>`)}
+            <p class="small muted">Catalog lines carry their GL + inventory SKU; receiving restocks inventory automatically. A purchase order over the property’s <a href="/admin/settings?section=approval-thresholds">approval threshold</a> waits for sign-off before it is ${isLiveOrg(ctx) ? 'issued' : 'sent'}.</p>`)}
           <button class="btn">Create & submit</button>
         </form>`,
     });
@@ -147,7 +186,7 @@ export function routes(r: Router): void {
         sourceId: b.source === 'workorder' && b.source_id ? String(b.source_id) : undefined,
       });
       const res = submitPo(ctx, poId);
-      return redirect(`/purchasing/${poId}`, res === 'approved' ? 'PO approved and sent to the vendor' : 'PO submitted for approval');
+      return redirect(`/purchasing/${poId}`, res === 'approved' ? poApprovedFlash(ctx, poId, 'PO approved and sent to the vendor') : 'PO submitted for approval');
     } catch (e) {
       return redirect('/purchasing/new', (e as Error).message, 'err');
     }
@@ -231,7 +270,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: `1099-NEC — tax year ${year}`,
       active: '/purchasing',
-      subtitle: 'Vendors paid $600+ on 1099-eligible rails this year',
+      subtitle: `Vendors marked 1099-eligible who were paid $600 or more in ${year}`,
       actions: html`<a class="btn" href="/purchasing/1099.pdf?year=${year}">Download summary PDF</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
@@ -244,13 +283,20 @@ export function routes(r: Router): void {
         ])}
         ${when(s.missingW9.length, () => card('⚠ Missing W-9 — collect before filing', tbl(
           [{ label: 'Vendor' }, { label: 'Paid', num: true }],
-          s.missingW9.map((m) => ({ cells: [m.vendor, usd(m.paidCents)] })),
+          s.missingW9.map((m) => ({
+            href: can(ctx, 'vendors:manage') ? `/vendors/${m.vendorId}/edit` : can(ctx, 'vendors:view') ? `/vendors/${m.vendorId}` : undefined,
+            cells: [m.vendor, usd(m.paidCents)],
+          })),
         ), { flush: true }))}
         ${card('Summary', tbl(
           [{ label: 'Vendor' }, { label: 'TIN' }, { label: 'W-9' }, { label: 'Paid', num: true }],
-          s.rows.map((r2) => ({ cells: [r2.vendor, html`<span class="mono">${r2.tin}</span>`, r2.w9 ? statusBadge('ok', 'on file') : statusBadge('error', 'missing'), usd(r2.paidCents)] })),
+          s.rows.map((r2) => ({
+            href: can(ctx, 'vendors:view') ? `/vendors/${r2.vendorId}` : undefined,
+            cells: [r2.vendor, html`<span class="mono">${r2.tin}</span>`, r2.w9 ? statusBadge('ok', 'on file') : statusBadge('error', 'missing'), usd(r2.paidCents)],
+          })),
           { empty: 'No reportable payments this year.' },
-        ), { flush: true })}`,
+        ), { flush: true })}
+        <p class="small muted">This is a working summary for preparing 1099-NEC forms, not a filing. W-9 status, the last four digits of the taxpayer ID and the mailing address are kept on each vendor’s page${can(ctx, 'vendors:manage') ? ' — open a vendor to record them' : ''}.</p>`,
     });
   });
 
@@ -319,6 +365,84 @@ export function routes(r: Router): void {
     return redirect('/purchasing/agreements', 'Agreement ended — POs fall back to catalog pricing.');
   });
 
+  // ---------- PO as a document ----------
+  r.get('/purchasing/:id/po.pdf', requirePerm('pos:create'), async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const po = q1<any>('SELECT id, property_id FROM purchase_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!po || !canAccessProperty(ctx, po.property_id)) return notFound();
+    const { bytes, poNumber } = await poPdf(ctx, po.id);
+    return fileRes(bytes, 'application/pdf', { filename: `${poNumber}.pdf`, inline: true });
+  });
+
+  // ---------- staff enter the vendor's invoice against a PO (3-way match) ----------
+  // The match engine only ever ran from the vendor portal. Most vendors send a
+  // paper or PDF invoice to the office, so the office has to be able to key it
+  // in — quantity and price exactly as printed — and let the match judge it.
+  r.get('/purchasing/:id/invoice', requirePerm('invoices:enter'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const po = q1<any>(
+      `SELECT po.*, v.name AS vendor, p.name AS property FROM purchase_orders po
+       JOIN vendors v ON v.id=po.vendor_id JOIN properties p ON p.id=po.property_id WHERE po.id=? AND po.org_id=?`,
+      rq.params.id!, ctx.orgId,
+    );
+    if (!po || !canAccessProperty(ctx, po.property_id)) return notFound();
+    if (!['approved', 'acknowledged', 'partially_received', 'received'].includes(po.status)) {
+      return redirect(`/purchasing/${po.id}`, 'An invoice can only be entered against an approved purchase order.', 'err');
+    }
+    const lines = q<any>('SELECT * FROM purchase_order_lines WHERE po_id=? AND org_id=? ORDER BY created_at, id', po.id, ctx.orgId);
+    const nothingReceived = lines.every((l) => !l.received_qty);
+    return shell(rq, {
+      title: `Enter invoice — ${po.po_number}`,
+      active: '/purchasing',
+      crumbs: [['Purchasing', '/purchasing'], [po.po_number, `/purchasing/${po.id}`]],
+      subtitle: `${po.vendor} · ${po.property} · order total ${usd(po.total_cents)}`,
+      content: html`
+        ${when(nothingReceived, () => html`<div class="callout"><b>Nothing has been received against this order yet.</b> You can still enter the invoice, but it will wait in the match exception queue until a receipt is posted or someone overrides it.</div>`)}
+        <form method="post" action="/purchasing/${po.id}/invoice">
+          ${card('Invoice', html`<div class="grid2">
+            ${field('Invoice number', input('invoice_number', { required: true }), 'As printed on the vendor’s invoice.')}
+            ${field('Invoice date', input('invoice_date', { type: 'date', value: ctx.businessDate, required: true }))}
+          </div>`)}
+          ${card('What the invoice bills', html`
+            <p class="small muted" style="margin-top:0">Type the quantity and unit price from the invoice itself, not from the order — the comparison is the point. Leave a line blank if the invoice does not bill it.</p>
+            <div class="tbl-wrap"><table class="tbl"><thead><tr><th>Ordered</th><th>Quantity billed</th><th>Unit price billed</th></tr></thead><tbody>
+              ${join(lines.map((l, i) => html`<tr>
+                <td>${l.description}<input type="hidden" name="desc_${i}" value="${l.description}" />
+                  <div class="small muted">Ordered ${l.qty} at ${usd(l.unit_price_cents)} · ${l.received_qty} received</div></td>
+                <td>${input(`qty_${i}`, { placeholder: `Quantity billed — ${l.description}`, type: 'number', step: 'any', min: '0' })}</td>
+                <td>${input(`price_${i}`, { placeholder: `Unit price billed — ${l.description}` })}</td>
+              </tr>`), '')}
+            </tbody></table></div>
+            <div class="grid2" style="margin-top:10px">
+              ${field('Other charge on the invoice (optional)', input('extra_desc', { placeholder: 'e.g. Freight' }))}
+              ${field('Other charge amount', input('extra_amount', { placeholder: '0.00' }))}
+            </div>`)}
+          <div class="btn-row"><button class="btn">Enter invoice and match</button> <a class="btn btn-ghost" href="/purchasing/${po.id}">Cancel</a></div>
+        </form>
+        <p class="small muted">If the invoice agrees with the order and the receipts (within the property’s match tolerance) it goes on to Payables for approval. If not, it waits in the match exception queue for a decision.</p>`,
+    });
+  });
+
+  r.post('/purchasing/:id/invoice', requirePerm('invoices:enter'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const po = q1<any>('SELECT * FROM purchase_orders WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!po || !canAccessProperty(ctx, po.property_id)) return notFound();
+    const b = rq.body || {};
+    try {
+      const { invoiceId, match } = submitPoInvoice(ctx, {
+        poId: po.id, invoiceNumber: String(b.invoice_number || ''), invoiceDate: String(b.invoice_date || ''),
+        lines: readInvoiceLines(b),
+      });
+      const st = q1<{ status: string }>('SELECT status FROM vendor_invoices WHERE id=?', invoiceId)?.status;
+      return redirect(`/purchasing/${po.id}`, match.status === 'matched'
+        ? `Invoice entered and matched to ${po.po_number} — ${st === 'approved' ? 'approved and ready to pay in Payables' : 'waiting for approval in Payables'}.`
+        : `Invoice entered, but it does not match ${po.po_number}: ${match.detail.join('; ')}. It is waiting in the match exception queue.`,
+      match.status === 'matched' ? 'ok' : 'err');
+    } catch (e) {
+      return redirect(`/purchasing/${po.id}/invoice`, (e as Error).message, 'err');
+    }
+  });
+
   // ---------- PO detail ----------
   r.get('/purchasing/:id', requirePerm('pos:create'), (rq) => {
     const ctx = rq.ctx as Ctx;
@@ -327,7 +451,10 @@ export function routes(r: Router): void {
        JOIN vendors v ON v.id=po.vendor_id JOIN properties p ON p.id=po.property_id WHERE po.id=? AND po.org_id=?`,
       rq.params.id!, ctx.orgId,
     );
-    if (!po) return notFound();
+    if (!po || !canAccessProperty(ctx, po.property_id)) return notFound();
+    const live = isLiveOrg(ctx);
+    const hasPortal = vendorHasPortal(ctx, po.vendor_id);
+    const invoiceable = ['approved', 'acknowledged', 'partially_received', 'received'].includes(po.status);
     const lines = q<any>('SELECT * FROM purchase_order_lines WHERE po_id=?', po.id);
     const receipts = q<any>('SELECT * FROM po_receipts WHERE po_id=? ORDER BY created_at', po.id);
     const invoices = q<any>(
@@ -341,9 +468,14 @@ export function routes(r: Router): void {
       crumbs: [['Purchasing', '/purchasing']],
       subtitle: html`${po.vendor} · ${po.property} · ${statusBadge(po.status)} · ${usd(po.total_cents)}`,
       actions: html`
-        ${when(po.status === 'pending_approval' && can(ctx, 'pos:approve'), () => html`<form method="post" action="/purchasing/${po.id}/approve" style="display:inline"><button class="btn">Approve & send</button></form>`)}
-        ${when(po.status === 'approved', () => html`<form method="post" action="/purchasing/${po.id}/ack" style="display:inline"><button class="btn btn-ghost" title="normally done by the vendor in their portal">Mark acknowledged</button></form>`)}`,
+        ${when(po.status === 'pending_approval' && can(ctx, 'pos:approve'), () => html`<form method="post" action="/purchasing/${po.id}/approve" style="display:inline"><button class="btn">${live ? 'Approve' : 'Approve & send'}</button></form>`)}
+        ${when(po.status === 'approved', () => html`<form method="post" action="/purchasing/${po.id}/ack" style="display:inline"><button class="btn btn-ghost" title="${hasPortal ? 'The vendor can do this in their portal; use it when they confirm another way' : 'Record that the vendor confirmed they have this order'}">Mark acknowledged</button></form>`)}
+        ${when(invoiceable && can(ctx, 'invoices:enter'), () => html`<a class="btn btn-ghost" href="/purchasing/${po.id}/invoice">Enter vendor invoice</a>`)}
+        <a class="btn btn-ghost" href="/purchasing/${po.id}/po.pdf">Download PO (PDF)</a>`,
       content: html`
+        ${when(live && po.status === 'approved', () => html`<div class="callout"><b>This order has not been sent to anyone.</b> Email delivery is not connected yet. ${hasPortal
+          ? html`${po.vendor} can see and acknowledge it in their vendor portal — let them know it is there.`
+          : html`<a href="/purchasing/${po.id}/po.pdf">Download the PO</a> and send it to ${po.vendor} yourself, then mark it acknowledged when they confirm.`}</div>`)}
         <div class="cols">
           <div>
             ${card('Lines', tbl(
@@ -389,11 +521,20 @@ export function routes(r: Router): void {
   });
 
   r.post('/purchasing/:id/approve', requirePerm('pos:approve'), (rq) => {
-    approvePo(rq.ctx as Ctx, rq.params.id!);
-    return redirect(`/purchasing/${rq.params.id}`, 'PO approved — sent to the vendor portal');
+    const ctx = rq.ctx as Ctx;
+    try {
+      approvePo(ctx, rq.params.id!);
+    } catch (e) {
+      return redirect(`/purchasing/${rq.params.id}`, (e as Error).message, 'err');
+    }
+    return redirect(`/purchasing/${rq.params.id}`, poApprovedFlash(ctx, rq.params.id!, 'PO approved — sent to the vendor portal'));
   });
   r.post('/purchasing/:id/ack', requirePerm('pos:create'), (rq) => {
-    acknowledgePo(rq.ctx as Ctx, rq.params.id!);
+    try {
+      acknowledgePo(rq.ctx as Ctx, rq.params.id!);
+    } catch (e) {
+      return redirect(`/purchasing/${rq.params.id}`, (e as Error).message, 'err');
+    }
     return redirect(`/purchasing/${rq.params.id}`, 'Acknowledged');
   });
   r.post('/purchasing/:id/receive', requirePerm('pos:receive'), (rq) => {
@@ -465,8 +606,31 @@ export function vendorRoutes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const po = q1<any>('SELECT * FROM purchase_orders WHERE id=? AND vendor_id=?', rq.params.id!, ctx.vendorId || '');
     if (!po) return notFound();
-    const ocr = ocrInvoiceFromPo(ctx.orgId, po.id, ctx.vendorId || '');
     const { vendorShell } = vendorUi(rq);
+    // The "OCR" is a demo prop: it invents an invoice number and copies the
+    // PO back as if it had read a document. A real vendor types their own.
+    if (isLiveOrg(ctx)) {
+      const polines = q<any>('SELECT * FROM purchase_order_lines WHERE po_id=? ORDER BY created_at, id', po.id);
+      return vendorShell(`Invoice ${po.po_number}`, html`
+        ${card('Submit your invoice', html`
+          <p class="small muted">Enter your invoice as you are billing it. It is checked against ${po.po_number} and what was received before it goes for payment.</p>
+          <form method="post" action="/vendor/pos/${po.id}/invoice">
+            <div class="grid2">
+              ${field('Your invoice number', input('invoice_number', { required: true }))}
+              ${field('Invoice date', input('invoice_date', { type: 'date', value: ctx.businessDate, required: true }))}
+            </div>
+            <table class="tbl"><thead><tr><th>Line</th><th>Quantity billed</th><th>Unit price</th></tr></thead><tbody>
+              ${join(polines.map((l, i) => html`<tr>
+                <td>${l.description}<input type="hidden" name="desc_${i}" value="${l.description}">
+                  <div class="small muted">Ordered ${l.qty} at ${usd(l.unit_price_cents)}</div></td>
+                <td>${input(`qty_${i}`, { placeholder: `Quantity billed — ${l.description}` })}</td>
+                <td>${input(`price_${i}`, { placeholder: `Unit price — ${l.description}` })}</td>
+              </tr>`), '')}
+            </tbody></table>
+            <button class="btn">Submit invoice</button>
+          </form>`)}`);
+    }
+    const ocr = ocrInvoiceFromPo(ctx.orgId, po.id, ctx.vendorId || '');
     return vendorShell(`Invoice ${po.po_number}`, html`
       ${card(html`Submit your invoice <span class="badge ok">OCR pre-filled · ${Math.round(ocr.confidence * 100)}%</span>`, html`
         <p class="small muted">We read your uploaded invoice (simulated DocOcr) and pre-filled everything from ${po.po_number}. Adjust if needed — it 3-way matches against the PO and receipts on submit.</p>
@@ -491,20 +655,15 @@ export function vendorRoutes(r: Router): void {
     const po = q1<any>('SELECT * FROM purchase_orders WHERE id=? AND vendor_id=?', rq.params.id!, ctx.vendorId || '');
     if (!po) return notFound();
     const b = rq.body!;
-    const lines = [];
-    for (let i = 0; i < 10; i++) {
-      if (!b[`desc_${i}`]) break;
-      lines.push({ description: String(b[`desc_${i}`]), qty: Number(b[`qty_${i}`] || 0), unitPriceCents: parseUsd(String(b[`price_${i}`] || '0')) });
-    }
     try {
       const { match } = submitPoInvoice(ctx, {
-        poId: po.id, invoiceNumber: String(b.invoice_number), invoiceDate: String(b.invoice_date), lines,
+        poId: po.id, invoiceNumber: String(b.invoice_number || ''), invoiceDate: String(b.invoice_date || ''), lines: readInvoiceLines(b),
       });
       return redirect('/vendor/pos', match.status === 'matched'
         ? 'Invoice submitted and matched — routed for payment'
         : 'Invoice submitted — a variance routed it to the review queue');
     } catch (e) {
-      return redirect('/vendor/pos', (e as Error).message, 'err');
+      return redirect(`/vendor/pos/${po.id}/invoice`, (e as Error).message, 'err');
     }
   });
 
@@ -526,5 +685,5 @@ export function vendorRoutes(r: Router): void {
 /** vendor pages reuse the tech/vendor chrome from M10 */
 import { techShell } from '../m10_facilities/tech.ts';
 function vendorUi(rq: any): { vendorShell: (title: string, content: Child) => any } {
-  return { vendorShell: (title: string, content: Child) => techShell(rq, title, content) };
+  return { vendorShell: (title: string, content: Child) => techShell(rq, title, content, '/vendor') };
 }

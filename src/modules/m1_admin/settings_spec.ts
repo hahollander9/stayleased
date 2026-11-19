@@ -96,6 +96,7 @@ export const GROUPS = [
   'Insurance',
   'AI and automation',
   'Approval thresholds',
+  'Maintenance',
   'Specialty housing',
 ] as const;
 
@@ -121,6 +122,13 @@ export const SPECS: SettingSpec[] = [
       { path: 'dailyCapCents', label: 'Daily fee stops at', ctl: { t: 'money' }, hint: 'Total daily charges never exceed this.' },
       { path: 'minBalanceCents', label: 'Only charge above', ctl: { t: 'money' }, hint: 'Balances under this are never charged a late fee.' },
     ],
+  },
+  {
+    key: 'late_fees_enabled', group: 'Rent, fees and payments', label: 'Charge late fees automatically',
+    help: 'On means late fees are added to resident ledgers every day under the late fee policy above, with no one clicking anything. Off means nothing is charged on its own — staff can still review who is late and assess fees from Receivables → Late fee run. Turn it on once the policy matches your leases.',
+    ctl: { t: 'bool', on: 'Charge late fees automatically' },
+    orgOnly: true,
+    orgOnlyWhy: 'The daily late-fee run is one switch for the whole organization. To exempt one property, set its late fee amounts to zero in its own policy.',
   },
   {
     key: 'nsf_fee_cents', source: 'documents', group: 'Rent, fees and payments', label: 'Returned payment fee',
@@ -381,7 +389,7 @@ export const SPECS: SettingSpec[] = [
   // ---------- Approval thresholds ----------
   {
     key: 'je_approval_threshold_cents', group: 'Approval thresholds', label: 'Journal entry approval',
-    help: 'Manual entries at or above this need a second person to approve.',
+    help: 'Manual entries at or above this wait for a second person to approve before they post. When nobody else can approve, the person who entered it confirms it and the entry is recorded as approved without a second person.',
     ctl: { t: 'money' },
   },
   {
@@ -402,6 +410,13 @@ export const SPECS: SettingSpec[] = [
   {
     key: 'writeoff_approval_threshold_cents', group: 'Approval thresholds', label: 'Write-off approval',
     help: 'Write-offs at or above this need approval.',
+    ctl: { t: 'money' },
+  },
+
+  // ---------- Maintenance ----------
+  {
+    key: 'maintenance_labor_rate_cents', group: 'Maintenance', label: 'In-house labor rate (per hour)',
+    help: 'What an hour of your own maintenance staff costs. Hours logged on a work order are multiplied by this to give the job a labor cost. Leave it at $0.00 to record hours only, with no dollar figure.',
     ctl: { t: 'money' },
   },
 

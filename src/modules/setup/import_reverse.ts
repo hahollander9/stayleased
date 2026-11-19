@@ -175,6 +175,10 @@ export function reverseImport(ctx: Ctx, batch: BatchRow & { summary?: string | n
       `org_id=? AND entry_id IN (SELECT id FROM journal_entries WHERE org_id=? AND import_batch_id=?)`, o, o, b);
     counts.journalEntries = del('journal_entries', 'org_id=? AND import_batch_id=?', o, b);
     del('payment_applications', `org_id=? AND charge_id IN (SELECT id FROM charges WHERE org_id=? AND import_batch_id=?)`, o, o, b);
+    del('fee_waivers',
+      `org_id=? AND (charge_id IN (SELECT id FROM charges WHERE org_id=? AND import_batch_id=?)
+        OR waiver_charge_id IN (SELECT id FROM charges WHERE org_id=? AND import_batch_id=?))`,
+      o, o, b, o, b);
     counts.charges = del('charges', 'org_id=? AND import_batch_id=?', o, b);
 
     del('lease_charges', 'org_id=? AND import_batch_id=?', o, b);

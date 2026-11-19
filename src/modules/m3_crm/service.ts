@@ -6,7 +6,7 @@ import { emit } from '../../lib/events.ts';
 import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { getDials } from '../../lib/sim/dials.ts';
-import { sendEmail, sendSms } from '../../lib/sim/messaging.ts';
+import { sendEmail, sendSms, isLiveOrg } from '../../lib/sim/messaging.ts';
 import { Rng } from '../../lib/rng.ts';
 import { FIRST, LAST } from '../../seed/names.ts';
 import { unitStats } from '../m2_portfolio/service.ts';
@@ -128,7 +128,9 @@ export function messageLead(ctx: Ctx, leadId: string, channel: 'email' | 'sms', 
   leadEvent(ctx, leadId, channel === 'email' ? 'email_out' : 'sms_out', `${subject ? subject + ' — ' : ''}${body.slice(0, 120)}`);
   completeNextTask(ctx, leadId);
   // stage moves always carry their reason — visible on the lead timeline
-  if (lead.status === 'new') setLeadStatus(ctx, leadId, 'contacted', `first ${channel === 'email' ? 'email' : 'text'} sent`);
+  // …but only when something reached the prospect. In a live organization the
+  // message is saved, not delivered, so the lead has not been contacted yet.
+  if (lead.status === 'new' && !isLiveOrg(ctx)) setLeadStatus(ctx, leadId, 'contacted', `first ${channel === 'email' ? 'email' : 'text'} sent`);
 }
 
 // ---------- tours (M3.3) ----------

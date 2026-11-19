@@ -2,7 +2,7 @@ import { q, q1, insert, run, val, tx, j, js } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addMonths, monthKey, parts } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
-import { can } from '../../lib/auth.ts';
+import { can, buildCtx } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting } from '../../lib/settings.ts';
@@ -23,14 +23,25 @@ export interface ChecklistItem {
 
 export function closeChecklist(ctx: Ctx, propertyId: string, periodKey: string): ChecklistItem[] {
   const items: ChecklistItem[] = [];
-  const acct = q1<any>(`SELECT id FROM bank_accounts WHERE org_id=? AND property_id=? AND kind='operating'`, ctx.orgId, propertyId);
-  const rec = acct
-    ? q1<any>(`SELECT status FROM bank_recons WHERE bank_account_id=? AND period_key=?`, acct.id, periodKey)
-    : null;
+  // Every ACTIVE operating account of the property must be reconciled. A bare
+  // "first operating row" used to pick whichever account was created first —
+  // including one the operator had replaced — and ignore the one in use.
+  const accts = q<any>(
+    `SELECT id, name FROM bank_accounts WHERE org_id=? AND property_id=? AND kind='operating' AND active=1 ORDER BY created_at`,
+    ctx.orgId, propertyId,
+  );
+  const recs = accts.map((a) => ({
+    name: a.name as string,
+    status: q1<any>(`SELECT status FROM bank_recons WHERE bank_account_id=? AND period_key=?`, a.id, periodKey)?.status as string | undefined,
+  }));
+  const notDone = recs.filter((r) => r.status !== 'completed');
   items.push({
     key: 'bank_rec', label: 'Bank reconciliation completed',
-    ok: rec?.status === 'completed',
-    detail: rec ? `reconciliation ${rec.status}` : 'no reconciliation started for this month',
+    ok: accts.length > 0 && notDone.length === 0,
+    detail: !accts.length ? 'no active operating bank account for this property — add one under Accounting setup'
+      : !notDone.length ? 'reconciliation completed'
+      : accts.length === 1 ? (recs[0]!.status ? `reconciliation ${recs[0]!.status.replaceAll('_', ' ')}` : 'no reconciliation started for this month')
+      : notDone.map((r) => `${r.name}: ${r.status ? r.status.replaceAll('_', ' ') : 'not started'}`).join('; '),
   });
 
   const draftInv = val<number>(
@@ -134,8 +145,11 @@ export function submitManualJe(
   const cr = input.lines.reduce((s, l) => s + (l.credit || 0), 0);
   if (dr !== cr || dr === 0) throw new Error(`entry must balance (DR ${dr} vs CR ${cr})`);
   const threshold = getSetting<number>(ctx, 'je_approval_threshold_cents', input.propertyId);
-  if (dr > threshold && !can(ctx, 'gl:close_period')) {
-    // large JEs route to the controller (close_period holders act as approvers)
+  // "At or above this, a second person approves" — decided by the amount
+  // alone. It used to also require that the submitter LACKED the approver
+  // permission, and every role that can post an entry holds it, so no entry
+  // ever waited for anyone. Who may approve is settled in decidePendingJe.
+  if (dr >= threshold) {
     const pid = id('pje');
     insert('pending_jes', {
       id: pid, org_id: ctx.orgId, property_id: input.propertyId, date: input.date, memo: input.memo,
@@ -177,14 +191,38 @@ export function decidePendingJe(ctx: Ctx, pendingId: string, approve: boolean, r
     audit(ctx, 'pending_je', pendingId, 'reject', null, { reason });
     return null;
   }
+  // The approver must be someone other than the person who entered it —
+  // unless nobody else in the organization can approve, in which case the
+  // one person confirms their own entry and the record says exactly that.
+  const own = pendingJeIsOwn(ctx, p);
+  if (own && otherJeApprovers(ctx).length > 0) {
+    throw new Error('This entry needs a second person. Someone else with approval rights has to approve an entry you entered yourself.');
+  }
   const jeId = postManual(
     ctx,
     { propertyId: p.property_id, date: p.date, memo: p.memo, basis: p.basis, lines: j<JELine[]>(p.lines, []) },
     ctx.userName,
   );
   run(`UPDATE pending_jes SET status='posted', decided_by=?, decided_at=?, je_id=? WHERE id=?`, ctx.userName, nowIso(), jeId, pendingId);
-  audit(ctx, 'pending_je', pendingId, 'approve', null, { jeId });
+  audit(ctx, 'pending_je', pendingId, own ? 'self_approve' : 'approve', null, own ? { jeId, note: 'no second approver in this organization' } : { jeId });
   return jeId;
+}
+
+/** did this user enter the pending entry? (the submit audit row holds the id;
+ * the name on the row is the fallback for entries older than that) */
+export function pendingJeIsOwn(ctx: Ctx, p: { id: string; requested_by?: string | null }): boolean {
+  const submit = q1<{ user_id: string | null }>(
+    `SELECT user_id FROM audit_events WHERE org_id=? AND entity='pending_je' AND entity_id=? AND action='submit' ORDER BY at LIMIT 1`,
+    ctx.orgId, p.id,
+  );
+  return submit?.user_id ? submit.user_id === ctx.userId : (p.requested_by || '') === ctx.userName;
+}
+
+/** active staff, other than the current user, who may approve journal entries */
+export function otherJeApprovers(ctx: Ctx): string[] {
+  return q<any>(`SELECT * FROM users WHERE org_id=? AND kind='staff' AND active=1 AND id!=?`, ctx.orgId, ctx.userId)
+    .filter((u) => can(buildCtx(u, null, null), 'gl:close_period'))
+    .map((u) => u.name as string);
 }
 
 // ---------- recurring JEs (M9.3) ----------

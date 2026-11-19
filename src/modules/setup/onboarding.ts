@@ -93,7 +93,12 @@ export function onboardingProgress(ctx: Ctx): { done: number; total: number; req
 // real ledger that the operator never set. A new live org starts at zero and
 // turns it on in Settings — the same reasoning as auto_enroll_migrated.
 on('org.created', (ctx) => {
-  if (orgKindOf(ctx.orgId) === 'live') setSetting(ctx, 'mtm_premium_pct', 0);
+  if (orgKindOf(ctx.orgId) !== 'live') return;
+  setSetting(ctx, 'mtm_premium_pct', 0);
+  // Same reasoning for late fees: the default policy ($50, then $10 a day) is
+  // a demo feature, not this operator's lease. Nothing is charged
+  // automatically until they turn it on in Settings.
+  setSetting(ctx, 'late_fees_enabled', false);
 });
 function orgKindOf(orgId: string): string {
   return q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', orgId)?.kind || 'demo';

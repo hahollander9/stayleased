@@ -1,6 +1,7 @@
 import { html, when, join } from '../../lib/html.ts';
 import { notFound, redirect, type Router } from '../../lib/http.ts';
-import { requirePerm, can, propFilter, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, can, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 import { q, q1, val, j } from '../../lib/db.ts';
 import { fmtDate, fmtMonth, monthKey, addMonths } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
@@ -12,7 +13,7 @@ import { lines as lineChart, bars } from '../../lib/charts.ts';
 import {
   ensureCompSets, generateCompObservations, compAverage, runPricingEngine,
   decideRecommendation, acceptAll, termRateMatrix, expirationLoad, runRenewalBatch,
-  revenueAnalytics, type Factor,
+  revenueAnalytics, addCompSet, recordCompObservation, removeCompSet, type Factor,
 } from './service.ts';
 
 /** M13 screens: daily pricing review queue with transparent factor breakdowns,
@@ -298,59 +299,153 @@ export function routes(r: Router): void {
     ensureCompSets(ctx.orgId);
     const props = propsFor(ctx);
     if (!props.length) return noProperties(rq, 'Pricing', '/pricing');
-    const propId = rq.query.get('property') || props[0]?.id;
-    const comps = q<any>('SELECT * FROM comp_sets WHERE property_id=? AND active=1 ORDER BY distance_miles', propId);
-    const bedsList = q<any>('SELECT DISTINCT beds FROM floorplans WHERE property_id=? ORDER BY beds', propId).map((x) => x.beds as number);
+    const asked = rq.query.get('property');
+    const propId: string = props.some((p) => p.id === asked) ? asked! : props[0]!.id;
+    const live = isLiveOrg(ctx);
+    const canEdit = can(ctx, 'pricing:approve');
+    const comps = q<any>('SELECT * FROM comp_sets WHERE org_id=? AND property_id=? AND active=1 ORDER BY distance_miles, name', ctx.orgId, propId);
+    const bedsList = q<any>('SELECT DISTINCT beds FROM floorplans WHERE org_id=? AND property_id=? ORDER BY beds', ctx.orgId, propId).map((x) => x.beds as number);
     const beds = Number(rq.query.get('beds') ?? bedsList[Math.min(1, bedsList.length - 1)] ?? 1);
     const months: string[] = [];
     for (let i = 13; i >= 0; i--) months.push(monthKey(addMonths(ctx.businessDate, -i)));
-    const ourSeries = months.map((m) => val<number>(
-      `SELECT AVG(market_rent_cents) FROM floorplans WHERE property_id=? AND beds=?`, propId, beds,
-    ) || 0);
-    const compSeries = months.map((m) => Math.round(compAverage(ctx.orgId, propId!, beds, m) || 0));
+    const ourAvg = val<number>(
+      `SELECT AVG(market_rent_cents) FROM floorplans WHERE org_id=? AND property_id=? AND beds=?`, ctx.orgId, propId, beds,
+    ) || 0;
+    const ourSeries = months.map(() => ourAvg);
+    const compSeries = months.map((m) => Math.round(compAverage(ctx.orgId, propId, beds, m) || 0));
     const latest = q<any>(
-      `SELECT o.*, c.name, c.distance_miles FROM comp_observations o JOIN comp_sets c ON c.id=o.comp_id
-       WHERE c.property_id=? AND o.month_key=? ORDER BY o.beds, c.distance_miles`,
-      propId, months[months.length - 1],
+      `SELECT o.*, c.name, c.distance_miles FROM comp_observations o JOIN comp_sets c ON c.id=o.comp_id AND c.org_id=o.org_id
+       WHERE o.org_id=? AND c.property_id=? AND c.active=1 AND o.month_key=? ORDER BY o.beds, c.distance_miles`,
+      ctx.orgId, propId, months[months.length - 1],
     );
     const ourNow = ourSeries[ourSeries.length - 1] || 0;
     const compNow = compSeries[compSeries.length - 1] || 0;
     const gapPct = compNow ? Math.round(((ourNow - compNow) / compNow) * 1000) / 10 : 0;
+    const bedLabel = (b: number): string => (b === 0 ? 'Studio' : `${b} BR`);
+    const bedOptions = (bedsList.length ? bedsList : [0, 1, 2, 3]).map((b): [string, string] => [String(b), bedLabel(b)]);
+    const hasHistory = compSeries.some((c) => c > 0);
+    // A live organization's comp set is what its own team typed in — there is
+    // no market feed. The forms below are the whole data source.
+    const addForm = html`<form method="post" action="/pricing/comps" class="form-grid">
+        <input type="hidden" name="property" value="${propId}" />
+        ${field('Community name', input('name', { required: true, placeholder: 'e.g. Maple Court Apartments' }))}
+        ${field('Distance (miles)', input('distance_miles', { type: 'number', step: '0.1', min: '0', max: '100', placeholder: '1.0' }))}
+        ${field('Year built', input('year_built', { type: 'number', min: '1800', max: '2100', placeholder: 'optional' }))}
+        ${field('Notes', input('notes', { placeholder: 'optional' }))}
+        <div class="field full"><button class="btn">Add comparable</button></div>
+      </form>`;
+    const compRows = comps.map((c) => ({
+      cells: [
+        html`<b>${c.name}</b>${when(c.notes, () => html`<div class="small muted">${c.notes}</div>`)}`,
+        `${c.distance_miles} mi`, String(c.year_built || '—'),
+        ...(live && canEdit ? [html`
+          <form method="post" action="/pricing/comps/${c.id}/observe" class="toolbar">
+            ${field('Bedrooms', select('beds', bedOptions, String(beds)))}
+            ${field('Asking rent this month', moneyInput('rent', null, { required: true }))}
+            ${field('Concession', input('concession_note', { placeholder: 'optional, e.g. one month free' }))}
+            <button class="btn btn-sm">Record rent</button>
+          </form>
+          <form method="post" action="/pricing/comps/${c.id}/remove" data-confirm="Remove ${c.name} from this comp set? The rents already recorded are kept.">
+            <button class="btn btn-sm btn-ghost">Remove</button>
+          </form>`] : []),
+      ],
+    }));
+    const compCols = [{ label: 'Community' }, { label: 'Distance' }, { label: 'Year built' }, ...(live && canEdit ? [{ label: 'Record what it is asking' }] : [])];
     return shell(rq, {
       title: 'Comp market positioning',
       active: '/pricing',
-      subtitle: 'Deterministic market simulator — nearby communities drift ~3.2%/yr with seasonal swings. The engine prices against this set.',
+      subtitle: live
+        ? 'The nearby communities this property competes with and what each is asking — entered by your team. Pricing compares against this set.'
+        : 'Deterministic market simulator — nearby communities drift ~3.2%/yr with seasonal swings. The engine prices against this set.',
       content: html`
         ${pricingTabs('comps')}
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Property', select('property', props.map((p): [string, string] => [p.id, p.name]), propId))}
-          ${field('Bedrooms', select('beds', bedsList.map((b): [string, string] => [String(b), b === 0 ? 'Studio' : `${b} BR`]), String(beds)))}
+          ${field('Bedrooms', select('beds', bedsList.map((b): [string, string] => [String(b), bedLabel(b)]), String(beds)))}
         </form>
+        ${when(live && !comps.length, () => card(null, emptyState(
+          'No comparable communities yet',
+          'Add the nearby communities this property competes with, then record what each is asking by bedroom count. Until rents are recorded, prices are not adjusted for the market.',
+        )))}
+        ${when(!live || comps.length, () => html`
         ${kpis([
-          { label: `Our avg asking (${beds === 0 ? 'studio' : `${beds} BR`})`, value: usd(ourNow) },
-          { label: 'Comp set avg', value: usd(compNow) },
-          { label: 'Position vs market', value: `${gapPct >= 0 ? '+' : ''}${gapPct}%`, tone: Math.abs(gapPct) <= 5 ? 'ok' : 'warn', sub: 'engine nudges when |gap| > 5%' },
+          { label: `Our avg asking (${beds === 0 ? 'studio' : `${beds} BR`})`, value: ourNow ? usd(ourNow) : '—' },
+          { label: 'Comp set avg', value: compNow ? usd(compNow) : '—', sub: compNow ? undefined : 'no rents recorded this month' },
+          compNow
+            ? { label: 'Position vs market', value: `${gapPct >= 0 ? '+' : ''}${gapPct}%`, tone: Math.abs(gapPct) <= 5 ? 'ok' : 'warn', sub: 'engine nudges when |gap| > 5%' }
+            : { label: 'Position vs market', value: '—', sub: 'needs a comp rent to compare' },
           { label: 'Active comps', value: String(comps.length) },
         ])}
-        ${card('Us vs the comp set — trailing 14 months', lineChart(
+        ${when(!live || hasHistory, () => card('Us vs the comp set — trailing 14 months', lineChart(
           months.map((m) => fmtMonth(m).slice(0, 3)),
           [
             { name: 'Our asking', tone: 'accent', points: ourSeries },
             { name: 'Comp set avg', tone: 'warn', points: compSeries },
           ],
           { money: true, height: 210 },
-        ))}
+        )))}
         ${card(`Latest observations — ${fmtMonth(months[months.length - 1]!)}`, tbl(
           [{ label: 'Community' }, { label: 'Distance' }, { label: 'Beds' }, { label: 'Observed rent', num: true }, { label: 'Concessions' }],
           latest.map((o) => ({
             cells: [o.name, `${o.distance_miles} mi`, o.beds === 0 ? 'Studio' : `${o.beds} BR`, usd(o.rent_cents), o.concession_note || html`<span class="muted">none noted</span>`],
           })),
+          ...(live ? [{ empty: 'No rents recorded for this month yet.' }] : []),
         ))}
-        ${card('Comp set', tbl(
-          [{ label: 'Community' }, { label: 'Distance' }, { label: 'Year built' }],
-          comps.map((c) => ({ cells: [c.name, `${c.distance_miles} mi`, String(c.year_built || '—')] })),
-        ))}`,
+        ${card('Comp set', tbl(compCols, compRows))}`)}
+        ${when(live && canEdit, () => card('Add a comparable community', addForm))}`,
     });
+  });
+
+  /** the comp, if it is this organization's and the person may work its property */
+  const compFor = (ctx: Ctx, compId: string): any | null => {
+    const c = q1<any>('SELECT * FROM comp_sets WHERE id=? AND org_id=?', compId, ctx.orgId);
+    return c && canAccessProperty(ctx, c.property_id) ? c : null;
+  };
+  const compsUrl = (propertyId: string): string => `/pricing/comps?property=${encodeURIComponent(propertyId)}`;
+
+  r.post('/pricing/comps', requirePerm('pricing:approve'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const propertyId = String(rq.body.property || '');
+    const prop = q1<any>('SELECT id FROM properties WHERE id=? AND org_id=?', propertyId, ctx.orgId);
+    if (!prop || !canAccessProperty(ctx, prop.id)) return notFound('Property not found');
+    const num = (x: unknown): number | null => (String(x ?? '').trim() === '' ? null : Number(x));
+    try {
+      addCompSet(ctx, {
+        propertyId: prop.id, name: String(rq.body.name || ''),
+        distanceMiles: num(rq.body.distance_miles), yearBuilt: num(rq.body.year_built),
+        notes: rq.body.notes ? String(rq.body.notes) : null,
+      });
+    } catch (e) {
+      return redirect(compsUrl(prop.id), (e as Error).message, 'err');
+    }
+    return redirect(compsUrl(prop.id), 'Comparable added. Record what it is asking to include it in the comparison.');
+  });
+
+  r.post('/pricing/comps/:id/observe', requirePerm('pricing:approve'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const comp = compFor(ctx, rq.params.id!);
+    if (!comp) return notFound('Comparable not found');
+    try {
+      let rentCents: number;
+      try { rentCents = parseUsd(String(rq.body.rent ?? '')); } catch { throw new Error('Enter the monthly rent the community is asking.'); }
+      recordCompObservation(ctx, {
+        compId: comp.id, beds: Number(String(rq.body.beds ?? '').trim() === '' ? NaN : rq.body.beds), rentCents,
+        month: rq.body.month ? String(rq.body.month) : undefined,
+        concessionNote: rq.body.concession_note ? String(rq.body.concession_note) : null,
+      });
+    } catch (e) {
+      const msg = (e as Error).message;
+      return redirect(compsUrl(comp.property_id), msg === 'comp not found' ? 'That comparable was removed.' : msg, 'err');
+    }
+    return redirect(compsUrl(comp.property_id), `Rent recorded for ${comp.name}.`);
+  });
+
+  r.post('/pricing/comps/:id/remove', requirePerm('pricing:approve'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const comp = compFor(ctx, rq.params.id!);
+    if (!comp) return notFound('Comparable not found');
+    removeCompSet(ctx, comp.id);
+    return redirect(compsUrl(comp.property_id), `${comp.name} removed from the comp set.`);
   });
 
   // ---------- revenue analytics ----------
@@ -379,9 +474,11 @@ export function routes(r: Router): void {
           ${field('Property', select('property', props.map((p): [string, string] => [p.id, p.name]), propId))}
         </form>
         ${kpis([
-          { label: 'In-place avg rent', value: usd(a.lossToLease.inPlace) },
+          { label: 'In-place avg rent', value: a.lossToLease.inPlace ? usd(a.lossToLease.inPlace) : '—', sub: a.lossToLease.inPlace ? undefined : 'no leases in place yet' },
           { label: 'Market avg asking', value: usd(a.lossToLease.market) },
-          { label: 'Loss to lease', value: `${a.lossToLease.gapPct}%`, sub: `${usd(a.lossToLease.gapCents)}/unit/mo`, tone: a.lossToLease.gapPct > 6 ? 'warn' : 'ok' },
+          a.lossToLease.inPlace
+            ? { label: 'Loss to lease', value: `${a.lossToLease.gapPct}%`, sub: `${usd(a.lossToLease.gapCents)}/unit/mo`, tone: a.lossToLease.gapPct > 6 ? 'warn' : 'ok' }
+            : { label: 'Loss to lease', value: '—', sub: 'needs leases in place to compare' },
           { label: 'Concessions (12 mo)', value: usd(a.concessions), tone: 'accent' },
         ])}
         ${card('Effective in-place rent trend (avg monthly rent charge)', lineChart(

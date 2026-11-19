@@ -7,6 +7,7 @@ import { usd } from '../../lib/money.ts';
 import { hasRealAddress, formatAddress } from '../../lib/address.ts';
 import { v } from '../../lib/validate.ts';
 import { logo } from '../../ui/ui.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 import { intakeLead, bookTour, tourSlots } from '../m3_crm/service.ts';
 import { MK_PAGES, MK_GROUPS } from './features.ts';
 
@@ -221,7 +222,7 @@ export function routes(r: Router): void {
         <div class="field"><label>Tour type</label><select name="type"><option value="in_person">With our team</option><option value="self_guided">Self-guided</option><option value="virtual">Virtual</option></select></div>
         <div class="field full"><button class="btn" style="color:#fff">Confirm my tour</button></div>
       </form>
-      <p class="small muted">You'll get an instant email confirmation and a reminder the day before.</p>
+      <p class="small muted">${isLiveOrg({ orgId: prop.org_id }) ? 'The leasing office will be in touch to confirm your tour.' : "You'll get an instant email confirmation and a reminder the day before."}</p>
     </section>`;
   }
 
@@ -265,7 +266,9 @@ export function routes(r: Router): void {
       beds: rq.body.beds !== '' && rq.body.beds !== undefined ? parseInt(String(rq.body.beds), 10) : null,
       message: [rq.body.plan ? `Interested in ${rq.body.plan}.` : '', rq.body.message || ''].filter(Boolean).join(' ') || null,
     });
-    return redirect(`/p/${prop.slug}`, 'Thanks! Our leasing team will reach out shortly — check your inbox.');
+    return redirect(`/p/${prop.slug}`, isLiveOrg({ orgId: prop.org_id })
+      ? 'Thanks! Our leasing team will reach out shortly.'
+      : 'Thanks! Our leasing team will reach out shortly — check your inbox.');
   });
 
   r.post('/p/:slug/tour', (rq) => {
@@ -289,7 +292,9 @@ export function routes(r: Router): void {
     } catch {
       return redirect(`/p/${prop.slug}#tour`, 'That time was just taken — pick another slot.', 'err');
     }
-    return redirect(`/p/${prop.slug}`, `You're booked! Check ${parsed.value.email} for your confirmation.`);
+    return redirect(`/p/${prop.slug}`, isLiveOrg(ctx)
+      ? 'You’re booked! The leasing office will be in touch to confirm.'
+      : `You're booked! Check ${parsed.value.email} for your confirmation.`);
   });
 
   // ---------- corporate brand site ----------

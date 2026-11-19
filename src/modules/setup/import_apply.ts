@@ -158,7 +158,7 @@ function slugify(s: string): string {
   return s.toLowerCase().trim().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 48);
 }
 
-function uniquePropertySlug(base: string): string {
+export function uniquePropertySlug(base: string): string {
   let slug = slugify(base) || 'property';
   if (!q1('SELECT id FROM properties WHERE slug=?', slug)) return slug;
   for (let i = 2; i < 500; i++) {
@@ -1251,6 +1251,26 @@ export function applyDeposits(ctx: Ctx, batch: BatchRow): ApplySummary {
 export function postBankOpeningBalance(ctx: Ctx, propertyId: string, cents: number, asOf: string): void {
   if (!canAccessProperty(ctx, propertyId)) throw new Error('property not in your portfolio');
   if (!Number.isInteger(cents) || cents === 0) throw new Error('enter a non-zero amount');
+  // One opening balance per property. A second submit used to post a second
+  // Dr 1010 / Cr 3030 pair on both books and double the cash. An entry that
+  // has since been reversed no longer counts, so a wrong figure is corrected
+  // by a journal entry for the difference — never by stacking another on top.
+  const prior = q1<{ date: string; cents: number }>(
+    `SELECT je.date AS date,
+            (SELECT COALESCE(SUM(jl.debit_cents - jl.credit_cents),0) FROM journal_lines jl
+              WHERE jl.entry_id=je.id AND jl.account_code='1010') AS cents
+       FROM journal_entries je
+      WHERE je.org_id=? AND je.property_id=? AND je.basis='accrual' AND je.source_kind='conversion'
+        AND je.source_id=? AND je.memo LIKE 'Opening operating bank balance%'
+        AND je.reversal_of IS NULL
+        AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of=je.id)
+      LIMIT 1`,
+    ctx.orgId, propertyId, propertyId,
+  );
+  if (prior) {
+    const amt = `${prior.cents < 0 ? '-' : ''}$${(Math.abs(prior.cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+    throw new Error(`An opening bank balance of ${amt} is already posted for this property (as of ${prior.date}). To change it, post a journal entry for the difference against 3030 Opening balance equity.`);
+  }
   ensureOpeningEquityAccount(ctx.orgId);
   ensureBankAccounts(ctx.orgId);
   postBothBases(ctx, {

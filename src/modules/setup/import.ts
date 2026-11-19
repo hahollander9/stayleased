@@ -28,6 +28,7 @@ import { type DocClassification } from './ai_classify.ts';
 import { readDocument, type DocumentRead, type DocStream } from './extract.ts';
 import { docsChecklist } from './onboarding.ts';
 import { readinessPanel } from './readiness.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 
 /** Migration Center — the working model's front door for data.
  * One principle: the customer uploads WHATEVER their old system produces
@@ -658,7 +659,7 @@ function stageUnreadable(ctx: Ctx, rq: Rq, up: { filename: string; data: Buffer;
         : batch.kind === 'balances' ? applyBalances(ctx, batch)
         : batch.kind === 'deposits' ? applyDeposits(ctx, batch)
         : applyRentRoll(ctx, batch);
-      const bits = summaryBits(s);
+      const bits = summaryBits(s, isLiveOrg(ctx));
       const skipNote = s.skipped ? ` ${s.skipped} row${s.skipped === 1 ? '' : 's'} skipped (see the import log).` : '';
       const single = batch.property_id || (s.propertyIds && s.propertyIds.length === 1 ? s.propertyIds[0] : null);
       const dest = single ? `/properties/${single}` : '/properties';
@@ -756,7 +757,14 @@ function tabFor(kind: ImportKind): string {
 
 /** One compact phrase list for what an apply did — shared by the apply flash,
  * the history table, and the read-only batch record. */
-function summaryBits(s: Partial<import('./import_apply.ts').ApplySummary>): string[] {
+/** What happened to the portal invitations an import created. */
+export function portalInviteNote(n: number, live: boolean): string {
+  return live
+    ? `${n} portal login${n === 1 ? '' : 's'} created — invitations are saved in the Outbox, not emailed`
+    : `${n} portal invite${n === 1 ? '' : 's'} sent`;
+}
+
+function summaryBits(s: Partial<import('./import_apply.ts').ApplySummary>, live = false): string[] {
   const bits: string[] = [];
   if (s.properties) bits.push(`${s.properties} propert${s.properties === 1 ? 'y' : 'ies'}`);
   if (s.units) bits.push(`${s.units} unit${s.units === 1 ? '' : 's'}`);
@@ -766,7 +774,9 @@ function summaryBits(s: Partial<import('./import_apply.ts').ApplySummary>): stri
   if (s.balancesCents) bits.push(`$${(s.balancesCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })} in balances`);
   if (s.depositsCents) bits.push(`$${(s.depositsCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })} in deposits held`);
   if (s.contactUpdates) bits.push(`${s.contactUpdates} contact update${s.contactUpdates === 1 ? '' : 's'}`);
-  if (s.portalInvites) bits.push(`${s.portalInvites} portal invite${s.portalInvites === 1 ? '' : 's'} sent`);
+  // a live organization has no email rail: the logins exist, the invitations
+  // sit in the Outbox, and saying "sent" would be a claim nobody can keep
+  if (s.portalInvites) bits.push(live ? portalInviteNote(s.portalInvites, true) : `${s.portalInvites} portal invite${s.portalInvites === 1 ? '' : 's'} sent`);
   return bits;
 }
 
@@ -937,7 +947,7 @@ export function importSections(rq: Rq): Raw {
         const s = b.summary ? j<Partial<import('./import_apply.ts').ApplySummary>>(b.summary, {}) : null;
         const cls = j<Mapping & { classification?: DocClassification }>(b.mapping, { cols: {}, preset: null, aiAssisted: [] }).classification;
         const result = b.status === 'applied'
-          ? (s ? summaryBits(s).slice(0, 4).join(' · ') || 'Applied' : 'Applied') + (s?.skipped ? ` · ${s.skipped} skipped` : '')
+          ? (s ? summaryBits(s, isLiveOrg(ctx)).slice(0, 4).join(' · ') || 'Applied' : 'Applied') + (s?.skipped ? ` · ${s.skipped} skipped` : '')
           : b.status === 'staged' ? `${j<string[][]>(b.rows, []).length} rows awaiting review`
           : b.kind === 'unknown' ? 'Not imported — StayLeased does not read this report' : '—';
         const href = b.kind === 'lease_pdf'
@@ -1163,7 +1173,7 @@ function recordPage(rq: Rq, batch: BatchRow & { created_at?: string; applied_at?
           ${applied && (batch as { applied_at?: string | null }).applied_at ? html`<span class="muted small">applied ${fmtDate((batch as { applied_at?: string | null }).applied_at!.slice(0, 10))}</span>` : raw('')}
           <span class="muted small">${String(rows.length)} data row${rows.length === 1 ? '' : 's'} in the file</span>
         </div>
-        ${when(applied && !!s, () => html`<p style="margin:10px 0 0">${summaryBits(s!).join(' · ') || 'Nothing new was created.'}${s!.skipped ? html` <span class="muted">· ${String(s!.skipped)} row${s!.skipped === 1 ? '' : 's'} skipped</span>` : raw('')}</p>`)}
+        ${when(applied && !!s, () => html`<p style="margin:10px 0 0">${summaryBits(s!, isLiveOrg(rq.ctx as Ctx)).join(' · ') || 'Nothing new was created.'}${s!.skipped ? html` <span class="muted">· ${String(s!.skipped)} row${s!.skipped === 1 ? '' : 's'} skipped</span>` : raw('')}</p>`)}
         ${when(applied && !!s?.recon, () => reconStrip(s!.recon!, true))}
         ${when(!applied, () => html`<p class="muted" style="margin:10px 0 0">This upload was discarded — nothing was written. The file's mapping is kept below for reference.</p>`)}
         ${when(!!(mapping.notes || []).length, () => html`<p class="muted small" style="margin:8px 0 0">${(mapping.notes || []).join(' ')}</p>`)}

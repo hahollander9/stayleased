@@ -37,7 +37,9 @@ registerNav('Admin', { href: '/admin/audit', label: 'Audit log', perm: 'admin:au
 registerNav('Admin', { href: '/admin/jobs', label: 'Scheduled jobs', perm: 'admin:jobs' });
 registerNav('Admin', { href: '/admin/api', label: 'Integrations', perm: 'admin:api' });
 registerNav('Developer', { href: '/dev/sim', label: 'Simulator console', perm: 'dev:console', demoOnly: true });
-registerNav('Developer', { href: '/dev/messages', label: 'Outbox', perm: 'dev:console' });
+// The Outbox is where every "saved, not delivered" message points, so the
+// people who send messages must be able to open it — not only developers.
+registerNav('Admin', { href: '/dev/messages', label: 'Outbox', perm: 'comms:view' });
 
 registerSearch((ctx, query) => {
   if (!ctx.perms.has('admin:staff')) return [];
@@ -166,7 +168,7 @@ export function routes(r: Router): void {
       crumbs: [['Staff & roles', '/admin/staff']],
       actions: html`
         <form method="post" action="/admin/impersonate/${u.id}" data-confirm="Impersonate ${u.name}? This is audited."><button class="btn btn-ghost">Login as ${u.name.split(' ')[0]}</button></form>
-        <form method="post" action="/admin/staff/${u.id}/reset-password" data-confirm="Reset password to demo1234?"><button class="btn btn-ghost">Reset password</button></form>`,
+        <form method="post" action="/admin/staff/${u.id}/reset-password" data-confirm="${ctx.orgKind === 'live' ? 'Reset this password? A new one-time password is shown to you once, and this person is signed out everywhere.' : 'Reset password to demo1234?'}"><button class="btn btn-ghost">Reset password</button></form>`,
       content: html`${staffForm(rq, u, grants)}
         ${card('History', historyPanel(ctx.orgId, 'user', u.id))}`,
     });
@@ -838,7 +840,7 @@ export function routes(r: Router): void {
   // The outbox is a RECORD, not a simulator: live orgs need to read what the
   // platform generated for their residents (portal invites carry the one-time
   // passwords) until the live email/SMS rails ship. Only /dev/sim stays demo-only.
-  r.get('/dev/messages', requirePerm('dev:console'), (rq) => {
+  r.get('/dev/messages', requirePerm('comms:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const channel = rq.query.get('channel') || '';
     const template = rq.query.get('template') || '';
@@ -881,7 +883,7 @@ export function routes(r: Router): void {
     });
   });
 
-  r.get('/dev/messages/:id', requirePerm('dev:console'), (rq) => {
+  r.get('/dev/messages/:id', requirePerm('comms:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound('Message not found');

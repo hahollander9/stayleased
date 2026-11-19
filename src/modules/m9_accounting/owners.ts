@@ -1,11 +1,11 @@
-import { q, q1, insert, run } from '../../lib/db.ts';
+import { q, q1, insert, run, tx } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addMonths, firstOfMonth } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
-import { assertPerm } from '../../lib/auth.ts';
+import { assertPerm, canAccessProperty } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
 import { incomeStatement, type Basis } from './statements.ts';
-import { accountBalance } from './service.ts';
+import { accountBalance, postJE, postBothBases } from './service.ts';
 import { RESERVE_GL } from './reserves.ts';
 
 /** M9.10 — owner entities + owner statements (accountant-feedback build).
@@ -134,4 +134,108 @@ export function ownersOverview(ctx: Ctx): { owner: any; holdings: { property_nam
       o.id,
     ),
   }));
+}
+
+// ---------- owner distributions ----------
+
+/** Record a distribution: money already paid to a property's owners from its
+ * operating account. This is bookkeeping, not a payment — nothing is sent from
+ * here. It posts DR 3020 Owner contributions/(distributions) / CR 1010 on both
+ * books, and stores each owner's part by their share on that day, so an owner
+ * can be shown what they received rather than a percentage of a GL balance.
+ *
+ * The 1010 credit is a normal book entry: it shows up in bank reconciliation
+ * to be matched to the transfer or check on the statement. */
+export function recordOwnerDistribution(
+  ctx: Ctx, input: { propertyId: string; amountCents: number; date: string; memo?: string },
+): string {
+  assertPerm(ctx, 'owners:manage');
+  if (!canAccessProperty(ctx, input.propertyId) || !q1('SELECT id FROM properties WHERE id=? AND org_id=?', input.propertyId, ctx.orgId)) {
+    throw new Error('Choose a property in your portfolio.');
+  }
+  if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new Error('Enter the amount that was paid out.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || Number.isNaN(Date.parse(input.date))) throw new Error('Enter the date the money left the account.');
+  if (input.date > ctx.businessDate) throw new Error('The distribution date cannot be in the future.');
+  const shares = q<any>(
+    `SELECT po.owner_id, po.pct, o.name FROM property_owners po JOIN owners o ON o.id=po.owner_id
+      WHERE po.org_id=? AND po.property_id=? AND po.pct>0 ORDER BY po.pct DESC, o.name`,
+    ctx.orgId, input.propertyId,
+  );
+  if (!shares.length) throw new Error('This property has no owners assigned yet. Assign ownership first, so the distribution can be divided between them.');
+  const totalPct = shares.reduce((s, x) => s + Number(x.pct), 0);
+  // each owner's part, to the cent; when the owners hold the whole property
+  // the rounding remainder goes to the largest holder so the parts add up
+  const parts = shares.map((x) => ({ ownerId: x.owner_id as string, pct: Number(x.pct), cents: Math.round((input.amountCents * Number(x.pct)) / 100) }));
+  if (Math.abs(totalPct - 100) < 0.0001) {
+    parts[0]!.cents += input.amountCents - parts.reduce((s, x) => s + x.cents, 0);
+  }
+  const memo = (input.memo || '').trim().slice(0, 160);
+  const did = id('odi');
+  tx(() => {
+    const je = postBothBases(ctx, {
+      propertyId: input.propertyId, date: input.date,
+      memo: `Owner distribution${memo ? ` — ${memo}` : ''}`,
+      sourceKind: 'owner_distribution', sourceId: did,
+      lines: [
+        { account: '3020', debit: input.amountCents, memo: 'Distribution to owners' },
+        { account: '1010', credit: input.amountCents, memo: 'Paid from operating account' },
+      ],
+    });
+    insert('owner_distributions', {
+      id: did, org_id: ctx.orgId, property_id: input.propertyId, date: input.date,
+      amount_cents: input.amountCents, memo: memo || null, je_id: je.accrual, status: 'posted',
+      created_by: ctx.userName, created_at: nowIso(),
+    });
+    for (const p of parts) {
+      insert('owner_distribution_shares', {
+        id: id('ods'), org_id: ctx.orgId, distribution_id: did, owner_id: p.ownerId,
+        pct: p.pct, amount_cents: p.cents, created_at: nowIso(),
+      });
+    }
+  });
+  audit(ctx, 'owner_distribution', did, 'record', null, { propertyId: input.propertyId, amountCents: input.amountCents, date: input.date });
+  return did;
+}
+
+/** Take back a distribution recorded in error: reverses its entries on both
+ * books (same date; a closed month refuses, as any posting would). */
+export function voidOwnerDistribution(ctx: Ctx, distributionId: string): void {
+  assertPerm(ctx, 'owners:manage');
+  const d = q1<any>('SELECT * FROM owner_distributions WHERE id=? AND org_id=?', distributionId, ctx.orgId);
+  if (!d || d.status !== 'posted') throw new Error('That distribution is not on the books.');
+  if (!canAccessProperty(ctx, d.property_id)) throw new Error('Choose a property in your portfolio.');
+  tx(() => {
+    for (const je of q<any>(
+      `SELECT je.* FROM journal_entries je
+        WHERE je.org_id=? AND je.source_kind='owner_distribution' AND je.source_id=? AND je.reversal_of IS NULL
+          AND NOT EXISTS (SELECT 1 FROM journal_entries r WHERE r.reversal_of=je.id)`,
+      ctx.orgId, d.id,
+    )) {
+      const jl = q<any>('SELECT * FROM journal_lines WHERE entry_id=?', je.id);
+      postJE(ctx, {
+        propertyId: je.property_id, date: je.date, basis: je.basis,
+        memo: `Reversed — ${je.memo || 'owner distribution'}`, sourceKind: 'owner_distribution', sourceId: d.id, reversalOf: je.id,
+        lines: jl.filter((l: any) => l.debit_cents || l.credit_cents).map((l: any) => ({ account: l.account_code, debit: l.credit_cents || undefined, credit: l.debit_cents || undefined })),
+      });
+    }
+    run(`UPDATE owner_distributions SET status='void' WHERE id=?`, d.id);
+  });
+  audit(ctx, 'owner_distribution', d.id, 'void', null, { amountCents: d.amount_cents });
+}
+
+export function listOwnerDistributions(ctx: Ctx, opts: { ownerId?: string; limit?: number } = {}): any[] {
+  if (opts.ownerId) {
+    return q<any>(
+      `SELECT d.*, p.name AS property_name, s.pct AS share_pct, s.amount_cents AS share_cents
+         FROM owner_distribution_shares s JOIN owner_distributions d ON d.id=s.distribution_id
+         JOIN properties p ON p.id=d.property_id
+        WHERE s.org_id=? AND s.owner_id=? ORDER BY d.date DESC, d.created_at DESC LIMIT ?`,
+      ctx.orgId, opts.ownerId, opts.limit || 100,
+    );
+  }
+  return q<any>(
+    `SELECT d.*, p.name AS property_name FROM owner_distributions d JOIN properties p ON p.id=d.property_id
+      WHERE d.org_id=? ORDER BY d.date DESC, d.created_at DESC LIMIT ?`,
+    ctx.orgId, opts.limit || 50,
+  );
 }

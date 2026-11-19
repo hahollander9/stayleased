@@ -14,6 +14,10 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   // renders must have a value to render (an absent one makes the whole policy
   // unsavable until someone types into a box the hints call optional).
   late_fee_policy: { graceDays: 3, type: 'flat_plus_daily', flatCents: 5000, percent: 5, dailyCents: 1000, dailyCapCents: 15000, minBalanceCents: 5000 },
+  // false = the nightly job assesses nothing; staff can still run the late-fee
+  // screen by hand. A new live org starts with this off (setup/onboarding.ts):
+  // the default policy below is ours, not the operator's lease.
+  late_fees_enabled: true,
   nsf_fee_cents: 3500,
   prorate_method: 'actual_days', // actual_days | thirty_day
   payment_methods: { ach: true, card: true, cash_equivalent: true },
@@ -91,6 +95,9 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   po_approval_threshold_cents: 100000,
   match_price_tolerance_pct: 2.5, // 3-way match variance tolerance
   writeoff_approval_threshold_cents: 50000,
+  // Hourly cost of in-house maintenance labor, used to price logged hours on a
+  // work order. 0 = not set: hours are recorded without a dollar figure.
+  maintenance_labor_rate_cents: 0,
   // Simple mode (the five-answer home screen and, from phase 2, the reduced
   // navigation). The DEFAULT IS FALSE ON PURPOSE: a setting with no row reads
   // its default, so defaulting true would have switched the chrome under every

@@ -17,6 +17,7 @@ import {
 } from './service.ts';
 import { registerLeaseTab, registerLeaseAction } from '../people/pages.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
+import { isLiveOrg, deliveryNote } from '../../lib/sim/messaging.ts';
 
 registerNav('Residents', { href: '/renewals', label: 'Renewals', perm: 'renewals:view' });
 registerNav('Admin', { href: '/admin/lease-templates', label: 'Lease templates', perm: 'admin:settings' });
@@ -73,7 +74,10 @@ export function routes(r: Router): void {
       ...adults,
       { name: ctx.userName, email: ctx.userEmail, role: 'countersigner' },
     ], base);
-    return redirect(`/leases/${lease.id}?tab=esign`, `Packet sent to ${adults.length} signer${adults.length === 1 ? '' : 's'} — you countersign last.`);
+    const n = `${adults.length} signer${adults.length === 1 ? '' : 's'}`;
+    return redirect(`/leases/${lease.id}?tab=esign`, isLiveOrg(ctx)
+      ? `Packet ready for ${n}. The signing links were not emailed — they are saved in the Outbox, because email delivery is not connected yet. You countersign last.`
+      : `Packet sent to ${n} — you countersign last.`);
   });
 
   r.post('/leases/:id/activate', requirePerm('leases:manage'), (rq) => {
@@ -256,7 +260,9 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect('/renewals', (e as Error).message, 'err');
     }
-    return redirect('/renewals', 'Offer sent — the resident sees it in their portal and email.');
+    return redirect('/renewals', isLiveOrg(ctx)
+      ? 'Offer created. It shows in the resident’s portal; the email was not sent — it is saved in the Outbox, because email delivery is not connected yet.'
+      : 'Offer sent — the resident sees it in their portal and email.');
   });
 
   r.post('/renewals/batch', requirePerm('renewals:manage'), (rq) => {
@@ -277,7 +283,7 @@ export function routes(r: Router): void {
       createRenewalOffer(ctx, t.id);
       sent++;
     }
-    return redirect('/renewals', `${sent} offers sent.${held ? ` ${held} held (delinquency escalation — see the workbench).` : ''}`);
+    return redirect('/renewals', `${sent} offers ${isLiveOrg(ctx) ? 'created — the emails are saved in the Outbox, not sent' : 'sent'}.${held ? ` ${held} held (delinquency escalation — see the workbench).` : ''}`);
   });
 
   // ---------- lease template designer ----------
@@ -397,7 +403,9 @@ export function portalRoutes(r: Router): void {
     } catch (e) {
       return redirect('/portal', (e as Error).message, 'err');
     }
-    return redirect('/portal', '🎉 Renewal accepted! Check your email — your renewal packet is ready to sign.');
+    return redirect('/portal', isLiveOrg(pc.ctx)
+      ? 'Renewal accepted. The leasing office will be in touch with your renewal packet to sign.'
+      : '🎉 Renewal accepted! Check your email — your renewal packet is ready to sign.');
   });
 
   r.post('/portal/renewal/:offerId/counter', requireResident, (rq) => {

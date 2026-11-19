@@ -83,7 +83,7 @@ function rails(ctx: Ctx): Rail[] {
     {
       key: 'messaging', name: 'Email & SMS delivery',
       desc: live
-        ? 'Messages compose, thread and audit fully, but outbound delivery to real phones/inboxes awaits the delivery rail (Twilio/for-email). Residents see everything in their portal today.'
+        ? 'Messages compose, thread and audit fully, but nothing reaches a real phone or inbox until a delivery provider is connected. Every message is saved in the Outbox marked “Saved — not delivered”, so staff can pass it on another way. The resident portal does not show messages yet.'
         : 'Outbox simulator — messages are recorded and visible, not delivered externally.',
       status: live ? 'waitlist' : 'simulated',
     },

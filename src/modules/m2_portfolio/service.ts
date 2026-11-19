@@ -242,6 +242,11 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
     del('delinquency_assessments', `org_id=? AND lease_id IN (${L})`, o, o, p);
     del('autopay_enrollments', `org_id=? AND (lease_id IN (${L}) OR user_id IN ${inDeadUsers})`, o, o, p, ...deadUsers);
     del('payment_method_tokens', `org_id=? AND (lease_id IN (${L}) OR user_id IN ${inDeadUsers})`, o, o, p, ...deadUsers);
+    // fee waivers hang off the charges about to go (no foreign key — see schema)
+    del('fee_waivers',
+      `org_id=? AND (charge_id IN (SELECT id FROM charges WHERE org_id=? AND property_id=?)
+        OR waiver_charge_id IN (SELECT id FROM charges WHERE org_id=? AND property_id=?))`,
+      o, o, p, o, p);
     del('charges', 'org_id=? AND property_id=?', o, p);
     del('settlement_batches', 'org_id=? AND property_id=?', o, p);
 
@@ -254,6 +259,9 @@ export function deleteProperty(ctx: Ctx, propertyId: string, opts?: { force?: bo
     del('budget_lines', 'org_id=? AND budget_id IN (SELECT id FROM budgets WHERE org_id=? AND property_id=?)', o, o, p);
     del('budgets', 'org_id=? AND property_id=?', o, p);
     del('capital_projects', 'org_id=? AND property_id=?', o, p);
+    del('bank_txn_links', 'org_id=? AND bank_account_id IN (SELECT id FROM bank_accounts WHERE org_id=? AND property_id=?)', o, o, p);
+    del('owner_distribution_shares', 'org_id=? AND distribution_id IN (SELECT id FROM owner_distributions WHERE org_id=? AND property_id=?)', o, o, p);
+    del('owner_distributions', 'org_id=? AND property_id=?', o, p);
     del('bank_txns', 'org_id=? AND bank_account_id IN (SELECT id FROM bank_accounts WHERE org_id=? AND property_id=?)', o, o, p);
     del('bank_recons', 'org_id=? AND bank_account_id IN (SELECT id FROM bank_accounts WHERE org_id=? AND property_id=?)', o, o, p);
     del('bank_accounts', 'org_id=? AND property_id=?', o, p);
@@ -407,6 +415,8 @@ export function clearOrgData(ctx: Ctx): { counts: Record<string, number> } {
     // org-level rows a property delete leaves standing, by design
     bump('vendor_price_agreements', run('DELETE FROM vendor_price_agreements WHERE org_id=?', ctx.orgId).changes);
     bump('vendors', run('DELETE FROM vendors WHERE org_id=?', ctx.orgId).changes);
+    // every charge is gone with its property, so any waiver row left is an orphan
+    bump('fee_waivers', run('DELETE FROM fee_waivers WHERE org_id=? AND charge_id NOT IN (SELECT id FROM charges WHERE org_id=?)', ctx.orgId, ctx.orgId).changes);
     // Every stored byte the org owns. deleteProperty removes `files` ROWS and
     // never the blobs behind them, so by now the property loop has already
     // orphaned signed leases, ID scans and unit photos on disk. Sweep by
