@@ -14,6 +14,7 @@ import {
   ensureCompSets, generateCompObservations, compAverage, addCompSet, recordCompObservation, removeCompSet,
   runPricingEngine, revenueAnalytics,
 } from '../src/modules/m13_pricing/service.ts';
+import { paramSummary } from '../src/modules/m14_reports/pages.ts';
 import { dataset } from '../src/modules/m14_reports/builder.ts';
 import { reportDef, resolveParams, processResult, reportCsv } from '../src/modules/m14_reports/engine.ts';
 import { startTestServer, loginAs, get, post } from './harness.ts';
@@ -238,8 +239,12 @@ test('CSV percentages are rounded like the page, and a property with no leases h
   const pdf = await get(base, `/reports/rent_roll?property=${live.prop}&format=pdf`, cookieLive);
   assert.equal(pdf.status, 200);
   assert.ok(pdf.text.startsWith('%PDF'));
-  assert.ok(!pdf.text.includes(live.prop), 'the internal property id is not printed');
-  assert.ok(pdf.text.includes('Maple Court live'), 'the property is named');
+  const rr = reportDef('rent_roll')!;
+  const line = paramSummary(pctx, rr, resolveParams(pctx, rr, new URLSearchParams({ property: live.prop })));
+  assert.ok(line.includes('Maple Court live'), line);
+  assert.ok(!line.includes(live.prop), 'the internal property id is not printed');
+  const bs = reportDef('balance_sheet')!;
+  assert.ok(paramSummary(pctx, bs, resolveParams(pctx, bs, new URLSearchParams({ property: 'all' }))).includes('All properties'));
 });
 
 // ---------- item 72: saved views ----------

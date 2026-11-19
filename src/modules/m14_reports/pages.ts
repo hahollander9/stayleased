@@ -103,7 +103,7 @@ function paramPanel(rq: Rq, ctx: Ctx, def: ReportDef, params: Record<string, str
 }
 
 /** The parameter line printed on a PDF: names, never internal ids. */
-function paramSummary(ctx: Ctx, def: ReportDef, params: Record<string, string>): string {
+export function paramSummary(ctx: Ctx, def: ReportDef, params: Record<string, string>): string {
   return def.params.map((p) => {
     let v = params[p.key] ?? '';
     let label = p.label || p.key;
