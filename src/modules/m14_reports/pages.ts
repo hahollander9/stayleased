@@ -236,11 +236,12 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const cfg = j<BuilderConfig>(String(rq.body.config || '{}'), { dataset: 'residents', cols: [], filters: [] });
     if (!dataset(cfg.dataset)) return redirect('/reports/builder', 'Unknown dataset', 'err');
+    if (!cfg.cols?.some((k) => dataset(cfg.dataset)!.cols.some((c) => c.key === k))) return redirect(`/reports/builder?dataset=${encodeURIComponent(cfg.dataset)}`, 'Pick at least one column before saving.', 'err');
     const schedule = String(rq.body.schedule || '') || null;
     if (schedule && !can(ctx, 'reports:schedule')) return redirect('/reports/builder', 'You can save but not schedule reports (reports:schedule).', 'err');
     const sid = id('svr');
     insert('saved_reports', {
-      id: sid, org_id: ctx.orgId, owner_user_id: ctx.userId, name: String(rq.body.name || 'Untitled report').slice(0, 80),
+      id: sid, org_id: ctx.orgId, owner_user_id: ctx.userId, name: String(rq.body.name || '').trim().slice(0, 80) || 'Untitled report',
       kind: 'custom', dataset: cfg.dataset, config: js(cfg), shared: rq.body.shared === '1' ? 1 : 0,
       schedule, last_run_date: null, created_at: nowIso(),
     });
@@ -259,13 +260,18 @@ export function routes(r: Router): void {
     let paramLine = `Custom report · dataset: ${saved.dataset}`;
     if (saved.kind === 'custom') {
       const cfg = j<BuilderConfig>(saved.config, { dataset: saved.dataset, cols: [], filters: [] });
-      rendered = processResult(runCustom(ctx, cfg), { sort: rq.query.get('sort') || cfg.sort || undefined, dir: rq.query.get('dir') || cfg.dir });
       const sp = new URLSearchParams();
       sp.set('dataset', cfg.dataset);
       cfg.cols.forEach((c) => sp.append('col', c));
       cfg.filters.forEach((f, i) => { sp.set(`f${i}_col`, f.col); sp.set(`f${i}_op`, f.op); sp.set(`f${i}_val`, f.value); });
       if (cfg.group) sp.set('group', cfg.group);
       editHref = `/reports/builder?${sp}`;
+      try {
+        rendered = processResult(runCustom(ctx, cfg), { sort: rq.query.get('sort') || cfg.sort || undefined, dir: rq.query.get('dir') || cfg.dir });
+      } catch {
+        // a saved report with no usable columns: send its owner back to fix it rather than a crash page
+        return redirect(editHref, 'This saved report has no columns to show. Pick at least one column and save it again.', 'err');
+      }
     } else {
       const def = reportDef(saved.dataset);
       if (!def) return notFound('The underlying report no longer exists');

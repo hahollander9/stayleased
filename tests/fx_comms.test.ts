@@ -6,6 +6,7 @@ import { nowIso } from '../src/lib/dates.ts';
 import { hashPassword, sysCtx } from '../src/lib/auth.ts';
 import { setSetting } from '../src/lib/settings.ts';
 import { ensureCoa } from '../src/modules/m9_accounting/coa.ts';
+import { postJE } from '../src/modules/m9_accounting/service.ts';
 import { sendEmail, deliveryNote, deliveryLabel, RECORDED } from '../src/lib/sim/messaging.ts';
 import { commPrefs, renderMerge, scheduleMass } from '../src/modules/m15_comms/service.ts';
 import { submitPolicy, enrollMaster, complianceSweep, leaseCompliance } from '../src/modules/m12_insurance/service.ts';
@@ -13,6 +14,7 @@ import {
   ensureCompSets, generateCompObservations, compAverage, addCompSet, recordCompObservation, removeCompSet,
   runPricingEngine, revenueAnalytics,
 } from '../src/modules/m13_pricing/service.ts';
+import { dataset } from '../src/modules/m14_reports/builder.ts';
 import { reportDef, resolveParams, processResult, reportCsv } from '../src/modules/m14_reports/engine.ts';
 import { startTestServer, loginAs, get, post } from './harness.ts';
 
@@ -170,7 +172,7 @@ test('a live mass message is recorded per recipient, texts need consent, links a
   const c = await post(base, `/inbox/${thread.id}/consent`, { email_ok: '1', sms_ok: '1' }, cookieLive);
   assert.equal(c.status, 303);
   assert.equal(commPrefs(live.org, 'resident', live.resident).smsOptout, false);
-  assert.ok(q1(`SELECT id FROM audit_log WHERE org_id=? AND entity='comm_prefs' AND action='consent'`, live.org), 'consent change is audited');
+  assert.ok(q1(`SELECT id FROM audit_events WHERE org_id=? AND entity='comm_prefs' AND action='consent'`, live.org), 'consent change is audited');
 });
 
 // ---------- item 68: scheduled report delivery ----------
@@ -198,10 +200,9 @@ test('the balance sheet has section subtotals and no summed grand total', async 
   const ctx = sysCtx(live.org);
   // assets 1,000 = liabilities 400 + equity 600
   const acct = (type: string): string => q1<any>('SELECT code FROM gl_accounts WHERE org_id=? AND type=? ORDER BY code LIMIT 1', live.org, type)!.code;
-  const je = id('je');
-  insert('journal_entries', { id: je, org_id: live.org, property_id: live.prop, date: '2026-07-01', basis: 'accrual', memo: 'opening', source: 'manual', created_by: 'test', posted_at: nowIso() } as any);
-  const line = (code: string, d: number, c: number): void => { insert('journal_lines', { id: id('jl'), org_id: live.org, entry_id: je, property_id: live.prop, account_code: code, debit_cents: d, credit_cents: c } as any); };
-  line(acct('asset'), 100000, 0); line(acct('liability'), 0, 40000); line(acct('equity'), 0, 60000);
+  postJE(ctx, { propertyId: live.prop, date: '2026-07-01', basis: 'accrual', memo: 'opening', sourceKind: 'manual', lines: [
+    { account: acct('asset'), debit: 100000 }, { account: acct('liability'), credit: 40000 }, { account: acct('equity'), credit: 60000 },
+  ] } as any);
 
   const def = reportDef('balance_sheet')!;
   const params = resolveParams(ctx, def, new URLSearchParams({ property: 'all' }));
@@ -229,17 +230,16 @@ test('CSV percentages are rounded like the page, and a property with no leases h
   const a = revenueAnalytics(sysCtx(live.org), empty);
   assert.equal(a.lossToLease.gapPct, 0, 'not 100%');
   assert.equal(a.lossToLease.gapCents, 0);
-  const def = reportDef('portfolio_rollup') || reportDef('portfolio_summary');
-  if (def) {
-    const ctx = sysCtx(live.org);
-    const row = def.run(ctx, resolveParams(ctx, def, new URLSearchParams())).rows.find((r) => r.property === 'Empty Arms');
-    if (row) assert.equal(row.loss_to_lease, null);
-  }
+  const def = reportDef('portfolio_kpis')!;
+  const pctx = sysCtx(live.org);
+  const row = def.run(pctx, resolveParams(pctx, def, new URLSearchParams())).rows.find((r) => r.property === 'Empty Arms')!;
+  assert.equal(row.loss_to_lease, null, 'shown as a dash, not 100%');
   // PDF export still renders (header now carries the property name, not its id)
   const pdf = await get(base, `/reports/rent_roll?property=${live.prop}&format=pdf`, cookieLive);
   assert.equal(pdf.status, 200);
   assert.ok(pdf.text.startsWith('%PDF'));
   assert.ok(!pdf.text.includes(live.prop), 'the internal property id is not printed');
+  assert.ok(pdf.text.includes('Maple Court live'), 'the property is named');
 });
 
 // ---------- item 72: saved views ----------
@@ -260,7 +260,7 @@ test('a saved view can be renamed, shared and exported — by its owner only', a
   const after = q1<any>('SELECT name, shared FROM saved_reports WHERE id=?', saved.id)!;
   assert.equal(after.name, 'Maple rent roll');
   assert.equal(after.shared, 1);
-  assert.ok(q1(`SELECT id FROM audit_log WHERE org_id=? AND entity='saved_report' AND entity_id=? AND action='update'`, live.org, saved.id));
+  assert.ok(q1(`SELECT id FROM audit_events WHERE org_id=? AND entity='saved_report' AND entity_id=? AND action='update'`, live.org, saved.id));
 
   // another company cannot rename it
   const other = await post(base, `/reports/saved/${saved.id}/update`, { name: 'hijacked', shared: '0' }, cookieDemo);
@@ -276,10 +276,16 @@ test('a saved view can be renamed, shared and exported — by its owner only', a
 
   // a custom (builder) report exports too
   const sid = id('svr');
-  insert('saved_reports', { id: sid, org_id: live.org, owner_user_id: live.uid, name: 'Custom residents', kind: 'custom', dataset: 'residents', config: JSON.stringify({ dataset: 'residents', cols: [], filters: [] }), shared: 0, schedule: null, last_run_date: null, created_at: nowIso() });
+  insert('saved_reports', { id: sid, org_id: live.org, owner_user_id: live.uid, name: 'Custom residents', kind: 'custom', dataset: 'residents', config: JSON.stringify({ dataset: 'residents', cols: dataset('residents')!.cols.slice(0, 3).map((c) => c.key), filters: [] }), shared: 0, schedule: null, last_run_date: null, created_at: nowIso() });
   const ccsv = await get(base, `/reports/saved/${sid}?format=csv`, cookieLive);
   assert.equal(ccsv.status, 200);
   assert.ok(!ccsv.text.startsWith('<!'), 'CSV, not an HTML page');
+  assert.ok(ccsv.text.split('\n').length >= 2, 'header + the resident row');
+
+  // the builder refuses to save a report with no columns (it used to save one that crashed on open)
+  const n = val<number>('SELECT COUNT(*) FROM saved_reports WHERE org_id=?', live.org);
+  await post(base, '/reports/builder/save', { name: 'Empty', config: JSON.stringify({ dataset: 'residents', cols: [], filters: [] }) }, cookieLive);
+  assert.equal(val<number>('SELECT COUNT(*) FROM saved_reports WHERE org_id=?', live.org), n);
 });
 
 // ---------- item 74: comp market ----------
@@ -356,7 +362,7 @@ test('a live resident upload waits for staff — nothing is verified by a simula
   assert.ok(p.verified_at);
   assert.equal(p.reviewed_by, 'Admin live');
   assert.equal(leaseCompliance(ctx, live.lease).state, 'covered');
-  assert.ok(q1(`SELECT id FROM audit_log WHERE org_id=? AND entity='insurance_policy' AND entity_id=? AND action='verify'`, live.org, res.policyId));
+  assert.ok(q1(`SELECT id FROM audit_events WHERE org_id=? AND entity='insurance_policy' AND entity_id=? AND action='verify'`, live.org, res.policyId));
 
   // reject path, with the reason kept for the resident
   const r2 = submitPolicy(ctx, { leaseId: live.lease, carrier: 'Other Mutual', policyNumber: 'OM-777', liabilityCents: 30000000, startDate: '2026-07-01', endDate: '2027-07-01' });
