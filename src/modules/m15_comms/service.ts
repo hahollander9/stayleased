@@ -7,9 +7,10 @@ import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSettingMerged } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
-import { registerSendHook, sendEmail, sendSms, type OutboundMessage } from '../../lib/sim/messaging.ts';
+import { registerSendHook, sendEmail, sendSms, isLiveOrg, outboundStatus, messageOrigin, type OutboundMessage } from '../../lib/sim/messaging.ts';
 import { getDials } from '../../lib/sim/dials.ts';
 import { GLOBAL_SEED } from '../../lib/rng.ts';
+import { usd } from '../../lib/money.ts';
 import { leaseBalance } from '../m8_receivables/service.ts';
 
 /** M15 — communications: unified per-person threads, consent, template
@@ -91,13 +92,16 @@ registerSendHook((ctx, messageId, msg) => {
     run('UPDATE outbox_messages SET thread_id=?, person_id=? WHERE id=?', tid, person.id, messageId);
     touchThread(tid, nowIso(), (msg.subject || msg.body).replace(/<[^>]+>/g, ' '), false);
   }
-  // ~55% of emails get "opened" (deterministic per message)
-  if (msg.channel === 'email' && strSeed(messageId) % 100 < 55) {
+  // Demo only: ~55% of emails get "opened" (deterministic per message). A live
+  // org has no delivery rail, so an open receipt there would be invented.
+  if (!isLiveOrg(ctx) && msg.channel === 'email' && strSeed(messageId) % 100 < 55) {
     run(`UPDATE outbox_messages SET status='opened' WHERE id=?`, messageId);
   }
 });
 
-/** simulated inbound reply (Message Console / thread view / e2e) */
+/** Inbound message onto a thread. Real callers: ILS lead-email intake. The
+ * "simulate a reply" buttons also land here — those routes are demo-only
+ * (devOnly + not a live org); a live org must never get an invented reply. */
 export function inboundMessage(
   ctx: Ctx,
   input: { personKind: string; personId: string; channel: 'email' | 'sms'; body: string; subject?: string },
@@ -124,11 +128,15 @@ export function commPrefs(orgId: string, personKind: string, personId: string): 
   let row = q1<any>('SELECT * FROM comm_prefs WHERE org_id=? AND person_kind=? AND person_id=?', orgId, personKind, personId);
   if (!row) {
     const tok = token(12);
+    // Texts need express consent. A live org starts every NEW person opted
+    // out of SMS until the resident (portal) or staff (thread page) records
+    // consent; existing rows and the demo are unchanged.
+    const smsOptout = isLiveOrg({ orgId }) ? 1 : 0;
     insert('comm_prefs', {
       id: id('cpf'), org_id: orgId, person_kind: personKind, person_id: personId,
-      email_optout: 0, sms_optout: 0, unsubscribe_token: tok, updated_at: nowIso(),
+      email_optout: 0, sms_optout: smsOptout, unsubscribe_token: tok, updated_at: nowIso(),
     });
-    row = { email_optout: 0, sms_optout: 0, unsubscribe_token: tok };
+    row = { email_optout: 0, sms_optout: smsOptout, unsubscribe_token: tok };
   }
   return { emailOptout: !!row.email_optout, smsOptout: !!row.sms_optout, token: row.unsubscribe_token };
 }
@@ -232,7 +240,7 @@ export function renderMerge(ctx: Ctx, text: string, r: SegmentRecipient): string
     const map: Record<string, string> = {
       first_name: r.name.split(' ')[0] || 'resident',
       name: r.name, unit: r.unit, property: prop?.name || '',
-      balance: `$${(r.balanceCents / 100).toFixed(2)}`,
+      balance: usd(r.balanceCents),
     };
     return map[k] ?? `{{${k}}}`;
   });
@@ -266,8 +274,12 @@ export function scheduleMass(
   return mid;
 }
 
-/** deliver everything due: consent + quiet hours enforced per recipient */
+/** deliver everything due: consent + quiet hours enforced per recipient.
+ * `sent` counts messages written to the Outbox; in a live org those are
+ * 'recorded' (not delivered) and the recipient + mass rows say so. */
 export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped: number; deferred: number } {
+  const done = outboundStatus(ctx); // 'sent' (demo) | 'recorded' (live — nothing left the building)
+  const origin = messageOrigin(ctx);
   let sent = 0;
   let skipped = 0;
   let deferred = 0;
@@ -300,13 +312,13 @@ export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped
           skipped++;
           continue;
         }
-        const unsubscribe = `<p style="font-size:11px;color:#888">— <a href="/u/${prefs.token}">Unsubscribe from community emails</a></p>`;
+        const unsubscribe = `<p style="font-size:11px;color:#888">— <a href="${origin}/u/${prefs.token}">Unsubscribe from community emails</a></p>`;
         const oid = sendEmail(ctx, {
           to: resident.email, toName: rec.name, subject: renderMerge(ctx, m.subject, rec),
           body: renderMerge(ctx, m.body, rec) + unsubscribe,
           propertyId: resident.property_id, entity: 'mass_message', entityId: m.id, personId: resident.id, templateKey: 'mass',
         });
-        run(`UPDATE mass_recipients SET status='sent', outbox_id=?, sent_at=? WHERE id=?`, oid, nowIso(), rc.id);
+        run(`UPDATE mass_recipients SET status=?, outbox_id=?, sent_at=? WHERE id=?`, done, oid, nowIso(), rc.id);
         sent++;
       } else if (rc.channel === 'sms') {
         if (prefs.smsOptout) {
@@ -329,15 +341,15 @@ export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped
           to: resident.phone, toName: rec.name, body: renderMerge(ctx, m.sms_body || m.subject, rec),
           propertyId: resident.property_id, entity: 'mass_message', entityId: m.id, personId: resident.id, templateKey: 'mass',
         });
-        run(`UPDATE mass_recipients SET status='sent', outbox_id=?, sent_at=? WHERE id=?`, oid, nowIso(), rc.id);
+        run(`UPDATE mass_recipients SET status=?, outbox_id=?, sent_at=? WHERE id=?`, done, oid, nowIso(), rc.id);
         sent++;
       }
     }
     if (!anyDeferred) {
       const counts = q1<any>(
-        `SELECT SUM(status='sent') AS s, SUM(status LIKE 'skipped%') AS k FROM mass_recipients WHERE mass_id=?`, m.id,
+        `SELECT SUM(status IN ('sent','recorded')) AS s, SUM(status LIKE 'skipped%') AS k FROM mass_recipients WHERE mass_id=?`, m.id,
       );
-      run(`UPDATE mass_messages SET status='sent', sent_at=?, sent_count=?, skipped_count=? WHERE id=?`, nowIso(), counts?.s || 0, counts?.k || 0, m.id);
+      run(`UPDATE mass_messages SET status=?, sent_at=?, sent_count=?, skipped_count=? WHERE id=?`, done, nowIso(), counts?.s || 0, counts?.k || 0, m.id);
     }
   }
   return { sent, skipped, deferred };
@@ -391,6 +403,7 @@ registerJob({
   describe: 'Delivers scheduled mass messages and announcement echoes — consent and quiet hours enforced per recipient.',
   run: (ctx, date) => {
     const r = runMassMessages(ctx, date);
-    return r.sent || r.skipped || r.deferred ? `${r.sent} sent, ${r.skipped} skipped, ${r.deferred} deferred (quiet hours)` : 'nothing scheduled';
+    const verb = isLiveOrg(ctx) ? 'saved to the Outbox (not delivered — email and text are not connected)' : 'sent';
+    return r.sent || r.skipped || r.deferred ? `${r.sent} ${verb}, ${r.skipped} skipped, ${r.deferred} deferred (quiet hours)` : 'nothing scheduled';
   },
 });

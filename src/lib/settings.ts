@@ -57,6 +57,10 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   // Off until the operator says otherwise; auto_enroll_on_lapse still governs
   // everything that lapses after the migration.
   auto_enroll_migrated: false,
+  // The property's real master tenant-liability policy. Blank = no community
+  // program in a live org (nobody can be enrolled or billed for one).
+  master_policy_carrier: '',
+  master_policy_number: '',
   // verticals (M18)
   academic_calendar: { fallStart: '2026-08-20', fallEnd: '2027-07-31' },
   bah_table: {

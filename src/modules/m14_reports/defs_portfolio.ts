@@ -34,9 +34,10 @@ registerReport({
         occupancy: m.occupancy_pct,
         exposure: m.exposure_pct,
         delinquent: m.delinquent_cents,
-        avg_inplace: m.avg_inplace_rent_cents,
+        avg_inplace: m.avg_inplace_rent_cents || null,
         avg_market: m.avg_market_rent_cents,
-        loss_to_lease: m.avg_market_rent_cents ? ((m.avg_market_rent_cents - m.avg_inplace_rent_cents) / m.avg_market_rent_cents) * 100 : 0,
+        // no in-place leases = nothing to compare (not a 100% loss)
+        loss_to_lease: m.avg_market_rent_cents && m.avg_inplace_rent_cents ? ((m.avg_market_rent_cents - m.avg_inplace_rent_cents) / m.avg_market_rent_cents) * 100 : null,
         open_wos: m.open_wos,
         noi_t12: noi,
         __href: `/properties/${p2.id}`,

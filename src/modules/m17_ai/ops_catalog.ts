@@ -502,11 +502,16 @@ registerOp({
   describe: 'Move the simulated business date forward, running every scheduled job for each day passed. Choose this for "advance the date", "move to <date>", "run the clock forward".',
   perm: 'admin:jobs',
   risk: 'admin',
+  demoOnly: true,
   params: [{ key: 'to', type: 'date', label: 'New business date', required: true }],
   preview(ctx, a) {
     const to = str(a.to);
     const blockers: string[] = [];
-    if (!to) blockers.push('A target date is required.');
+    // A live organization's date is the real calendar. Advancing it would post
+    // rent and late fees early onto real books; advanceBusinessDate refuses
+    // too, this just says so before anyone is asked to confirm.
+    if (ctx.orgKind === 'live') blockers.push('A live organization runs on the real calendar. The business date moves on its own each day and cannot be advanced by hand.');
+    else if (!to) blockers.push('A target date is required.');
     else if (to <= ctx.businessDate) blockers.push(`${fmtDate(to)} is not after the current business date, ${fmtDate(ctx.businessDate)}.`);
     const days = to && to > ctx.businessDate
       ? Math.round((Date.parse(to) - Date.parse(ctx.businessDate)) / 86400000) : 0;

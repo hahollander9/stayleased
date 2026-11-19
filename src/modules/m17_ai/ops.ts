@@ -73,6 +73,9 @@ export interface Op {
   /** money moves, a record changes, or access itself changes */
   risk: 'money' | 'record' | 'admin';
   params: ParamDef[];
+  /** exists only for the demo's simulated world (the time machine). Never
+   * offered to, previewed for, or run in a live organization. */
+  demoOnly?: boolean;
   preview(ctx: Ctx, args: OpArgs): OpPreview;
   apply(ctx: Ctx, args: OpArgs): string;
 }
@@ -91,6 +94,7 @@ export function registerOp(op: Op): void {
     // re-checked at execution, not only at proposal: a role can change between
     // the two, and the proposal row is long-lived
     if (!can(ctx, op.perm)) throw new Error(`${op.name} needs ${op.perm}`);
+    if (op.demoOnly && ctx.orgKind === 'live') throw new Error(`${op.name} is not available in a live organization.`);
     const pre = op.preview(ctx, args);
     if (pre.blockers.length) throw new Error(pre.blockers.join(' '));
     return op.apply(ctx, args);
@@ -106,7 +110,9 @@ export function getOp(key: string): Op | undefined {
  * not allowed to do and then have it refused after the fact — the refusal
  * would be correct but the suggestion should never have been made. */
 export function opsFor(ctx: Ctx): Op[] {
-  return [...OPS.values()].filter((o) => can(ctx, o.perm)).sort((a, b) => a.key.localeCompare(b.key));
+  return [...OPS.values()]
+    .filter((o) => can(ctx, o.perm) && !(o.demoOnly && ctx.orgKind === 'live'))
+    .sort((a, b) => a.key.localeCompare(b.key));
 }
 
 export function opCatalog(ctx: Ctx): string {

@@ -2,9 +2,11 @@ import { insert, q1 } from '../db.ts';
 import { id } from '../ids.ts';
 import { nowIso } from '../dates.ts';
 import type { Ctx } from '../auth.ts';
+import { env } from '../env.ts';
 
 /** EmailGateway / SmsGateway simulators (§3.4): outbox pattern. Nothing
- * actually sends — messages land in the dev Message Console, where inbound
+ * actually sends (demo orgs store 'sent' as part of the simulation; live orgs
+ * store 'recorded' — see outboundStatus) — messages land in the dev Message Console, where inbound
  * replies can be simulated. From Phase 13 these thread into M15; until then
  * each message stands alone (carry-along rule §7). */
 
@@ -30,6 +32,48 @@ export function registerSendHook(fn: SendHook): void {
   sendHook = fn;
 }
 
+/** A live (non-demo) org has no email or SMS provider connected. `ctx.orgKind`
+ * is the fast path; the row lookup covers hand-built system contexts. */
+export function isLiveOrg(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): boolean {
+  if (ctx.orgKind === 'live') return true;
+  return q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', ctx.orgId)?.kind === 'live';
+}
+
+/** The status a new outbound row gets. Demo orgs keep the simulator's 'sent'.
+ * A live org gets 'recorded': the message is saved in the Outbox and has NOT
+ * been delivered to anyone, because no email/SMS rail is connected. Nothing may
+ * move a 'recorded' row to 'sent' or 'opened' except a real provider. */
+export const RECORDED = 'recorded';
+export function outboundStatus(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): 'sent' | 'recorded' {
+  return isLiveOrg(ctx) ? RECORDED : 'sent';
+}
+
+/** One sentence for flash messages after anything that calls send(): what
+ * actually happened to the message. Live orgs: saved, not delivered. */
+export function deliveryNote(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): string {
+  return isLiveOrg(ctx)
+    ? 'Saved to the Outbox — email and text delivery are not connected yet'
+    : 'Sent (see Message console)';
+}
+
+/** Absolute origin for links inside a message body (an inbox has no page for
+ * a link to be relative to). The demo keeps relative links when no origin is
+ * configured so its Message console stays clickable on any host. */
+export function messageOrigin(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): string {
+  const o = (env('SITE_ORIGIN') || '').replace(/\/+$/, '');
+  return o || (isLiveOrg(ctx) ? 'https://stayleased.com' : '');
+}
+
+/** Plain-language label for an outbox / mass-recipient status. */
+export function deliveryLabel(status: string | null | undefined): string {
+  const s = String(status ?? '');
+  if (s === RECORDED) return 'Saved — not delivered';
+  if (s === 'received') return 'Received';
+  if (s === 'sent') return 'Sent';
+  if (s === 'opened') return 'Opened';
+  return s.replaceAll('_', ' ') || '—';
+}
+
 export function send(ctx: Ctx, msg: OutboundMessage): string {
   const mid = id('msg');
   insert('outbox_messages', {
@@ -48,7 +92,7 @@ export function send(ctx: Ctx, msg: OutboundMessage): string {
     entity_id: msg.entityId || null,
     thread_id: msg.threadId || null,
     person_id: msg.personId || null,
-    status: 'sent',
+    status: outboundStatus(ctx),
     sent_by: ctx.userId,
     created_at: nowIso(),
     business_date: ctx.businessDate,

@@ -116,6 +116,9 @@ export function db(): DatabaseSync {
        )`,
     // Standard / Advanced, per person. NULL = follow the org default.
     "ALTER TABLE users ADD COLUMN ui_mode TEXT",
+    // Insurance: staff review of resident-uploaded policies (who, and why rejected).
+    "ALTER TABLE insurance_policies ADD COLUMN reviewed_by TEXT",
+    "ALTER TABLE insurance_policies ADD COLUMN review_note TEXT",
   ];
   for (const m of MIGRATIONS) {
     try {

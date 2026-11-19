@@ -1,13 +1,16 @@
 import { html, when, join, type Child } from '../../lib/html.ts';
 import { notFound, redirect, type Router } from '../../lib/http.ts';
-import { requirePerm, can, propFilter, requireResident, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, can, canAccessProperty, propFilter, requireResident, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, run, js } from '../../lib/db.ts';
 import { fmtDate, addMonths } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
 import { getSetting } from '../../lib/settings.ts';
 import { shell, card, tbl, dl, statusBadge, field, select, input, textarea, registerNav, kpis, emptyState } from '../../ui/ui.ts';
 import { CARRIERS } from '../../lib/sim/insurance.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
+import { putFile } from '../../lib/files.ts';
 import {
+  masterPolicyConfig, pendingPolicies, verifyPolicyByStaff, rejectPolicyByStaff, recordPolicyByStaff,
   complianceStats, leaseCompliance, submitPolicy, enrollMaster, requiredLiability,
   enrollDepositAlternative, quoteGuaranty, attachGuaranty, logIncident,
 } from './service.ts';
@@ -38,10 +41,17 @@ export function routes(r: Router): void {
       if (rows.length >= 80) break;
     }
     const alts = val<number>(`SELECT COUNT(*) FROM deposit_alternatives WHERE org_id=? AND status='active'`, ctx.orgId) || 0;
+    const live = isLiveOrg(ctx);
+    const manage = can(ctx, 'insurance:manage');
+    const pending = pendingPolicies(ctx, props.map((p) => p.id)).filter((p) => !propId || p.property_id === propId);
+    const hasMaster = (propertyId: string): boolean => !!masterPolicyConfig(ctx, propertyId);
+    const noMaster = live && !props.some((p) => hasMaster(p.id));
     return shell(rq, {
       title: 'Insurance compliance',
       active: '/insurance',
-      subtitle: 'Every active lease requires liability coverage — verified, master-enrolled, or force-placed on lapse',
+      subtitle: live
+        ? 'Every active lease requires liability coverage. Residents submit their policy in the portal; your team checks the proof and marks it verified.'
+        : 'Every active lease requires liability coverage — verified, master-enrolled, or force-placed on lapse',
       actions: html`<a class="btn btn-ghost" href="/risk">Risk & incidents</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
@@ -56,6 +66,40 @@ export function routes(r: Router): void {
           { label: 'On master policy', value: `${stats.masterShare}%` },
           { label: 'Deposit alternatives', value: String(alts) },
         ])}
+        ${when(noMaster, () => html`<div class="callout info">No master policy is set up, so nobody can be enrolled in or billed for a community program. If you hold a master tenant-liability policy, add its carrier and policy number under <a href="/admin/settings">Settings → Insurance</a>.</div>`)}
+        ${when(pending.length > 0, () => card(html`Policies waiting for review <span class="muted small">(${pending.length})</span>`, html`
+          <p class="small muted">Check each policy against the proof the resident gave you (or call the carrier), then mark it verified or say why it cannot be accepted. A policy counts as coverage only after it is verified.</p>
+          ${tbl(
+            [{ label: 'Household' }, { label: 'Unit' }, { label: 'Carrier / policy' }, { label: 'Liability', num: true }, { label: 'Expires' }, { label: 'Proof' }, { label: 'Decision' }],
+            pending.map((p) => ({
+              cells: [
+                html`<a href="/leases/${p.lease_id}">${p.household_name}</a>`, html`${p.unit_number} <span class="muted small">${p.property}</span>`,
+                html`${p.carrier} <span class="mono small">${p.policy_number}</span>`, usd(p.liability_cents),
+                p.end_date ? fmtDate(p.end_date) : '—',
+                p.file_id ? html`<a href="/f/${p.file_id}" target="_blank">Open proof</a>` : html`<span class="muted small">none attached</span>`,
+                manage ? html`
+                  <form method="post" action="/insurance/policies/${p.id}/verify" style="display:inline"><button class="btn btn-sm">Mark verified</button></form>
+                  <form method="post" action="/insurance/policies/${p.id}/reject" class="toolbar" style="display:inline-flex;margin-top:4px">
+                    <label class="sr-only" for="why-${p.id}">Reason the policy cannot be accepted</label>
+                    <input id="why-${p.id}" name="reason" required placeholder="Reason (the resident sees this)" maxlength="300">
+                    <button class="btn btn-sm btn-ghost">Reject</button>
+                  </form>` : html`<span class="muted small">needs insurance:manage</span>`,
+              ],
+            })),
+          )}`))}
+        ${when(manage && live && leases.length > 0, () => card('Record a policy from proof you have', html`
+          <form method="post" action="/insurance/policies" enctype="multipart/form-data">
+            <div class="grid2">
+              ${field('Household', select('lease_id', leases.slice(0, 500).map((l): [string, string] => [l.id, `${l.household_name} — ${l.unit_number}, ${l.property}`]), '', { required: true, blank: 'Choose a household' }))}
+              ${field('Insurance company', input('carrier', { required: true }))}
+              ${field('Policy number', input('policy_number', { required: true }))}
+              ${field('Liability coverage ($)', input('liability', { required: true, placeholder: '100,000' }))}
+              ${field('Expires', input('end_date', { type: 'date', required: true, value: addMonths(ctx.businessDate, 12) }))}
+              ${field('Proof (PDF or photo, optional)', html`<input type="file" name="proof" accept="application/pdf,image/*">`)}
+            </div>
+            <button class="btn btn-sm">Record as verified</button>
+            <span class="muted small" style="margin-left:8px">Use this when you are holding the declarations page. Your name is logged as the person who verified it.</span>
+          </form>`))}
         ${card(null, tbl(
           [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Coverage' }, { label: 'Carrier / policy' }, { label: 'Expires' }, { label: '' }],
           rows.map(({ lease, state, policy }) => ({
@@ -65,7 +109,7 @@ export function routes(r: Router): void {
               statusBadge(state === 'covered' ? 'ok' : state === 'lapsing' ? 'warn' : 'error', state),
               policy ? html`${policy.carrier} <span class="mono small">${policy.policy_number}</span>` : html`<span class="muted">none on file</span>`,
               policy?.end_date ? fmtDate(policy.end_date) : policy ? 'evergreen' : '—',
-              state !== 'covered' && can(ctx, 'insurance:manage')
+              state !== 'covered' && manage && hasMaster(lease.property_id)
                 ? html`<form method="post" action="/insurance/enroll/${lease.id}" style="display:inline"><button class="btn btn-sm">Enroll master</button></form>`
                 : '',
             ],
@@ -76,8 +120,57 @@ export function routes(r: Router): void {
   });
 
   r.post('/insurance/enroll/:leaseId', requirePerm('insurance:manage'), (rq) => {
-    enrollMaster(rq.ctx as Ctx, rq.params.leaseId!, 'enroll');
-    return redirect('/insurance', 'Enrolled in the master policy — program fee added to the ledger');
+    const ctx = rq.ctx as Ctx;
+    const lease = q1<any>('SELECT property_id FROM leases WHERE id=? AND org_id=?', rq.params.leaseId!, ctx.orgId);
+    if (!lease || !canAccessProperty(ctx, lease.property_id)) return notFound();
+    try {
+      enrollMaster(ctx, rq.params.leaseId!, 'enroll');
+      return redirect('/insurance', 'Enrolled in the master policy — program fee added to the ledger');
+    } catch (e) {
+      return redirect('/insurance', (e as Error).message, 'err');
+    }
+  });
+
+  // ---------- staff review of resident-submitted policies ----------
+  const reviewable = (ctx: Ctx, policyId: string): any | null => {
+    const p = q1<any>('SELECT * FROM insurance_policies WHERE id=? AND org_id=?', policyId, ctx.orgId);
+    return p && canAccessProperty(ctx, p.property_id) ? p : null;
+  };
+  r.post('/insurance/policies/:id/verify', requirePerm('insurance:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    if (!reviewable(ctx, rq.params.id!)) return notFound();
+    try {
+      verifyPolicyByStaff(ctx, rq.params.id!);
+      return redirect('/insurance', 'Policy verified — the household now shows as covered.');
+    } catch (e) {
+      return redirect('/insurance', (e as Error).message, 'err');
+    }
+  });
+  r.post('/insurance/policies/:id/reject', requirePerm('insurance:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    if (!reviewable(ctx, rq.params.id!)) return notFound();
+    try {
+      rejectPolicyByStaff(ctx, rq.params.id!, String(rq.body?.reason || ''));
+      return redirect('/insurance', 'Policy rejected — the reason is on the resident’s portal.');
+    } catch (e) {
+      return redirect('/insurance', (e as Error).message, 'err');
+    }
+  });
+  r.post('/insurance/policies', requirePerm('insurance:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const lease = q1<any>('SELECT id, property_id FROM leases WHERE id=? AND org_id=?', String(rq.body?.lease_id || ''), ctx.orgId);
+    if (!lease || !canAccessProperty(ctx, lease.property_id)) return redirect('/insurance', 'Choose a household.', 'err');
+    try {
+      const up = rq.uploads.find((u) => u.field === 'proof' && u.data.length > 0);
+      const file = up ? putFile(ctx, up.data, { name: up.filename || 'insurance-proof', mime: up.mime, entity: 'lease', entityId: lease.id, visibility: 'staff', ownerUserId: ctx.userId }) : null;
+      recordPolicyByStaff(ctx, {
+        leaseId: lease.id, carrier: String(rq.body?.carrier || ''), policyNumber: String(rq.body?.policy_number || ''),
+        liabilityCents: parseUsd(String(rq.body?.liability || '0')), startDate: ctx.businessDate, endDate: String(rq.body?.end_date || ''), fileId: file?.id ?? null,
+      });
+      return redirect('/insurance', 'Policy recorded and verified.');
+    } catch (e) {
+      return redirect('/insurance', (e as Error).message, 'err');
+    }
   });
 
   // ---------- risk & incidents ----------
@@ -185,11 +278,15 @@ export function portalRoutes(r: Router): void {
     );
     if (!lease) return notFound();
     try {
+      const live = isLiveOrg(ctx);
+      const up = rq.uploads.find((u) => u.field === 'proof' && u.data.length > 0);
+      const file = up ? putFile(ctx, up.data, { name: up.filename || 'insurance-proof', mime: up.mime, entity: 'lease', entityId: lease.id, visibility: 'resident', ownerUserId: ctx.userId }) : null;
       const res = submitPolicy(ctx, {
-        leaseId: lease.id, carrier: String(rq.body?.carrier || CARRIERS[0]),
-        policyNumber: String(rq.body?.policy_number || ''), liabilityCents: parseUsd(String(rq.body?.liability || '100000')),
-        startDate: ctx.businessDate, endDate: String(rq.body?.end_date || addMonths(ctx.businessDate, 12)),
+        leaseId: lease.id, carrier: String(rq.body?.carrier || (live ? '' : CARRIERS[0])),
+        policyNumber: String(rq.body?.policy_number || ''), liabilityCents: parseUsd(String(rq.body?.liability || (live ? '0' : '100000'))),
+        startDate: ctx.businessDate, endDate: String(rq.body?.end_date || addMonths(ctx.businessDate, 12)), fileId: file?.id ?? null,
       });
+      if (live) return redirect('/portal/lease', 'Policy received — the office will review it. It shows as pending until then.');
       return redirect('/portal/lease', res.outcome === 'verified'
         ? 'Policy verified — you are covered ✓'
         : res.outcome === 'pending' ? 'Policy submitted — carrier verification is queued' : 'The carrier could not verify that policy — check the number or enroll in the master policy');
@@ -206,8 +303,12 @@ export function portalRoutes(r: Router): void {
       ctx.userId,
     );
     if (!lease) return notFound();
-    enrollMaster(ctx, lease.id, 'enroll');
-    return redirect('/portal/lease', 'Enrolled in the community insurance program ✓');
+    try {
+      enrollMaster(ctx, lease.id, 'enroll');
+      return redirect('/portal/lease', 'Enrolled in the community insurance program ✓');
+    } catch {
+      return redirect('/portal/lease', 'This community does not offer an insurance program. Upload a policy of your own instead.', 'err');
+    }
   });
 }
 
@@ -216,24 +317,39 @@ export function portalInsuranceCard(ctx: Ctx, lease: any): Child {
   const { state, policy } = leaseCompliance(ctx, lease.id);
   const required = requiredLiability(ctx, lease.property_id);
   const fee = getSetting<number>(ctx, 'master_policy_fee_cents', lease.property_id);
+  const live = isLiveOrg(ctx);
+  const program = !!masterPolicyConfig(ctx, lease.property_id);
+  const latest = q1<any>(
+    `SELECT * FROM insurance_policies WHERE lease_id=? AND org_id=? AND kind='third_party' ORDER BY created_at DESC LIMIT 1`,
+    lease.id, ctx.orgId,
+  );
+  const waiting = latest?.status === 'pending_verification' ? latest : null;
+  const turnedDown = !policy && latest?.status === 'rejected' && latest.review_note ? latest : null;
   return html`
     <div class="card">
-      <h3>Renters insurance ${statusBadge(state === 'covered' ? 'ok' : state === 'lapsing' ? 'warn' : 'error', state)}</h3>
+      <h3>Renters insurance ${waiting && state === 'lapsed'
+        ? statusBadge('pending', 'pending review')
+        : statusBadge(state === 'covered' ? 'ok' : state === 'lapsing' ? 'warn' : 'error', state)}</h3>
       ${policy
         ? html`<p class="small">${policy.carrier} · <span class="mono">${policy.policy_number}</span>${policy.end_date ? html` · through ${fmtDate(policy.end_date)}` : ''}${policy.kind === 'master' ? html` · ${usd(fee)}/mo on your ledger` : ''}</p>`
-        : html`<p class="small">Your lease requires liability coverage of at least <b>${usd(required)}</b>. Upload your policy or enroll in the community program.</p>`}
+        : html`<p class="small">Your lease requires liability coverage of at least <b>${usd(required)}</b>. ${program ? 'Upload your policy or enroll in the community program.' : 'Upload your policy below.'}</p>`}
+      ${when(waiting, () => html`<p class="small"><b>Received:</b> ${waiting.carrier} · <span class="mono">${waiting.policy_number}</span>. The office is reviewing it — you do not need to do anything else.</p>`)}
+      ${when(turnedDown, () => html`<p class="small"><b>The office could not accept policy <span class="mono">${turnedDown.policy_number}</span>:</b> ${turnedDown.review_note}</p>`)}
       ${when(state !== 'covered' || policy?.kind === 'master', () => html`
-        <details ${state !== 'covered' ? 'open' : ''}>
+        <details ${state !== 'covered' && !waiting ? 'open' : ''}>
           <summary class="small">Upload a policy you already have</summary>
-          <form method="post" action="/portal/insurance/upload" class="stack">
-            ${field('Carrier', select('carrier', CARRIERS.map((c): [string, string] => [c, c]), CARRIERS[0]))}
+          <form method="post" action="/portal/insurance/upload" class="stack" enctype="multipart/form-data">
+            ${live
+              ? field('Insurance company', input('carrier', { required: true, placeholder: 'the company named on your policy' }))
+              : field('Carrier', select('carrier', CARRIERS.map((c): [string, string] => [c, c]), CARRIERS[0]))}
             ${field('Policy number', input('policy_number', { required: true, placeholder: 'e.g. RS-2216804' }))}
-            ${field('Liability coverage ($)', input('liability', { value: '100,000' }))}
+            ${field('Liability coverage ($)', input('liability', live ? { required: true, placeholder: 'e.g. 100,000' } : { value: '100,000' }))}
             ${field('Expires', input('end_date', { type: 'date', value: addMonths(ctx.businessDate, 12) }))}
-            <button class="btn btn-sm">Submit for verification</button>
+            ${when(live, () => field('Proof of coverage (PDF or photo of your declarations page)', html`<input type="file" name="proof" accept="application/pdf,image/*">`))}
+            <button class="btn btn-sm">${live ? 'Send to the office for review' : 'Submit for verification'}</button>
           </form>
         </details>
-        ${when(!policy || policy.kind !== 'master', () => html`
+        ${when(program && (!policy || policy.kind !== 'master'), () => html`
           <form method="post" action="/portal/insurance/enroll" style="margin-top:8px">
             <button class="btn btn-sm">Enroll in the community program — ${usd(fee)}/mo</button>
           </form>`)}`)}

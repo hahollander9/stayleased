@@ -15,7 +15,7 @@ import { audit } from '../../lib/audit.ts';
 import { getSetting, getSettingMerged, layerSetting, narrowOverride, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
-import { receiveInbound } from '../../lib/sim/messaging.ts';
+import { receiveInbound, isLiveOrg, deliveryLabel, RECORDED } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
 import { SPECS, GROUPS, renderSetting, isInstantSetting, describeSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
@@ -855,7 +855,7 @@ export function routes(r: Router): void {
       title: 'Outbox',
       active: '/dev/messages',
       subtitle: ctx.orgKind === 'live'
-        ? `Every message the platform generates — portal invites and one-time passwords included. External email/SMS delivery is rolling out; until it's enabled, this is the delivery record. ${total} message${total === 1 ? '' : 's'}.`
+        ? `Every message the platform writes — portal invites and one-time passwords included. Email and text delivery are not connected yet, so nothing here has reached anyone: open a message to read it and pass it on yourself. ${total} message${total === 1 ? '' : 's'}.`
         : `Outbox simulator — nothing actually sends. ${total} message${total === 1 ? '' : 's'} captured.`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
@@ -864,7 +864,7 @@ export function routes(r: Router): void {
           ${field('Search', input('q', { value: qtext, placeholder: 'subject, address or body' }))}
         </form>
         ${card(null, html`${tbl(
-          [{ label: '' }, { label: 'When' }, { label: 'To' }, { label: 'Subject / body' }, { label: 'Template' }],
+          [{ label: '' }, { label: 'When' }, { label: 'To' }, { label: 'Subject / body' }, { label: 'Delivery' }, { label: 'Template' }],
           rows.map((m) => ({
             href: `/dev/messages/${m.id}`,
             cells: [
@@ -872,6 +872,7 @@ export function routes(r: Router): void {
               html`<span class="small nowrap">${m.created_at.slice(5, 16).replace('T', ' ')}</span>`,
               html`${m.to_name ? html`<b>${m.to_name}</b> ` : ''}<span class="muted small">${m.to_addr}</span>`,
               html`<span class="small">${m.subject || m.body.replace(/<[^>]+>/g, ' ').slice(0, 90)}</span>`,
+              statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status)),
               m.template_key ? html`<span class="mono small">${m.template_key}</span>` : '—',
             ],
           })),
@@ -887,13 +888,14 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: m.subject || `${m.channel.toUpperCase()} message`,
       active: '/dev/messages',
-      crumbs: [['Message console', '/dev/messages']],
+      crumbs: [['Outbox', '/dev/messages']],
       content: html`
+        ${m.status === RECORDED ? html`<div class="callout warn"><b>Saved — not delivered.</b> Email and text delivery are not connected yet, so this message has not reached ${m.to_name || m.to_addr}. Copy it and send it yourself if they need it.</div>` : null}
         ${card('Details', dl([
           ['Direction', m.direction], ['Channel', m.channel],
           [m.direction === 'in' ? 'From' : 'To', `${m.to_name || ''} <${m.to_addr}>`],
-          ['Status', statusBadge(m.status)], ['Template', m.template_key || '—'],
-          ['Sent', fmtTs(m.created_at)], ['Entity', m.entity ? `${m.entity}/${m.entity_id}` : '—'],
+          ['Delivery', statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status))], ['Template', m.template_key || '—'],
+          [m.status === RECORDED ? 'Saved' : m.direction === 'in' ? 'Received' : 'Sent', fmtTs(m.created_at)], ['Entity', m.entity ? `${m.entity}/${m.entity_id}` : '—'],
         ]))}
         ${card('Rendered message', m.channel === 'email'
           ? m.direction === 'in'
@@ -903,7 +905,7 @@ export function routes(r: Router): void {
             ? html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff;white-space:pre-wrap">${m.body}</div>`
             : html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff">${safeHtml(m.body)}</div>`
           : html`<div style="max-width:340px;background:var(--info-soft);border-radius:14px;padding:10px 14px;font-size:14px">${m.body}</div>`)}
-        ${m.direction === 'out' && m.person_id ? card('Simulate inbound reply', html`
+        ${m.direction === 'out' && m.person_id && !isLiveOrg(ctx) ? card('Simulate inbound reply', html`
           <form method="post" action="/dev/messages/${m.id}/reply">
             ${field('Reply body', textarea('body', { required: true, placeholder: 'Type the simulated reply from this person…' }))}
             <button class="btn">Receive reply</button>
@@ -915,6 +917,9 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound();
+    // devOnly gates on deployment mode; a live org on a demo-mode deployment
+    // must still never get an invented inbound message.
+    if (isLiveOrg(ctx)) return redirect(`/dev/messages/${m.id}`, 'Simulated replies are for the demo only — inbound email and text are not connected.', 'err');
     receiveInbound(ctx, {
       channel: m.channel, from: m.to_addr, fromName: m.to_name || undefined,
       subject: m.subject ? `Re: ${m.subject}` : undefined, body: String(rq.body.body || ''),

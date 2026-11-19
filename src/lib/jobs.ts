@@ -160,6 +160,14 @@ export function advanceBusinessDate(orgId: string, toDate: string): { days: numb
     const cap = addDays(liveToday(), 62);
     if (toDate > cap) throw new Error(`the demo clock can jump at most two months past today (through ${cap})`);
   }
+  // A live organization's books ARE the calendar. Moving its date past today
+  // posts rent and late fees that are not yet due onto a real ledger, and that
+  // cannot be taken back. The fence is here, where the date is written, so no
+  // caller — the Simulator Console, Ask StayLeased, a hand-built request — can
+  // get around it. Catching up TO today (syncLiveOrgClocks) stays allowed.
+  if (orgKind(orgId) === 'live' && toDate > liveToday()) {
+    throw new Error('A live organization runs on the real calendar — its business date cannot be moved ahead of today.');
+  }
   let current = org.business_date;
   if (toDate <= current) throw new Error(`target ${toDate} must be after current business date ${current}`);
   let days = 0;

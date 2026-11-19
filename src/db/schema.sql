@@ -1623,7 +1623,9 @@ CREATE TABLE IF NOT EXISTS insurance_policies (
   file_id TEXT,
   source TEXT NOT NULL DEFAULT 'upload', -- upload|enroll|auto_enroll
   reminder_stage INTEGER NOT NULL DEFAULT 0, -- lapse reminders sent (0-3)
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  reviewed_by TEXT, -- staff member who verified / rejected / recorded it
+  review_note TEXT -- why staff rejected it (shown to the resident)
 );
 CREATE INDEX IF NOT EXISTS idx_inspol ON insurance_policies(org_id, lease_id, status);
 

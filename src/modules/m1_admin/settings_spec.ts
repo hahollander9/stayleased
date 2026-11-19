@@ -280,6 +280,16 @@ export const SPECS: SettingSpec[] = [
 
   // ---------- Insurance ----------
   {
+    key: 'master_policy_carrier', group: 'Insurance', label: 'Master policy carrier',
+    help: 'The insurance company behind your master tenant-liability policy. Leave blank if you do not hold one — residents then cannot be enrolled in or billed for a community program.',
+    ctl: { t: 'text', placeholder: 'e.g. the carrier named on your declarations page' },
+  },
+  {
+    key: 'master_policy_number', group: 'Insurance', label: 'Master policy number',
+    help: 'The policy number on your master policy. Enrolled residents see this carrier and number as their coverage.',
+    ctl: { t: 'text', placeholder: 'policy number' },
+  },
+  {
     key: 'master_policy_fee_cents', group: 'Insurance', label: 'Master policy fee',
     help: 'Monthly charge when a resident is covered by your master policy instead of their own.',
     ctl: { t: 'money' },

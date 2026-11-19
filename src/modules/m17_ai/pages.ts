@@ -1,6 +1,6 @@
 import { html, raw, when, join, safeHtml } from '../../lib/html.ts';
 import { redirect, notFound, localPath, type Router, type Rq, jsonRes } from '../../lib/http.ts';
-import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, can, canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j, js } from '../../lib/db.ts';
 import { fmtDate } from '../../lib/dates.ts';
 import { setSetting, getSettingMerged } from '../../lib/settings.ts';
@@ -20,7 +20,7 @@ import { propose } from './framework.ts';
 import type { PendingAction } from './act.ts';
 import './ops_catalog.ts';   // one-shot operations: money, leasing, maintenance
 import './ops_workflows.ts'; // standing behavior: report cadences, agent dials
-import { generateListing, generateTemplateDraft, generateReviewResponse } from './content.ts';
+import { generateListingSmart, generateTemplateDraftSmart, generateReviewResponseSmart } from './content.ts';
 
 /** M17 screens: AI Activity (approval queue + full audit + autonomy dials),
  * call analysis rollup, Ask StayLeased, and the Essentials content studio. */
@@ -117,7 +117,7 @@ export function routes(r: Router): void {
         <details class="ai-how">
           <summary>How this works, and the totals</summary>
           <div class="aiflow-legend">
-            <div class="afl-step"><i>1</i><div><b>Watch</b><span>Agents monitor leads, payments, work orders and renewals as they happen</span></div></div>
+            <div class="afl-step"><i>1</i><div><b>Watch</b><span>Agents pick up new inquiries, messages and maintenance requests as they arrive, and check overdue balances and upcoming lease ends once a day</span></div></div>
             <span class="afl-arrow">→</span>
             <div class="afl-step"><i>2</i><div><b>Draft</b><span>The agent proposes an action, with confidence scored and guardrails applied</span></div></div>
             <span class="afl-arrow">→</span>
@@ -594,7 +594,7 @@ export function routes(r: Router): void {
                 ${pc.actions.map((a) => html`<button type="button" class="aichat-chip act" data-fill="${a}">${a.trim()}…</button>`)}
               </div>`)}
             <form class="aichat-form" id="aichat-form" autocomplete="off">
-              <input id="aichat-input" name="q" placeholder="Ask a question, or tell me to do something…" maxlength="300" aria-label="Ask StayLeased" autofocus />
+              <input id="aichat-input" name="q" placeholder="${st.live ? 'Ask a question, or tell me to do something…' : 'Ask a question about your records…'}" maxlength="300" aria-label="Ask StayLeased" autofocus />
               <button class="aichat-send" type="submit" aria-label="Send">${raw('<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14M13 6l6 6-6 6"/></svg>')}</button>
             </form>
           </div>
@@ -662,23 +662,32 @@ export function routes(r: Router): void {
     const fps = q<any>('SELECT f.id, f.name, p.name AS prop FROM floorplans f JOIN properties p ON p.id=f.property_id WHERE f.org_id=? ORDER BY p.name, f.name', ctx.orgId);
     const generated = rq.query.get('generated') || '';
     const genSubject = rq.query.get('subject') || '';
+    // how the draft on screen was written: by the model, or from a template
+    const genBy = rq.query.get('by') === 'model' ? 'model' : 'template';
+    const st = llmStatus();
     return shell(rq, {
       title: 'Essentials — content studio',
       active: '/ai',
       crumbs: [['AI Activity', '/ai']],
-      subtitle: 'Grounded generation: listing copy from live pricing, template drafts, review responses. The same buttons live inside the CMS and template editors.',
+      subtitle: st.live
+        ? `Drafts written by ${st.model} from your own records: listing copy from live pricing, message templates, review responses. Read every draft before using it.`
+        : 'Starter drafts built from your own records and fill-in-the-blank wording. No AI model is connected on this server, so these are templates, not written-for-you copy.',
       content: html`
-        ${when(generated, () => card('Generated ✨ (copy into the editor, or regenerate)', html`
+        ${when(generated, () => card(genBy === 'model' ? 'Draft (copy into the editor, or draft again)' : 'Starter draft (copy into the editor and finish it)', html`
+          <p class="small muted">${genBy === 'model'
+            ? `Written by ${st.live ? st.model : 'the AI model'} from your records. Check it before you use it.`
+            : 'Built from a template and your records, not written by an AI model. Fill in anything in [brackets] and leave nothing in that you have not checked.'}</p>
           ${when(genSubject, () => html`<p><b>Subject:</b> ${genSubject}</p>`)}
           <div style="border:1px solid var(--line-2);border-radius:10px;padding:12px;background:var(--surface-2)">${generated}</div>`))}
         <div class="grid cols-2">
           ${card('Listing description', html`<form method="post" action="/ai/essentials/listing">
             ${field('Floorplan', select('floorplan', fps.map((f): [string, string] => [f.id, `${f.prop} — ${f.name}`])))}
-            <button class="btn btn-sm">Generate from live data</button>
+            <button class="btn btn-sm">${st.live ? 'Draft from your records' : 'Build from your records'}</button>
+            <p class="small muted">Uses only what is recorded: floorplan, size, asking rent, saved amenities and the property’s city. Anything missing is left out.</p>
           </form>`)}
           ${card('Message template', html`<form method="post" action="/ai/essentials/template">
             ${field('What is it for?', input('purpose', { placeholder: 'e.g. pool closure notice, parking reminder, welcome email', required: true }))}
-            <button class="btn btn-sm">Draft it</button>
+            <button class="btn btn-sm">${st.live ? 'Draft it' : 'Get a starter'}</button>
           </form>`)}
           ${card('Review response', html`<form method="post" action="/ai/essentials/review">
             ${field('Stars', select('stars', [['5', '5★'], ['4', '4★'], ['3', '3★'], ['2', '2★'], ['1', '1★']], '2'))}
@@ -688,29 +697,30 @@ export function routes(r: Router): void {
           </form>`)}
           ${card('Where these buttons live', html`<ul>
             <li>Marketing → Site editor: <b>Generate description</b> per property</li>
-            <li>Communications → Templates: <b>Draft with AI</b></li>
+            <li>Communications → Templates: save a draft from here as a reusable template</li>
             <li>Every generation is logged to AI Activity like any other agent action.</li>
           </ul>`)}
         </div>`,
     });
   });
 
-  r.post('/ai/essentials/listing', requirePerm('ai:view'), (rq) => {
+  r.post('/ai/essentials/listing', requirePerm('ai:view'), async (rq) => {
     const ctx = rq.ctx as Ctx;
-    const fp = q1<any>('SELECT * FROM floorplans WHERE id=?', String(rq.body.floorplan));
-    if (!fp) return notFound('Floorplan not found');
-    const text = generateListing(ctx, fp.property_id, fp.id);
-    return redirect(`/ai/essentials?generated=${encodeURIComponent(text)}`);
+    // org-scoped: a floorplan id from another organization is simply not found
+    const fp = q1<any>('SELECT * FROM floorplans WHERE id=? AND org_id=?', String(rq.body.floorplan), ctx.orgId);
+    if (!fp || !canAccessProperty(ctx, fp.property_id)) return notFound('Floorplan not found');
+    const d = await generateListingSmart(ctx, fp.property_id, fp.id);
+    return redirect(`/ai/essentials?generated=${encodeURIComponent(d.text)}&by=${d.live ? 'model' : 'template'}`);
   });
-  r.post('/ai/essentials/template', requirePerm('ai:view'), (rq) => {
+  r.post('/ai/essentials/template', requirePerm('ai:view'), async (rq) => {
     const ctx = rq.ctx as Ctx;
-    const t = generateTemplateDraft(ctx, String(rq.body.purpose || 'community notice'));
-    return redirect(`/ai/essentials?generated=${encodeURIComponent(t.body)}&subject=${encodeURIComponent(t.subject)}`);
+    const t = await generateTemplateDraftSmart(ctx, String(rq.body.purpose || 'community notice').slice(0, 200));
+    return redirect(`/ai/essentials?generated=${encodeURIComponent(t.body)}&subject=${encodeURIComponent(t.subject)}&by=${t.live ? 'model' : 'template'}`);
   });
-  r.post('/ai/essentials/review', requirePerm('ai:view'), (rq) => {
+  r.post('/ai/essentials/review', requirePerm('ai:view'), async (rq) => {
     const ctx = rq.ctx as Ctx;
-    const text = generateReviewResponse(ctx, String(rq.body.review || ''), Number(rq.body.stars || 3), String(rq.body.reviewer || 'a resident'));
-    return redirect(`/ai/essentials?generated=${encodeURIComponent(`<p>${text}</p>`)}`);
+    const d = await generateReviewResponseSmart(ctx, String(rq.body.review || '').slice(0, 2000), Number(rq.body.stars || 3), String(rq.body.reviewer || 'a resident').slice(0, 80));
+    return redirect(`/ai/essentials?generated=${encodeURIComponent(d.text)}&by=${d.live ? 'model' : 'template'}`);
   });
 }
 

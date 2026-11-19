@@ -5,7 +5,7 @@ import type { Ctx } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting } from '../../lib/settings.ts';
-import { registerJob } from '../../lib/jobs.ts';
+import { registerJob, orgKind } from '../../lib/jobs.ts';
 import { GLOBAL_SEED } from '../../lib/rng.ts';
 import { usd } from '../../lib/money.ts';
 import { maxTenantRent } from '../m18_verticals/service.ts';
@@ -28,6 +28,10 @@ export const COMP_NAMES: Record<string, [string, number][]> = {
 };
 
 export function ensureCompSets(orgId: string): void {
+  // The market simulator is a demo rail. A live org's comp set holds only what
+  // its own staff entered (addCompSet / recordCompObservation); anything the
+  // simulator wrote there before this fence existed is removed.
+  if (orgKind(orgId) === 'live') { purgeSimulatedComps(orgId); return; }
   if (q1('SELECT id FROM comp_sets WHERE org_id=? LIMIT 1', orgId)) return;
   for (const p of q<any>('SELECT id, slug FROM properties WHERE org_id=?', orgId)) {
     for (const [name, miles] of COMP_NAMES[p.slug] || [['Nearby Community A', 0.8], ['Nearby Community B', 1.4]]) {
@@ -41,6 +45,7 @@ export function ensureCompSets(orgId: string): void {
 
 /** deterministic monthly comp observations with realistic drift */
 export function generateCompObservations(orgId: string, month: string): number {
+  if (orgKind(orgId) === 'live') return 0; // invented rents never price a real unit
   let added = 0;
   const comps = q<any>(
     `SELECT c.*, p.slug FROM comp_sets c JOIN properties p ON p.id=c.property_id WHERE c.org_id=? AND c.active=1`,
@@ -68,11 +73,94 @@ export function generateCompObservations(orgId: string, month: string): number {
   return added;
 }
 
+/** Remove simulator output from a live org: every 'market_sim' observation,
+ * and the placeholder communities it invented, unless staff have since put a
+ * real observation on one. Idempotent; a no-op once clean. */
+export function purgeSimulatedComps(orgId: string): number {
+  if (orgKind(orgId) !== 'live') return 0;
+  if (!q1(`SELECT id FROM comp_observations WHERE org_id=? AND source='market_sim' LIMIT 1`, orgId)
+    && !q1(`SELECT id FROM comp_sets WHERE org_id=? AND name IN ('Nearby Community A','Nearby Community B') LIMIT 1`, orgId)) return 0;
+  let removed = 0;
+  tx(() => {
+    removed = Number(run(`DELETE FROM comp_observations WHERE org_id=? AND source='market_sim'`, orgId)?.changes ?? 0);
+    run(
+      `DELETE FROM comp_sets WHERE org_id=? AND name IN ('Nearby Community A','Nearby Community B')
+         AND NOT EXISTS (SELECT 1 FROM comp_observations o WHERE o.comp_id=comp_sets.id)`,
+      orgId,
+    );
+  });
+  return removed;
+}
+
+/** Staff add a real competing community to a property's comp set. */
+export function addCompSet(
+  ctx: Ctx,
+  input: { propertyId: string; name: string; distanceMiles?: number | null; yearBuilt?: number | null; notes?: string | null },
+): string {
+  const prop = q1<any>('SELECT id FROM properties WHERE id=? AND org_id=?', input.propertyId, ctx.orgId);
+  if (!prop) throw new Error('property not found');
+  const name = String(input.name || '').trim().slice(0, 120);
+  if (!name) throw new Error('Enter the name of the community.');
+  if (q1('SELECT id FROM comp_sets WHERE org_id=? AND property_id=? AND active=1 AND lower(name)=lower(?)', ctx.orgId, prop.id, name)) {
+    throw new Error('That community is already in this comp set.');
+  }
+  const miles = Number(input.distanceMiles);
+  const year = Number(input.yearBuilt);
+  const cid = id('cmp');
+  insert('comp_sets', {
+    id: cid, org_id: ctx.orgId, property_id: prop.id, name,
+    distance_miles: Number.isFinite(miles) && miles >= 0 && miles <= 100 ? miles : 1,
+    year_built: Number.isInteger(year) && year >= 1800 && year <= 2100 ? year : null,
+    notes: input.notes ? String(input.notes).trim().slice(0, 300) || null : null, active: 1, created_at: nowIso(),
+  });
+  audit(ctx, 'comp_set', cid, 'create', null, { propertyId: prop.id, name });
+  return cid;
+}
+
+/** Staff record what a comp is asking this month for a bedroom count (one
+ * figure per comp, month and bedroom count — entering it again corrects it). */
+export function recordCompObservation(
+  ctx: Ctx,
+  input: { compId: string; beds: number; rentCents: number; month?: string; concessionNote?: string | null },
+): string {
+  const comp = q1<any>('SELECT * FROM comp_sets WHERE id=? AND org_id=? AND active=1', input.compId, ctx.orgId);
+  if (!comp) throw new Error('comp not found');
+  const beds = Number(input.beds);
+  if (!Number.isInteger(beds) || beds < 0 || beds > 10) throw new Error('Choose the number of bedrooms.');
+  const rent = Math.round(Number(input.rentCents));
+  if (!Number.isFinite(rent) || rent <= 0 || rent > 10_000_000) throw new Error('Enter the monthly rent the community is asking.');
+  const month = input.month || monthKey(ctx.businessDate);
+  if (!/^\d{4}-\d{2}$/.test(month) || month > monthKey(ctx.businessDate)) throw new Error('Choose this month or an earlier one.');
+  const note = input.concessionNote ? String(input.concessionNote).trim().slice(0, 200) || null : null;
+  const prior = q1<any>('SELECT * FROM comp_observations WHERE comp_id=? AND month_key=? AND beds=?', comp.id, month, beds);
+  let oid: string;
+  if (prior) {
+    oid = prior.id;
+    run(`UPDATE comp_observations SET rent_cents=?, concession_note=?, source='manual' WHERE id=? AND org_id=?`, rent, note, oid, ctx.orgId);
+  } else {
+    oid = id('cob');
+    insert('comp_observations', {
+      id: oid, org_id: ctx.orgId, comp_id: comp.id, month_key: month, beds,
+      rent_cents: rent, concession_note: note, source: 'manual', created_at: nowIso(),
+    });
+  }
+  audit(ctx, 'comp_observation', oid, prior ? 'update' : 'create', prior ? { rent_cents: prior.rent_cents } : null, { comp: comp.name, month, beds, rent_cents: rent });
+  return oid;
+}
+
+/** Staff take a community out of the comp set (its history is kept). */
+export function removeCompSet(ctx: Ctx, compId: string): void {
+  const comp = q1<any>('SELECT * FROM comp_sets WHERE id=? AND org_id=?', compId, ctx.orgId);
+  if (!comp) throw new Error('comp not found');
+  run('UPDATE comp_sets SET active=0 WHERE id=? AND org_id=?', comp.id, ctx.orgId);
+  audit(ctx, 'comp_set', comp.id, 'remove', { active: 1 }, { active: 0 });
+}
+
 export function compAverage(orgId: string, propertyId: string, beds: number, month: string): number | null {
   return val<number>(
     `SELECT AVG(o.rent_cents) FROM comp_observations o JOIN comp_sets c ON c.id=o.comp_id
-     WHERE c.property_id=? AND o.beds=? AND o.month_key=?`,
-    propertyId, beds, month,
+     WHERE c.org_id=? AND c.property_id=? AND c.active=1 AND o.beds=? AND o.month_key=?`,
+    orgId, propertyId, beds, month,
   ) || null;
 }
 
@@ -368,8 +456,9 @@ export function revenueAnalytics(ctx: Ctx, propertyId: string): {
   return {
     lossToLease: {
       inPlace: Math.round(inPlace), market: Math.round(market),
-      gapCents: Math.round(market - inPlace),
-      gapPct: market ? Math.round(((market - inPlace) / market) * 1000) / 10 : 0,
+      // No in-place leases = nothing to compare: the gap is not "100%", it is unknown.
+      gapCents: inPlace ? Math.round(market - inPlace) : 0,
+      gapPct: market && inPlace ? Math.round(((market - inPlace) / market) * 1000) / 10 : 0,
     },
     newTradeOuts, renewalTradeOuts, effectiveRentTrend, concessions,
   };

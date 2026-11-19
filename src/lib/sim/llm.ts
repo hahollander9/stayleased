@@ -66,7 +66,13 @@ export const MockLlm: LlmProvider = {
             : `<p>Hi ${s(f.name)},</p><p>Your account balance of <b>${s(f.balance)}</b> remains open after several notices. Please contact the office so we can settle this before further steps are required by your lease.</p>`;
         const plan = f.planLine ? `<p>${s(f.planLine)}</p>` : '';
         // compliance guardrails are HARD-CODED: dispute path always present, never threats
-        return `${open}${plan}<p>You can pay or set up a plan in your resident portal. If you believe this balance is incorrect, reply here or call the office and we will review it with you — you always have the right to dispute.</p><p>— ${s(f.propertyName)}</p>`;
+        // Only point at the portal when it can actually take the payment: online
+        // payments are not open in a live organization (the rail is simulated),
+        // and a resident sent there would be turned away.
+        const how = f.portalPay === false
+          ? 'To pay or set up a plan, reply here or call the office.'
+          : 'You can pay or set up a plan in your resident portal.';
+        return `${open}${plan}<p>${how} If you believe this balance is incorrect, reply here or call the office and we will review it with you — you always have the right to dispute.</p><p>— ${s(f.propertyName)}</p>`;
       }
       // ---------- renewals ----------
       case 'renewal_outreach': {
@@ -74,7 +80,10 @@ export const MockLlm: LlmProvider = {
           ? `You've paid on time ${s(f.onTimeStreak)} months running — residents like you are exactly who we build for.`
           : 'We hope this year has felt like home.';
         const wo = f.avgRating ? ` Thanks too for the kind ${s(f.avgRating)}★ feedback on our maintenance visits.` : '';
-        return `<p>Hi ${s(f.name)},</p><p>${streak}${wo}</p><p>Your lease at ${s(f.propertyName)} ends ${s(f.endDate)}. Your renewal options:</p>${s(f.optionsHtml)}<p>Accept in your portal in one tap, or reply with questions — we'd love to keep you.</p>`;
+        return `<p>Hi ${s(f.name)},</p><p>${streak}${wo}</p><p>Your lease at ${s(f.propertyName)} ends ${s(f.endDate)}. Your renewal options:</p>${s(f.optionsHtml)}<p>${f.portalAccept === false
+          // no offer will be on file in the portal when this goes out, so do not send them there
+          ? 'Reply to this message with the term you would like, or with any questions'
+          : 'Accept in your resident portal, or reply with questions'} — we'd love to keep you.</p>`;
       }
       case 'counter_assessment':
         return f.withinBounds
@@ -87,11 +96,21 @@ export const MockLlm: LlmProvider = {
         return s(f.note);
       // ---------- content ----------
       case 'listing_description':
-        return `${pick(s(f.property), ['Sun-splashed', 'Thoughtfully designed', 'Quietly stylish'])} ${s(f.beds)} home at ${s(f.property)} — ${s(f.sqft)} sq ft of ${pick(s(f.plan), ['smart, livable space', 'room to breathe', 'space that works as hard as you do'])}. ${s(f.amenityLine)} Steps from ${s(f.neighborhood)}. From ${s(f.price)}/mo with flexible terms${s(f.special) ? ` — ${s(f.special)}` : ''}. Live pricing and self-scheduled tours online.`;
+        // Every clause is a recorded fact or it is left out: no adjectives about
+        // light or style, no amenities nobody entered, no neighborhood claims.
+        // A missing fact drops its sentence rather than being filled in.
+        return [
+          `${s(f.beds)[0]?.toUpperCase() || ''}${s(f.beds).slice(1)} home at ${s(f.property)}${s(f.sqft) ? `, ${s(f.sqft)} sq ft` : ''}.`,
+          s(f.amenityLine),
+          s(f.location) ? `Located in ${s(f.location)}.` : '',
+          s(f.price) ? `From ${s(f.price)}/mo${s(f.special) ? ` — ${s(f.special)}` : ''}.` : '',
+          s(f.availability),
+        ].filter(Boolean).join(' ');
       case 'review_response':
         return Number(f.stars) >= 4
-          ? `Thank you, ${s(f.reviewer)}! ${pick(s(f.reviewer), ['Making this feel like home is the whole job', 'This made our team\'s week', 'We\'ll keep earning it'])} — and we've shared your note with ${s(f.mention) || 'the whole crew'}. See you around the community!`
-          : `${s(f.reviewer)}, thank you for the straight talk — this isn't the experience we want anyone to have. I'd like to make it right personally: please reach out to the office and ask for the community manager. We've already flagged ${s(f.mention) || 'the issue you raised'} for follow-up this week.`;
+          // no claims about what the team has already done — the draft cannot know
+          ? `Thank you, ${s(f.reviewer)}! ${pick(s(f.reviewer), ['Making this feel like home is the whole job', 'This made our team\'s week', 'We\'ll keep earning it'])}${s(f.mention) ? ` — it means a lot to ${s(f.mention)}` : ''}. See you around the community!`
+          : `${s(f.reviewer)}, thank you for the straight talk — this isn't the experience we want anyone to have. I'd like to make it right personally: please reach out to the office and ask for the community manager so we can look into ${s(f.mention) ? `what happened with ${s(f.mention)}` : 'what happened'} with you.`;
       case 'template_draft':
         return `<p>Hi {{first_name}},</p><p>${s(f.body)}</p><p>— {{property}}</p>`;
       case 'alt_text':

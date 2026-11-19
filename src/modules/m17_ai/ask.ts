@@ -5,7 +5,7 @@ import { usd, parseUsd } from '../../lib/money.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { propFilter, can } from '../../lib/auth.ts';
 import { propose } from './framework.ts';
-import { planAction, type PendingAction } from './act.ts';
+import { planAction, looksLikeInstruction, type PendingAction } from './act.ts';
 import {
   currentThread, recallContext, remember, looksLikeFollowUp, spliceFollowUp,
   type Recall, type TurnContext,
@@ -347,7 +347,24 @@ function orgFactsBlock(ctx: Ctx): string {
 - maintenance: ${openWos} open work orders`;
 }
 
-const CAPABILITIES = `Things I can pull live from your data (type them like this): "delinquency over $500 at <property>", "which units turn this month", "occupancy at <property>", "collection rate last month", "open work orders", "top vendor spend". I can also DO things — "finalize disposition for <household>", "waive the late fee on unit <number>", "open a work order for a leaking faucet in <unit>", "email me the aged receivables report every Monday" — each one previewed with the real figures and applied only when you confirm.`;
+const CAPABILITIES_READ = `Things I can pull live from your data (type them like this): "delinquency over $500 at <property>", "which units turn this month", "occupancy at <property>", "collection rate last month", "open work orders", "top vendor spend".`;
+const CAPABILITIES_DO = ` I can also DO things — "finalize disposition for <household>", "waive the late fee on unit <number>", "open a work order for a leaking faucet in <unit>", "email me the aged receivables report every Monday" — each one previewed with the real figures and applied only when you confirm.`;
+/** What Ask says it can do. The "I can also DO things" half is only true when
+ * the live model is connected — picking an operation out of a sentence is the
+ * model's job — so without it Ask describes itself as what it then is: a
+ * reader of the records. Promising actions it will not take is how an operator
+ * comes to believe a late fee was waived. */
+function capabilities(): string {
+  return llmStatus().live ? CAPABILITIES_READ + CAPABILITIES_DO : CAPABILITIES_READ;
+}
+
+/** Shown when someone gives an instruction and no model is connected. */
+export const ACTIONS_UNAVAILABLE = 'I can’t take actions on this server yet — that needs the live AI connection, which is not turned on. Nothing was changed. You can do this from its own screen, and I can still answer questions about your records.';
+
+/** "open work orders" starts with a verb and is a question. Without a model to
+ * tell the two apart, a bare status + plural noun is read as the report it has
+ * always been; "open a work order for unit 204" is not. */
+const QUERY_LOOKALIKE = /^\s*(?:open|closed?|completed?|scheduled?|assigned)\s+(?:work\s*orders|requests|tickets|invoices|balances|items|tasks|leads|applications|renewals|tours)\b/i;
 
 const STAFF_SYSTEM = `You are "Ask StayLeased", the in-app assistant for a property-management platform, talking to a STAFF member of one company. You have a FACTS block with live portfolio figures and a list of structured questions the system answers with full tables.
 Rules: 1–3 sentences, under 70 words, warm and plain, no markdown. Use ONLY numbers from FACTS — never invent figures, names, or records. If they greet you or ask what you can do, introduce yourself briefly and point at example questions. If they ask something needing data you don't have in FACTS, suggest the closest structured phrasing from the capabilities list or the Reports section. Never claim to have taken an action: you can PROPOSE one, and a proposal always shows the operator a preview and waits for their confirmation. If they ask you to do something, say you will set it up for them to confirm — never that it is done.`;
@@ -355,10 +372,10 @@ Rules: 1–3 sentences, under 70 words, warm and plain, no markdown. Use ONLY nu
 function smallTalk(question: string): string | null {
   const s = question.toLowerCase().trim();
   if (/^(hi|hello|hey|yo|sup|good (morning|afternoon|evening)|howdy)[\s!.,]*$/.test(s)) {
-    return `Hi! I'm Ask StayLeased — I answer questions straight from your portfolio data. ${CAPABILITIES}`;
+    return `Hi! I'm Ask StayLeased — I answer questions straight from your portfolio data. ${capabilities()}`;
   }
   if (/what can you (do|answer)|help me|how do (you|i) (work|use)|^help[\s!.?]*$/.test(s)) {
-    return `I read your live portfolio within the same permissions as every screen, and answer in plain English. ${CAPABILITIES}`;
+    return `I read your live portfolio within the same permissions as every screen, and answer in plain English. ${capabilities()}`;
   }
   if (/thank|thanks|ty[\s!.]*$/.test(s)) return `Anytime. Ask away whenever something comes up.`;
   return null;
@@ -416,6 +433,23 @@ export async function askSmart(ctx: Ctx, question: string, threadId?: string): P
   // unrelated commands: an answer to "which Bhatt?" is resolved against the
   // candidates Ask itself offered, and "charge them $50" has a referent.
   const planned = await planAction(ctx, question, rc).catch(() => null);
+  // No model connected: planAction cannot choose an operation, and falling
+  // through would answer "open a work order for the leak in 204" with the list
+  // of open work orders — the command-answered-as-a-query this block exists to
+  // prevent. Say plainly that nothing happened.
+  if (!planned && !llmStatus().live && looksLikeInstruction(question) && !QUERY_LOOKALIKE.test(question)) {
+    propose(ctx, {
+      agent: 'ask', title: `Instruction: ${question.slice(0, 60)}`,
+      input: { question },
+      output: { kind: 'noop.analysis', matched: 'action.unavailable', summary: ACTIONS_UNAVAILABLE },
+      confidence: 0.9,
+      rationale: 'Read as an instruction, but no live model is connected to match it to an operation. Nothing was written.',
+    });
+    return reply({
+      title: 'Nothing was changed', summary: ACTIONS_UNAVAILABLE, links: [], matched: 'action.unavailable',
+      live: false, conversational: false,
+    });
+  }
   if (planned) {
     propose(ctx, {
       agent: 'ask', title: `Instruction: ${question.slice(0, 60)}`,
@@ -488,7 +522,7 @@ export async function askSmart(ctx: Ctx, question: string, threadId?: string): P
   }
 
   // 2) conversational: small talk fallback, then Claude with org facts
-  const canned = smallTalk(question) || `I didn't find a report for that phrasing. ${CAPABILITIES}`;
+  const canned = smallTalk(question) || `I didn't find a report for that phrasing. ${capabilities()}`;
   const transcript = rc.turns.slice(-8).map((t) => `${t.role === 'you' ? 'Staff' : 'You'}: ${t.text}`).join('\n');
   // The rows last shown travel with the transcript, so "which of those owes
   // the most" is a question about what is on screen rather than a fresh one.
@@ -497,7 +531,7 @@ export async function askSmart(ctx: Ctx, question: string, threadId?: string): P
     : '';
   const res = await llmGenerate({
     system: STAFF_SYSTEM,
-    prompt: `${orgFactsBlock(ctx)}\n\nCapabilities: ${CAPABILITIES}${shown}\n\n${transcript ? 'Conversation so far:\n' + transcript + '\n\n' : ''}Staff asks: "${question}"\n\nAnswer:`,
+    prompt: `${orgFactsBlock(ctx)}\n\nCapabilities: ${capabilities()}${shown}\n\n${transcript ? 'Conversation so far:\n' + transcript + '\n\n' : ''}Staff asks: "${question}"\n\nAnswer:`,
     fallback: canned,
     maxTokens: 220,
   });
@@ -607,7 +641,7 @@ export function askPanelContext(ctx: Ctx, path: string): AskPanelContext {
     const units = val<number>('SELECT COUNT(*) FROM units WHERE org_id=?', ctx.orgId) || 0;
     const occ = val<number>(`SELECT COUNT(*) FROM units WHERE org_id=? AND status='occupied'`, ctx.orgId) || 0;
     const owed = ledger ? agingRows(ctx, {}).reduce((s, a) => s + a.balance, 0) : 0;
-    greeting = `Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: ${units ? `${Math.round((occ / units) * 1000) / 10}% occupied` : 'no units yet'}${ledger ? `, ${usd(owed)} outstanding right now` : ''}. Name any property to zoom in, or tell me to do something and I'll show you the change before it lands.`;
+    greeting = `Hi ${ctx.userName.split(' ')[0]} — ask me about your portfolio: ${units ? `${Math.round((occ / units) * 1000) / 10}% occupied` : 'no units yet'}${ledger ? `, ${usd(owed)} outstanding right now` : ''}. Name any property to zoom in${llmStatus().live ? ', or tell me to do something and I\'ll show you the change before it lands' : ''}.`;
   }
 
   const example = exampleProperty(ctx, prop);
@@ -621,6 +655,7 @@ export function askPanelContext(ctx: Ctx, path: string): AskPanelContext {
     scope: prop?.name || null,
     greeting,
     chips,
-    actions: ACTION_HINTS.filter(([perm]) => can(ctx, perm)).map(([, text]) => text).slice(0, 3),
+    // only offered when an instruction can actually be planned (live model)
+    actions: llmStatus().live ? ACTION_HINTS.filter(([perm]) => can(ctx, perm)).map(([, text]) => text).slice(0, 3) : [],
   };
 }
