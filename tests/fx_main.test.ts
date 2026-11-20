@@ -75,3 +75,27 @@ test('the export needs the settings permission', async () => {
   const cookie = await loginAs(base, agent);
   assert.equal((await get(base, '/admin/export.zip', cookie)).status, 403);
 });
+
+test('the Outbox shows a property-scoped person only their own buildings’ messages', async () => {
+  const { q } = await import('../src/lib/db.ts');
+  const props = q<{ id: string }>('SELECT id FROM properties WHERE org_id=? ORDER BY created_at', org).map((p) => p.id);
+  assert.ok(props.length >= 2, 'two properties from the wizard test');
+  const mine = id('obx'); const theirs = id('obx'); const none = id('obx');
+  for (const [mid, pid, subj] of [[mine, props[0], `Mine ${sfx}`], [theirs, props[1], `Theirs ${sfx}`], [none, null, `Orgwide ${sfx}`]] as [string, string | null, string][]) {
+    insert('outbox_messages', { id: mid, org_id: org, property_id: pid, channel: 'email', to_addr: 'r@example.test', subject: subj, body: '<p>x</p>', status: 'recorded', created_at: nowIso() });
+  }
+  const uid = id('usr');
+  const pm = `pm-fx-main-${sfx}@example.test`;
+  insert('users', { id: uid, org_id: org, email: pm, name: 'Scoped PM', kind: 'staff', password_hash: hashPassword('demo1234'), active: 1, created_at: nowIso() });
+  insert('role_assignments', { id: id('ra'), org_id: org, user_id: uid, role: 'PROPERTY_MANAGER', scope_type: 'properties', property_ids: JSON.stringify([props[0]]), created_at: nowIso() });
+  const cookie = await loginAs(base, pm);
+  const list = await get(base, '/dev/messages', cookie);
+  assert.equal(list.status, 200);
+  assert.ok(list.text.includes(`Mine ${sfx}`));
+  assert.ok(!list.text.includes(`Theirs ${sfx}`) && !list.text.includes(`Orgwide ${sfx}`));
+  assert.equal((await get(base, `/dev/messages/${theirs}`, cookie)).status, 404);
+  assert.equal((await get(base, `/dev/messages/${mine}`, cookie)).status, 200);
+  const admin = await loginAs(base, email);
+  const all = await get(base, '/dev/messages', admin);
+  assert.ok(all.text.includes(`Theirs ${sfx}`) && all.text.includes(`Orgwide ${sfx}`), 'an org-wide admin still sees everything');
+});

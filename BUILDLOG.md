@@ -2517,3 +2517,30 @@ Tests: `fx_main` (4), `fx_comms` (13), `fx_recv` (13), `fx_lease` (13), `fx_acct
 `fx_ops` (12), `fx_ai` (9), `fx_integ` (19). Gates: `tsc --noEmit` clean · unit 736/736 · full
 seeded e2e and an independent review of the money code (results in the PR). DECISIONS #128–#131
 appended against the current tail.
+
+## 2026-11-20 — The review of the walkthrough fixes: eighteen defects in day-old money code
+
+The functional fixes above were written quickly by parallel workers, so before merging they were
+reviewed by separate agents asked to break the money code, each claim verified a second time.
+Eighteen held up, and all are fixed here with a regression test apiece (#132).
+
+- **Deposits**: a billed-but-unpaid deposit counted as money held, so a move-out settlement
+  applied and swept escrow cash that was never collected (GL 1020 went negative). The uncollected
+  part is written down first, and the move-out credit never pays the household's own unpaid
+  deposit. A pending refund can be revised when a charge is posted after it. Imported future
+  leases and deposit reports post the 1020/2100 side they claim.
+- **Rent at the edges**: recording a move-out now credits rent already billed past the move-out
+  date; changing or withdrawing a notice tops the month back up; a renewal's prior term stops
+  billing at the renewal's start; a "start billing from" date in the future is respected at
+  activation; a notice cannot be withdrawn onto a unit already re-leased; a pending lease can be
+  cancelled and its held deposit unwound.
+- **Banking**: a live month cannot be completed before it ends; a reversed adjustment cannot be
+  re-matched; a bank CSV's trailing-minus, `DR` and indicator-column negatives parse as negative;
+  every banking route respects property scope; an owner distribution is refused when recorded
+  ownership does not reach 100%.
+- **Access and fences**: five delinquency and deposit routes check property scope; the Outbox
+  shows a scoped person only their own buildings; the simulated deposit-alternative and guaranty
+  programs are closed to live orgs.
+
+Tests: `fxr_recv` (9), `fxr_acct` (7), `fxr_lease` (6), plus one in `fx_main`. Gates: `tsc --noEmit`
+clean · unit 759/759 · full seeded e2e 218/218. DECISIONS #132 appended against the current tail.

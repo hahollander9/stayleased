@@ -12,7 +12,7 @@ import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, select, registerNav, registerSearch,
   historyPanel, pager, emptyState, input, viewBar, rememberDensity, type Density, type Col,
 } from '../../ui/ui.ts';
-import { createLeaseManual, recordNotice, withdrawNotice, recordMoveOut, type ManualLeasePerson } from '../m6_leases/service.ts';
+import { createLeaseManual, recordNotice, withdrawNotice, recordMoveOut, cancelPendingLease, PENDING_STATUSES, MANUAL_ENTRY_BATCH, type ManualLeasePerson } from '../m6_leases/service.ts';
 import { leaseLedger, leaseBalance } from '../m8_receivables/service.ts';
 
 registerNav('Residents', { href: '/residents', label: 'Residents', perm: 'residents:view', match: ['/residents'] });
@@ -531,15 +531,30 @@ export function routes(r: Router): void {
   };
 
   r.post('/leases/:id/notice', requirePerm('leases:manage'), (rq) =>
-    leaseAction(rq, 'Notice recorded. The unit shows on notice and its make-ready is scheduled.', (ctx, l) =>
+    leaseAction(rq, 'Notice recorded. The unit shows on notice and its make-ready is scheduled. Rent is billed through the move-out date.', (ctx, l) =>
       recordNotice(ctx, l.id, String(rq.body.move_out || ''), { noticeDate: String(rq.body.notice_date || '') || null })));
 
   r.post('/leases/:id/notice/withdraw', requirePerm('leases:manage'), (rq) =>
-    leaseAction(rq, 'Notice withdrawn — the household is staying.', (ctx, l) => withdrawNotice(ctx, l.id)));
+    leaseAction(rq, 'Notice withdrawn — the household is staying, and rent is billed in full again.', (ctx, l) => withdrawNotice(ctx, l.id)));
 
   r.post('/leases/:id/move-out', requirePerm('leases:manage'), (rq) =>
-    leaseAction(rq, 'Move-out recorded. The lease has ended and the unit is vacant. Settle the deposit on the Deposit tab.', (ctx, l) =>
+    leaseAction(rq, 'Move-out recorded. The lease has ended, rent is billed through the move-out date, and the unit is vacant. Settle the deposit on the Deposit tab.', (ctx, l) =>
       recordMoveOut(ctx, l.id, String(rq.body.move_out || ''))));
+
+  // ---------- cancel a lease that never started ----------
+  r.post('/leases/:id/cancel', requirePerm('leases:manage'), (rq) => {
+    const l = leaseFor(rq);
+    if (!l) return notFound('Lease not found');
+    let out: { depositReversedCents: number };
+    try {
+      out = cancelPendingLease(rq.ctx as Ctx, l.id);
+    } catch (e) {
+      return redirect(`/leases/${l.id}?tab=overview`, (e as Error).message, 'err');
+    }
+    return redirect(`/leases/${l.id}?tab=overview`, out.depositReversedCents > 0
+      ? `Lease canceled. The unit is free for another lease. The ${usd(out.depositReversedCents)} deposit is no longer recorded as held — return that money to the household yourself; nothing was sent.`
+      : 'Lease canceled. The unit is free for another lease. No money was recorded on it.');
+  });
 
   // ---------- household: add or remove a person ----------
   r.post('/leases/:id/household', requirePerm('residents:manage'), (rq) =>
@@ -725,17 +740,26 @@ export function routes(r: Router): void {
               ${field('Notice given on', input('notice_date', { type: 'date', required: true, max: ctx.businessDate, value: l.notice_date || ctx.businessDate }))}
               ${field('Planned move-out date', input('move_out', { type: 'date', required: true, value: l.move_out_date || '' }))}
               <button class="btn btn-sm">${l.status === 'notice' ? 'Save' : 'Record notice'}</button>
-              <p class="small muted" style="margin-top:6px">The unit shows as on notice and its make-ready is scheduled. The lease ends on the move-out date.</p>
+              <p class="small muted" style="margin-top:6px">The unit shows as on notice and its make-ready is scheduled. The lease ends on the move-out date, and rent is billed through that day — a month already billed is adjusted.</p>
             </form>
             <form method="post" action="/leases/${l.id}/move-out" data-confirm="End this lease as of the move-out date? The unit becomes vacant.">
               <h3 style="font-size:14px;margin:0 0 6px">Record the move-out</h3>
               ${field('Moved out on', input('move_out', { type: 'date', required: true, max: ctx.businessDate, value: l.move_out_date ? minDate(l.move_out_date, ctx.businessDate) : ctx.businessDate }))}
               <button class="btn btn-sm btn-danger">End lease</button>
-              <p class="small muted" style="margin-top:6px">Use this once the household has actually left — on the planned day, earlier or later. Rent stops and the unit becomes vacant.</p>
+              <p class="small muted" style="margin-top:6px">Use this once the household has actually left — on the planned day, earlier or later. Rent is billed through that day: anything already billed past it is credited back, and the unit becomes vacant.</p>
             </form>
           </div>
           ${when(l.status === 'notice', () => html`<form method="post" action="/leases/${l.id}/notice/withdraw" data-confirm="Withdraw the notice? The household stays and the make-ready is canceled." style="margin-top:10px">
             <button class="btn btn-sm btn-ghost">Withdraw notice — the household is staying</button></form>`)}`))}
+        ${when(can(ctx, 'leases:manage') && PENDING_STATUSES.includes(l.status) && !l.renewal_of_lease_id && (!l.import_batch_id || l.import_batch_id === MANUAL_ENTRY_BATCH), () => card('Cancel this lease', html`
+          <p>This lease has not started. Cancel it if the household is not moving in or it was entered by mistake — the unit is free for another lease and nothing is billed.</p>
+          <p class="small muted">${l.deposit_on_hand && l.deposit_cents > 0
+            ? `The ${usd(l.deposit_cents)} deposit recorded as already held comes off the books: deposit cash and deposits held both go down by ${usd(l.deposit_cents)}. Return that money to the household yourself — canceling does not send a payment.`
+            : 'No deposit or rent has been recorded on this lease, so there is no money to return.'}</p>
+          <form method="post" action="/leases/${l.id}/cancel" data-confirm="Cancel this lease? This cannot be undone.">
+            <button class="btn btn-sm btn-danger">Cancel lease</button>
+          </form>`))}
+        ${when(l.status === 'canceled', () => card('Canceled', html`<p>This lease was canceled before it started. Nothing is billed on it and the unit is free for another lease.</p>`))}
         ${card('Recurring charge schedule', tbl(
           [{ label: 'Charge' }, { label: 'Kind' }, { label: 'Window' }, { label: 'Monthly', num: true }],
           schedule.map((s) => ({

@@ -119,7 +119,7 @@ export function routes(r: Router): void {
         ${when(ap.status === 'converted' && ap.lease_id, () => html`<a class="btn" href="/leases/${ap.lease_id}">Open lease</a>`)}
         ${when(ap.status === 'screening', () => html`<form method="post" action="/applications/${ap.id}/check"><button class="btn btn-ghost">Check bureau results</button></form>`)}
         ${when(
-          scorecard?.recommendation === 'conditions' && ['review', 'screening'].includes(ap.status)
+          ctx.orgKind !== 'live' && scorecard?.recommendation === 'conditions' && ['review', 'screening'].includes(ap.status)
             && !q1(`SELECT id FROM guaranty_contracts WHERE application_id=?`, ap.id),
           () => html`<form method="post" action="/applications/${ap.id}/guaranty" data-confirm="Attach the simulated institutional guaranty? A one-time fee (85% of one month's rent) posts at move-in and the income/credit condition is treated as satisfied.">
             <button class="btn btn-ghost">Attach institutional guaranty</button></form>`,

@@ -243,25 +243,30 @@ export function routes(r: Router): void {
   // ---------- staff lease actions ----------
   r.post('/leases/:id/deposit-alternative', requirePerm('leases:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const lease = q1<any>('SELECT id, property_id FROM leases WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!lease || !canAccessProperty(ctx, lease.property_id)) return notFound('Lease not found');
     try {
-      enrollDepositAlternative(ctx, rq.params.id!, (String(rq.body?.mode || 'monthly') as 'monthly' | 'one_time'));
-      return redirect(`/leases/${rq.params.id}`, 'Deposit alternative enrolled — no traditional deposit will be charged');
+      const mode = String(rq.body?.mode || 'monthly') === 'one_time' ? 'one_time' : 'monthly';
+      enrollDepositAlternative(ctx, lease.id, mode);
+      return redirect(`/leases/${lease.id}`, 'Deposit alternative enrolled — no traditional deposit will be charged');
     } catch (e) {
-      return redirect(`/leases/${rq.params.id}`, (e as Error).message, 'err');
+      return redirect(`/leases/${lease.id}`, (e as Error).message, 'err');
     }
   });
 
   // ---------- application guaranty ----------
-  r.post('/applications/:id/guaranty', requirePerm('screening:view'), (rq) => {
+  r.post('/applications/:id/guaranty', requirePerm('applications:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const app = q1<any>('SELECT id, property_id FROM applications WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!app || !canAccessProperty(ctx, app.property_id)) return notFound('Application not found');
     try {
-      attachGuaranty(ctx, rq.params.id!);
+      attachGuaranty(ctx, app.id);
       // refresh the stored scorecard so the rescue shows immediately
-      const rec = computeScorecard(ctx, rq.params.id!);
-      run('UPDATE applications SET recommendation=?, recommendation_detail=? WHERE id=?', rec.recommendation, js(rec), rq.params.id!);
-      return redirect(`/applications/${rq.params.id}`, 'Institutional guaranty attached — the scorecard now treats the condition as satisfied');
+      const rec = computeScorecard(ctx, app.id);
+      run('UPDATE applications SET recommendation=?, recommendation_detail=? WHERE id=? AND org_id=?', rec.recommendation, js(rec), app.id, ctx.orgId);
+      return redirect(`/applications/${app.id}`, 'Institutional guaranty attached — the scorecard now treats the condition as satisfied');
     } catch (e) {
-      return redirect(`/applications/${rq.params.id}`, (e as Error).message, 'err');
+      return redirect(`/applications/${app.id}`, (e as Error).message, 'err');
     }
   });
 }
@@ -360,6 +365,8 @@ export function portalInsuranceCard(ctx: Ctx, lease: any): Child {
 import { registerLeaseAction, registerLeaseTab } from '../people/pages.ts';
 
 registerLeaseAction((ctx: Ctx, lease: any) => {
+  // a simulated program — never offered to a live company (the write is fenced too)
+  if (isLiveOrg(ctx)) return null;
   if (!can(ctx, 'leases:manage')) return null;
   if (!['draft', 'out_for_signature', 'partially_signed', 'fully_executed'].includes(lease.status)) return null;
   if (q1('SELECT id FROM deposit_alternatives WHERE lease_id=?', lease.id)) return null;

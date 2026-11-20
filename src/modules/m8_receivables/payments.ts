@@ -83,8 +83,8 @@ function rankedOpen(ctx: Ctx, leaseId: string, propertyId: string): OpenCharge[]
 }
 
 /** allocate an amount across open charges per the property application order */
-function allocate(ctx: Ctx, leaseId: string, propertyId: string, amountCents: number): { chargeId: string; kind: string; amount: number }[] {
-  const ranked = rankedOpen(ctx, leaseId, propertyId).map((c) => ({ c }));
+function allocate(ctx: Ctx, leaseId: string, propertyId: string, amountCents: number, excludeKinds: string[] = []): { chargeId: string; kind: string; amount: number }[] {
+  const ranked = rankedOpen(ctx, leaseId, propertyId).filter((c) => !excludeKinds.includes(c.kind)).map((c) => ({ c }));
   const out: { chargeId: string; kind: string; amount: number }[] = [];
   let left = amountCents;
   for (const { c } of ranked) {
@@ -201,6 +201,10 @@ export interface PaymentInput {
    * application at move-out) or 2200 (application holding deposit applied at
    * lease activation). Default 2100. */
   creditFunding?: '2100' | '2200' | '4110';
+  /** charge kinds this payment must never land on. The move-out deposit
+   * application passes ['deposit']: held deposit money pays what the
+   * household owes, never the household's own unpaid deposit. */
+  excludeKinds?: string[];
   suppressReceipt?: boolean;
 }
 
@@ -267,7 +271,7 @@ export function recordPayment(ctx: Ctx, input: PaymentInput): string {
     if (!isCredit) applyLeaseCredits(ctx, lease.id);
 
     // apply to charges
-    const apps = allocate(ctx, lease.id, lease.property_id, input.amountCents);
+    const apps = allocate(ctx, lease.id, lease.property_id, input.amountCents, input.excludeKinds || []);
     for (const a of apps) {
       insert('payment_applications', { id: id('pap'), org_id: ctx.orgId, payment_id: paymentId, charge_id: a.chargeId, amount_cents: a.amount, created_at: nowIso() });
     }
@@ -880,8 +884,21 @@ export function depositHeld(ctx: Ctx, leaseId: string): number {
   // A lease entered by hand with "the deposit is already in the bank" is the
   // same fact, stated on the lease itself (deposit_on_hand) — it does not
   // depend on the 'manual-entry' batch marker being present.
-  const migrated = accrued === 0 ? (val<number>(
-    `SELECT COALESCE(deposit_cents,0) FROM leases WHERE id=? AND org_id=? AND (import_batch_id IS NOT NULL OR deposit_on_hand=1)`,
+  //
+  // An imported lease that has not started yet (a future resident) is not
+  // that: nothing was collected and the import posts no 1020/2100 entry for
+  // it, so its contract deposit is not money held. It counts once move-in
+  // bills the deposit charge. A lease marked deposit_on_hand has its entry in
+  // any status. The term applies only while the lease has NO active deposit
+  // charge at all — a billed deposit that was written down to zero because it
+  // was never paid must not fall back to the contract amount.
+  const hasDepositCharge = !!q1(
+    `SELECT 1 AS x FROM charges WHERE org_id=? AND lease_id=? AND kind='deposit' AND status='active' LIMIT 1`,
+    ctx.orgId, leaseId,
+  );
+  const migrated = !hasDepositCharge ? (val<number>(
+    `SELECT COALESCE(deposit_cents,0) FROM leases WHERE id=? AND org_id=?
+       AND (deposit_on_hand=1 OR (import_batch_id IS NOT NULL AND status NOT IN ('draft','out_for_signature','partially_signed','fully_executed')))`,
     leaseId, ctx.orgId,
   ) || 0) : 0;
   // a refund the disposition has set aside is no longer available to apply,
@@ -898,11 +915,67 @@ export function pendingDepositRefund(ctx: Ctx, leaseId: string): number {
   ) || 0;
 }
 
+/** deposit billed to the household that no payment (pending or settled) covers */
+export function uncollectedDeposit(ctx: Ctx, leaseId: string): number {
+  return openCharges(ctx, leaseId).filter((c) => c.kind === 'deposit').reduce((s, c) => s + (c.amount_cents - c.applied), 0);
+}
+
+/** Bring a billed deposit down to what was actually collected. Billing a
+ * deposit credits the 2100 liability at once (accrual), but escrow cash only
+ * arrives when the household pays it. At move-out the unpaid part is not money
+ * held: left alone, the disposition "applied" it, swept that amount out of an
+ * escrow account that never received it, and showed phantom operating cash.
+ *
+ * Posts a negative deposit charge (accrual DR 2100 / CR 1100 — the cash books
+ * never saw the unpaid part, so there is nothing to post there) and sets it
+ * against the open deposit charges themselves, so the deposit reads closed and
+ * the rent stays open. Call inside a transaction. Returns cents written down. */
+function writeDownUncollectedDeposit(ctx: Ctx, lease: any, date: string): number {
+  const open = openCharges(ctx, lease.id).filter((c) => c.kind === 'deposit');
+  const uncollected = open.reduce((s, c) => s + (c.amount_cents - c.applied), 0);
+  if (uncollected <= 0) return 0;
+  const label = 'Uncollected deposit written down at move-out';
+  const chargeId = id('chg');
+  const jeId = postJE(ctx, {
+    propertyId: lease.property_id, date, basis: 'accrual',
+    memo: `${label} — ${lease.household_name}`, sourceKind: 'charge', sourceId: chargeId,
+    lines: [
+      { account: CHARGE_CREDIT['deposit'] || '2100', debit: uncollected, memo: label },
+      { account: '1100', credit: uncollected, memo: label },
+    ],
+  });
+  insert('charges', {
+    id: chargeId, org_id: ctx.orgId, property_id: lease.property_id, lease_id: lease.id,
+    kind: 'deposit', label, amount_cents: -uncollected, date, due_date: date, month_key: null,
+    lease_charge_id: null, source: 'deposit', status: 'active', je_id: jeId, created_at: nowIso(),
+  });
+  // the zero-cash record that says which charges this credit closed (see
+  // CREDIT_CARRIER_SQL) — placed here, not by applyLeaseCredits, because that
+  // never targets a deposit charge and would set the credit against rent
+  const carrier = id('pay');
+  insert('payments', {
+    id: carrier, org_id: ctx.orgId, property_id: lease.property_id, lease_id: lease.id,
+    method: 'credit', reference: chargeId, amount_cents: 0, fee_cents: 0, status: 'settled',
+    received_date: date, settle_date: date, autopay: 0,
+    memo: `credit applied: ${label}`, created_by: ctx.userId, created_at: nowIso(),
+  });
+  for (const c of open) {
+    insert('payment_applications', {
+      id: id('pap'), org_id: ctx.orgId, payment_id: carrier, charge_id: c.id,
+      amount_cents: c.amount_cents - c.applied, created_at: nowIso(),
+    });
+  }
+  audit(ctx, 'lease', lease.id, 'deposit_written_down', null, { amount: uncollected, charge: chargeId });
+  return uncollected;
+}
+
 export interface DispositionResult {
   applied: number;
   /** owed back to the household */
   refunded: number;
   balanceDue: number;
+  /** billed deposit that was never collected, taken off the account */
+  writtenDown: number;
   refundId: string | null;
   /** 'pending' until the operator records the check that pays it */
   refundStatus: 'pending' | 'issued' | null;
@@ -913,6 +986,11 @@ export function dispositionAllowed(lease: { status: string; move_out_date?: stri
   return ['notice', 'ended'].includes(lease.status) || !!lease.move_out_date;
 }
 
+/** The lease module registers its notice function here (it imports this file,
+ * so this file cannot import it back). */
+let noticeHook: ((ctx: Ctx, leaseId: string, moveOutDate: string) => void) | null = null;
+export function registerNoticeHook(fn: (ctx: Ctx, leaseId: string, moveOutDate: string) => void): void { noticeHook = fn; }
+
 /** Record that a household is leaving, the same way the resident's own
  * notice does: the lease goes on notice with its move-out date. */
 export function recordMoveOut(ctx: Ctx, leaseId: string, moveOutDate: string): void {
@@ -921,6 +999,10 @@ export function recordMoveOut(ctx: Ctx, leaseId: string, moveOutDate: string): v
   if (!/^\d{4}-\d{2}-\d{2}$/.test(moveOutDate)) throw new Error('enter the move-out date');
   if (lease.move_in_date && moveOutDate < lease.move_in_date) throw new Error('the move-out date is before the move-in date');
   if (['active', 'month_to_month'].includes(lease.status)) {
+    // The lease module's own notice function also trues up rent already billed
+    // past the move-out date; done here by a bare UPDATE, that rent stayed on
+    // the account and the disposition then deducted it from the deposit.
+    if (noticeHook) { noticeHook(ctx, leaseId, moveOutDate); return; }
     run(`UPDATE leases SET status='notice', notice_date=COALESCE(notice_date, ?), move_out_date=? WHERE id=? AND org_id=?`, ctx.businessDate, moveOutDate, leaseId, ctx.orgId);
     run(`UPDATE units SET status='notice' WHERE id=? AND org_id=? AND status='occupied'`, lease.unit_id, ctx.orgId);
     audit(ctx, 'lease', leaseId, 'notice_to_vacate', { status: lease.status }, { status: 'notice', move_out: moveOutDate, source: 'deposit disposition' });
@@ -965,18 +1047,40 @@ export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string;
   if (lease.deposit_alternative && altClaimHook) {
     altClaimHook(ctx, leaseId, opts.date);
   }
-  const held = depositHeld(ctx, leaseId);
-  const balance = leaseBalance(ctx, leaseId);
-  const apply = Math.max(0, Math.min(held, balance));
+  let apply = 0;
   let refunded = 0;
+  let writtenDown = 0;
   let refundId: string | null = null;
 
   tx(() => {
+    // A refund set aside by an earlier settlement whose check was never
+    // recorded is released first, so the deposit can be settled again — a
+    // damage charge found late, or a settlement made by mistake. It has no
+    // journal entry and no deposit activity line (the money never left
+    // escrow), so removing the row is the whole reversal; whatever is still
+    // owed back after this run is set aside again below — under the same
+    // refund record, so a "record the check" form already on screen still
+    // points at something.
+    const superseded = q<any>(
+      `SELECT id, amount_cents, created_by, created_at FROM refunds WHERE org_id=? AND lease_id=? AND kind='deposit' AND status='pending' ORDER BY created_at, id`,
+      ctx.orgId, leaseId,
+    );
+    const priorOwed = superseded.reduce((t: number, r: any) => t + r.amount_cents, 0);
+    run(`DELETE FROM refunds WHERE org_id=? AND lease_id=? AND kind='deposit' AND status='pending'`, ctx.orgId, leaseId);
+    // only money actually collected is held (see writeDownUncollectedDeposit)
+    writtenDown = writeDownUncollectedDeposit(ctx, lease, opts.date);
+
+    // the position is read here, after both corrections and inside the same
+    // transaction that acts on it
+    const held = depositHeld(ctx, leaseId);
+    const balance = leaseBalance(ctx, leaseId);
+    apply = Math.max(0, Math.min(held, balance));
     if (apply > 0) {
       // deposit application is a 'credit' payment funded from 2100
       recordPayment(ctx, {
         leaseId, amountCents: apply, method: 'credit', receivedDate: opts.date,
         memo: 'security deposit applied at move-out', creditFunding: '2100', suppressReceipt: true,
+        excludeKinds: ['deposit'],
       });
       insert('deposit_activity', {
         id: id('dep'), org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId,
@@ -1003,16 +1107,22 @@ export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string;
     const remaining = held - apply;
     if (remaining > 0) {
       refunded = remaining;
-      const rid = id('rfd');
+      const kept = superseded[0];
+      const rid: string = kept ? kept.id : id('rfd');
       refundId = rid;
       insert('refunds', {
         id: rid, org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId, kind: 'deposit',
         amount_cents: remaining, method: 'check', reference: null,
-        date: opts.date, status: 'pending', created_by: ctx.userId, created_at: nowIso(),
+        date: opts.date, status: 'pending', created_by: kept ? kept.created_by : ctx.userId, created_at: kept ? kept.created_at : nowIso(),
       });
       // deposit refunds return escrow, not ledger credit — kind='deposit' is
       // excluded from the resident balance
       if (!live) issueDepositRefund(ctx, rid, { checkNumber: `DEP-${rid.slice(-6).toUpperCase()}`, date: opts.date, simulated: true });
+    }
+    // the trail shows a refund that was owed and is now a different amount, or gone
+    if (superseded.length && priorOwed !== refunded) {
+      audit(ctx, 'refund', superseded[0].id, refunded > 0 ? 'revised' : 'released',
+        { status: 'pending', amount: priorOwed }, { amount: refunded, reason: 'deposit settled again' });
     }
   });
 
@@ -1022,8 +1132,8 @@ export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string;
   }
   const refundStatus = refundId ? (live ? 'pending' as const : 'issued' as const) : null;
   emit(ctx, 'deposit.disposed', 'lease', leaseId, { applied: apply, refunded, balanceDue: balanceAfter, refundStatus });
-  audit(ctx, 'lease', leaseId, 'deposit_disposition', null, { applied: apply, refunded, balanceDue: balanceAfter, refundStatus });
-  return { applied: apply, refunded, balanceDue: balanceAfter, refundId, refundStatus };
+  audit(ctx, 'lease', leaseId, 'deposit_disposition', null, { applied: apply, refunded, balanceDue: balanceAfter, refundStatus, writtenDown });
+  return { applied: apply, refunded, balanceDue: balanceAfter, writtenDown, refundId, refundStatus };
 }
 
 /** Record the check that pays a deposit refund. This is the moment the money

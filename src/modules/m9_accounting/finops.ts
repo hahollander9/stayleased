@@ -1,6 +1,6 @@
 import { html, when } from '../../lib/html.ts';
 import { redirect, notFound, forbidden, type Router, type Rq } from '../../lib/http.ts';
-import { requirePerm, requireStaff, can, propFilter, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, requireStaff, can, canAccessProperty, propFilter, type Ctx } from '../../lib/auth.ts';
 import { q, q1, run, insert, val } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, diffDays } from '../../lib/dates.ts';
@@ -11,7 +11,7 @@ import { depositDeadline } from '../m8_receivables/depositlaw.ts';
 import { depositHeld } from '../m8_receivables/payments.ts';
 import { COA } from './coa.ts';
 import { parseCsv } from '../../lib/csv.ts';
-import { importStatementLines, bankLabel, BANK_NOT_SPECIFIED } from './banking.ts';
+import { importStatementLines, bankLabel, bankAccountFor, bankScopeSql, BANK_NOT_SPECIFIED } from './banking.ts';
 
 /** Financial operations glue (2026-08-03, from Henry's asset-manager
  * walkthrough): (1) /approvals — ONE inbox for everything waiting on a
@@ -124,7 +124,7 @@ export function routes(r: Router): void {
   // ---------------- real bank-file import (CSV / OFX) ----------------
   r.post('/banking/:id/upload', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     const up = rq.uploads.find((u) => u.field === 'statement' && u.data.length > 0);
     if (!up) return redirect(`/banking/${acct.id}`, 'Choose a CSV or OFX/QFX file first.', 'err');
@@ -148,7 +148,8 @@ export function routes(r: Router): void {
   // ---------------- accounting setup ----------------
   r.get('/gl/setup', requirePerm('gl:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const banks = q<any>(`SELECT b.*, p.name AS prop_name FROM bank_accounts b LEFT JOIN properties p ON p.id=b.property_id WHERE b.org_id=? ORDER BY b.created_at`, ctx.orgId);
+    const bankScope = bankScopeSql(ctx, 'b.property_id');
+    const banks = q<any>(`SELECT b.*, p.name AS prop_name FROM bank_accounts b LEFT JOIN properties p ON p.id=b.property_id WHERE b.org_id=?${bankScope.sql} ORDER BY b.created_at`, ctx.orgId, ...bankScope.params);
     const live = ctx.orgKind === 'live';
     const accounts = q<any>(`SELECT * FROM gl_accounts WHERE org_id=? ORDER BY code`, ctx.orgId);
     const props = q<any>(`SELECT id, name FROM properties WHERE org_id=?${propFilter(ctx, 'id').sql} ORDER BY name`, ctx.orgId, ...propFilter(ctx, 'id').params);
@@ -182,7 +183,7 @@ export function routes(r: Router): void {
             ${field('Kind', select('kind', [['operating', 'Operating (GL 1010)'], ['deposits', 'Security deposits (GL 1020)']]))}
             ${field('Bank', input('bank_name', { placeholder: 'First National', required: true }))}
             ${field('Last 4', input('last4', { placeholder: '1234', required: true }))}
-            ${field('Property', select('property_id', props.map((p): [string, string] => [p.id, p.name]), '', { blank: 'Organization-wide' }))}
+            ${field('Property', select('property_id', props.map((p): [string, string] => [p.id, p.name]), '', ctx.allProperties ? { blank: 'Organization-wide' } : { required: true, blank: 'Choose…' }))}
             <button class="btn">Add bank account</button>
           </form>`)}
           <p class="small muted">Statements import on each account's page (CSV or OFX/QFX) or can be typed in line by line, then reconcile monthly. Deposit funds must stay in a <b>deposits</b> account — most states require segregation. A deactivated account leaves the banking page and month-end close; its history is kept.</p>`)}
@@ -219,8 +220,14 @@ export function routes(r: Router): void {
     const name = String(rq.body.name || '').trim().slice(0, 80);
     const last4 = String(rq.body.last4 || '').replace(/\D/g, '').slice(0, 4);
     if (!name || last4.length !== 4) return redirect('/gl/setup', 'Name and a 4-digit last-4 are required.', 'err');
+    // an account belongs to a property the person can work on; one with no
+    // property is the organization's own and takes access to every property
+    const propertyId = String(rq.body.property_id || '') || null;
+    if (propertyId ? !canAccessProperty(ctx, propertyId) : !ctx.allProperties) {
+      return redirect('/gl/setup', propertyId ? 'Choose a property in your portfolio.' : 'Choose the property this account belongs to.', 'err');
+    }
     insert('bank_accounts', {
-      id: id('bank'), org_id: ctx.orgId, property_id: String(rq.body.property_id || '') || null,
+      id: id('bank'), org_id: ctx.orgId, property_id: propertyId,
       name, kind, gl_account: kind === 'deposits' ? '1020' : '1010',
       bank_name: String(rq.body.bank_name || 'Bank').trim().slice(0, 60), last4,
       active: 1, created_at: nowIso(),
@@ -231,7 +238,7 @@ export function routes(r: Router): void {
 
   r.post('/gl/setup/bank/:id', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     const name = String(rq.body.name || '').trim().slice(0, 80);
     const bankName = String(rq.body.bank_name || '').trim().slice(0, 60) || BANK_NOT_SPECIFIED;
@@ -246,7 +253,7 @@ export function routes(r: Router): void {
 
   r.post('/gl/setup/bank/:id/toggle', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     if (acct.active) {
       const open = val<number>(`SELECT COUNT(*) FROM bank_recons WHERE bank_account_id=? AND status='in_progress'`, acct.id) || 0;
@@ -294,6 +301,9 @@ export function parseBankCsv(text: string): { date: string; amount: number; desc
   const head = grid[0]!.map((h) => h.toLowerCase());
   const idx = (...names: string[]): number => head.findIndex((h) => names.some((n) => h.includes(n)));
   let di = idx('date'); let de = idx('description', 'memo', 'payee', 'name', 'details'); let ai = idx('amount');
+  // Some banks print every amount unsigned and say which way it went in a
+  // column beside it ("Transaction Type": Debit / Credit).
+  const ti = head.findIndex((h, i) => i !== ai && /(^|\s)(type|dr\/cr|debit\/credit|indicator)$/.test(h));
   const debit = idx('debit', 'withdrawal', 'money out', 'paid out'); const credit = idx('credit', 'deposit', 'money in', 'paid in');
   const hasHeader = di >= 0;
   if (!hasHeader) { di = 0; de = 1; ai = 2; }
@@ -302,13 +312,20 @@ export function parseBankCsv(text: string): { date: string; amount: number; desc
   // on one day). The first keeps the plain fingerprint; later ones are
   // numbered, so both import — and importing the file again still adds nothing.
   const seen = new Map<string, number>();
-  for (const c of grid.slice(hasHeader ? 1 : 0)) {
+  const body = grid.slice(hasHeader ? 1 : 0);
+  // The type column decides the sign only when no amount in the file carries
+  // one. An export that signs its amounts (and labels a card refund
+  // "DEBIT_CARD") already says which way the money went.
+  const unsigned = ai >= 0 && ti >= 0 && !body.some((c) => { const v = parseMoney(c[ai] || ''); return v !== null && v < 0; });
+  for (const c of body) {
     if (c.length < 2) continue;
     const date = normDate(c[di] || '');
     if (!date) continue;
     let amount: number | null = null;
-    if (ai >= 0 && c[ai]) amount = parseMoney(c[ai]!);
-    else if (debit >= 0 || credit >= 0) {
+    if (ai >= 0 && c[ai]) {
+      amount = parseMoney(c[ai]!);
+      if (amount !== null && unsigned && /^(debit|dr|withdrawal|check|payment)$/i.test(c[ti] || '')) amount = -Math.abs(amount);
+    } else if (debit >= 0 || credit >= 0) {
       const d = debit >= 0 ? parseMoney(c[debit] || '') : null;
       const cr = credit >= 0 ? parseMoney(c[credit] || '') : null;
       amount = cr && cr !== 0 ? Math.abs(cr) : d && d !== 0 ? -Math.abs(d) : null;
@@ -345,7 +362,9 @@ export function parseOfx(text: string): { date: string; amount: number; desc: st
 }
 
 function parseMoney(s: string): number | null {
-  const neg = /\(.*\)/.test(s) || s.trim().startsWith('-');
+  // money out is written many ways: (75.00), -75.00, $-75.00, - $75.00, 75.00-, 75.00 DR
+  const t = s.trim();
+  const neg = /\(.*\)/.test(t) || /^[^0-9.]*-/.test(t) || /-\s*$/.test(t) || /\bDR\b\.?\s*$/i.test(t);
   const num = s.replace(/[^0-9.]/g, '');
   if (!num) return null;
   const cents = Math.round(parseFloat(num) * 100);

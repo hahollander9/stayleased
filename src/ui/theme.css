@@ -2445,6 +2445,10 @@ label.dropzone, .form-grid label.dropzone { display: flex; flex-direction: colum
 .field > label { font-size: 12.5px; }
 .field input:not([type=checkbox]):not([type=radio]):not([type=file]), .field select, .field textarea,
 .toolbar select, .toolbar input:not([type=checkbox]):not([type=radio]) { border-color: var(--line-strong); min-height: 38px; }
+/* the same visible edge on every text control, whichever older rule styles it */
+html .content input:not([type="checkbox"]):not([type="radio"]):not([type="file"]):not([type="range"]):not([type="submit"]),
+html .content select, html .content textarea { border-color: var(--line-strong); }
+html .content input:focus, html .content select:focus, html .content textarea:focus { border-color: var(--accent-strong); }
 .tbl tbody tr:hover td { background: var(--surface-hover); }
 .page-head h1 { letter-spacing: -.02em; }
 

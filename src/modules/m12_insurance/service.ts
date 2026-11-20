@@ -400,7 +400,14 @@ export function complianceStats(ctx: Ctx, propertyId?: string | null): { covered
 
 // ---------- deposit alternative (M12.3) ----------
 
+/** The deposit alternative (surety) and the institutional guaranty are
+ * simulated programs: no provider stands behind them. Fenced here, where they
+ * write, so no caller can put one on a real company's lease or application —
+ * a live lease would activate with no deposit charged, bill a program fee for
+ * cover that does not exist, and have its move-out balance wiped by a surety
+ * payout nobody makes. */
 export function enrollDepositAlternative(ctx: Ctx, leaseId: string, mode: 'monthly' | 'one_time'): string {
+  if (isLiveOrg(ctx)) throw new Error('The deposit alternative is a simulated program and is not available for a live company.');
   const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
   if (!lease) throw new Error('lease not found');
   if (q1('SELECT id FROM deposit_alternatives WHERE lease_id=?', leaseId)) throw new Error('already enrolled');
@@ -440,6 +447,8 @@ export function enrollDepositAlternative(ctx: Ctx, leaseId: string, mode: 'month
 /** at move-out: surety covers the final balance up to coverage; remainder stays
  * with the resident. Returns the claim amount. */
 export function settleAlternativeClaim(ctx: Ctx, leaseId: string, date: string): number {
+  // no surety exists to pay a claim for a live company — never credit one
+  if (isLiveOrg(ctx)) return 0;
   const alt = q1<any>(`SELECT * FROM deposit_alternatives WHERE lease_id=? AND status='active'`, leaseId);
   if (!alt) return 0;
   const balance = leaseBalance(ctx, leaseId);
@@ -470,6 +479,7 @@ export function quoteGuaranty(ctx: Ctx, applicationId: string): { feeCents: numb
 }
 
 export function attachGuaranty(ctx: Ctx, applicationId: string): string {
+  if (isLiveOrg(ctx)) throw new Error('The institutional guaranty is a simulated program and is not available for a live company.');
   const app = q1<any>('SELECT * FROM applications WHERE id=? AND org_id=?', applicationId, ctx.orgId);
   if (!app) throw new Error('application not found');
   const existing = q1<any>('SELECT id FROM guaranty_contracts WHERE application_id=?', applicationId);

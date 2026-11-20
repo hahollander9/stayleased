@@ -439,7 +439,7 @@ export function routes(r: Router): void {
     );
     if (!l || !canAccessProperty(ctx, l.property_id)) return notFound('Lease not found');
     const balance = leaseBalance(ctx, l.id);
-    const notes = q<any>(`SELECT * FROM delinquency_notes WHERE lease_id=? ORDER BY created_at DESC LIMIT 30`, l.id);
+    const notes = q<any>(`SELECT * FROM delinquency_notes WHERE org_id=? AND lease_id=? ORDER BY created_at DESC LIMIT 30`, ctx.orgId, l.id);
     const plans = q<any>(`SELECT * FROM payment_plans WHERE org_id=? AND lease_id=? ORDER BY created_at DESC`, ctx.orgId, l.id);
     const installments = q<any>(
       `SELECT i.*, p.method AS pay_method, p.reference AS pay_ref, p.received_date AS pay_date
@@ -527,20 +527,22 @@ export function routes(r: Router): void {
 
   r.post('/delinquency/:leaseId/note', requirePerm('collections:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const lease = leaseFor(ctx, rq.params.leaseId!);
+    if (!lease) return notFound('Lease not found');
     insert('delinquency_notes', {
-      id: id('dnn'), org_id: ctx.orgId, lease_id: rq.params.leaseId!, kind: String(rq.body.kind || 'note'),
+      id: id('dnn'), org_id: ctx.orgId, lease_id: lease.id, kind: String(rq.body.kind || 'note'),
       body: String(rq.body.body || ''), promise_date: rq.body.promise_date || null,
       promise_amount_cents: rq.body.promise_amount ? v.cents().parse(rq.body.promise_amount) : null,
       created_by: ctx.userId, created_at: nowIso(),
     });
-    return redirect(`/delinquency/${rq.params.leaseId}`, 'Saved.');
+    return redirect(`/delinquency/${lease.id}`, 'Saved.');
   });
 
   r.post('/delinquency/:leaseId/dunning', requirePerm('comms:send'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const leaseId = rq.params.leaseId!;
-    const l = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
-    if (!l) return notFound();
+    const l = leaseFor(ctx, rq.params.leaseId!);
+    if (!l) return notFound('Lease not found');
+    const leaseId: string = l.id;
     const contact = primaryContact(ctx, leaseId);
     const balance = leaseBalance(ctx, leaseId);
     const aging = agingRows(ctx, {}).find((a) => a.lease_id === leaseId);
@@ -588,17 +590,21 @@ export function routes(r: Router): void {
 
   r.post('/delinquency/:leaseId/collections', requirePerm('collections:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    openCollectionCase(ctx, rq.params.leaseId!, 'escalated from delinquency workbench');
-    return redirect(`/delinquency/${rq.params.leaseId}`, 'Collection case opened.');
+    const lease = leaseFor(ctx, rq.params.leaseId!);
+    if (!lease) return notFound('Lease not found');
+    openCollectionCase(ctx, lease.id, 'escalated from delinquency workbench');
+    return redirect(`/delinquency/${lease.id}`, 'Collection case opened.');
   });
 
   r.post('/delinquency/:leaseId/writeoff', requirePerm('collections:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const lease = leaseFor(ctx, rq.params.leaseId!);
+    if (!lease) return notFound('Lease not found');
     try {
-      const cents = writeOffBalance(ctx, rq.params.leaseId!, String(rq.body.reason || ''));
-      return redirect(`/delinquency/${rq.params.leaseId}`, `${usd(cents)} written off to bad debt (5610).`);
+      const cents = writeOffBalance(ctx, lease.id, String(rq.body.reason || ''));
+      return redirect(`/delinquency/${lease.id}`, `${usd(cents)} written off to bad debt (5610).`);
     } catch (e) {
-      return redirect(`/delinquency/${rq.params.leaseId}`, (e as Error).message, 'err');
+      return redirect(`/delinquency/${lease.id}`, (e as Error).message, 'err');
     }
   });
 
@@ -752,13 +758,16 @@ export function routes(r: Router): void {
         if (!rq.body.move_out) throw new Error('Enter the move-out date. A deposit is settled when the household leaves, and this lease is still active.');
         moveOutDate = dateField(rq.body.move_out, 'the move-out date');
       }
-      if (depositHeld(ctx, lease.id) <= 0 && !lease.deposit_alternative) throw new Error('There is no deposit held to settle on this lease.');
+      // a refund still owed (check not yet recorded) is released and worked out
+      // again by the settlement, so it counts as deposit there is to settle
+      if (depositHeld(ctx, lease.id) + pendingDepositRefund(ctx, lease.id) <= 0 && !lease.deposit_alternative) throw new Error('There is no deposit held to settle on this lease.');
       const result = finalizeDeposit(ctx, lease.id, { date: ctx.businessDate, toCollections: rq.body.to_collections === '1', moveOutDate });
       const refundNote = result.refunded <= 0 ? ''
         : result.refundStatus === 'pending'
           ? ` ${usd(result.refunded)} is owed back to the household — write the check, then record its number below.`
           : ` ${usd(result.refunded)} refunded (simulated check — this is a demo).`;
-      return redirect(back, `Deposit settled: ${usd(result.applied)} applied to the balance.${refundNote}${result.balanceDue > 0 ? ` ${usd(result.balanceDue)} is still owed.` : ''}`);
+      const downNote = result.writtenDown > 0 ? ` ${usd(result.writtenDown)} of the deposit was billed but never paid, so it was taken off the account.` : '';
+      return redirect(back, `Deposit settled: ${usd(result.applied)} applied to the balance.${downNote}${refundNote}${result.balanceDue > 0 ? ` ${usd(result.balanceDue)} is still owed.` : ''}`);
     } catch (e) {
       return redirect(back, (e as Error).message, 'err');
     }
@@ -782,11 +791,13 @@ export function routes(r: Router): void {
 
   r.post('/leases/:id/deposit/interest', requirePerm('deposits:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const lease = leaseFor(ctx, rq.params.id!);
+    if (!lease) return notFound('Lease not found');
     try {
-      const cents = postDepositInterest(ctx, rq.params.id!);
-      return redirect(`/leases/${rq.params.id}?tab=deposit`, `${usd(cents)} interest accrued onto the held deposit (5720 → 2100).`);
+      const cents = postDepositInterest(ctx, lease.id);
+      return redirect(`/leases/${lease.id}?tab=deposit`, `${usd(cents)} interest accrued onto the held deposit (5720 → 2100).`);
     } catch (e) {
-      return redirect(`/leases/${rq.params.id}?tab=deposit`, (e as Error).message, 'err');
+      return redirect(`/leases/${lease.id}?tab=deposit`, (e as Error).message, 'err');
     }
   });
 
@@ -903,7 +914,8 @@ registerLeaseTab((ctx, lease) => ({
         [{ label: 'Date' }, { label: 'Kind' }, { label: 'Memo' }, { label: 'Amount', num: true }],
         activity.map((a) => ({ cells: [fmtDate(a.date), statusBadge(undefined, a.kind), a.memo || '', usd(a.amount_cents)] })),
       ), { flush: true }))}
-      ${when(canManage && held > 0 && ['notice', 'ended', 'month_to_month', 'active'].includes(lease.status), () => card('Settle the deposit at move-out', html`
+      ${when(canManage && held + refundOwed > 0 && ['notice', 'ended', 'month_to_month', 'active'].includes(lease.status), () => card(refundOwed > 0 ? 'Settle the deposit again' : 'Settle the deposit at move-out', html`
+        ${when(refundOwed > 0, () => html`<p class="small"><b>${usd(refundOwed)} is owed back and its check is not recorded yet.</b> If a charge was found late or the settlement was wrong, post the charge and settle again: the refund is worked out again from the deposit still in the account. Once the check is recorded, the refund is final.</p>`)}
         <p class="small muted">Post any damage charges first, then settle: the held deposit pays the open balance, anything left over is owed back to the household by check, and any shortfall can go to collections. An <b>itemized statement is required</b> when any part is withheld — download it from the button at the top of this tab and send it by the return deadline.</p>
         ${when(ctx.perms.has('ledger:charge'), () => html`<form method="post" action="/leases/${lease.id}/charges" class="toolbar">
           <input type="hidden" name="kind" value="damage" />

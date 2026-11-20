@@ -163,12 +163,20 @@ export function recordOwnerDistribution(
   );
   if (!shares.length) throw new Error('This property has no owners assigned yet. Assign ownership first, so the distribution can be divided between them.');
   const totalPct = shares.reduce((s, x) => s + Number(x.pct), 0);
-  // each owner's part, to the cent; when the owners hold the whole property
-  // the rounding remainder goes to the largest holder so the parts add up
-  const parts = shares.map((x) => ({ ownerId: x.owner_id as string, pct: Number(x.pct), cents: Math.round((input.amountCents * Number(x.pct)) / 100) }));
-  if (Math.abs(totalPct - 100) < 0.0001) {
-    parts[0]!.cents += input.amountCents - parts.reduce((s, x) => s + x.cents, 0);
+  // Every dollar of a distribution belongs to an owner. Shares are kept to two
+  // decimals, so three equal owners can only be entered as 33.33 × 3 = 99.99 —
+  // that is the whole property. Anything materially short of 100% means an
+  // owner is missing from the record, and the entry would post money that no
+  // owner's statement shows.
+  if (totalPct < 99.9) {
+    const pctText = String(Math.round(totalPct * 100) / 100);
+    throw new Error(`Ownership of this property adds up to ${pctText}%. Assign the remaining share before recording a distribution, so every dollar is attributed to an owner.`);
   }
+  // each owner's part, to the cent, in proportion to the shares on record;
+  // the rounding remainder goes to the largest holder so the parts add up to
+  // exactly what was posted
+  const parts = shares.map((x) => ({ ownerId: x.owner_id as string, pct: Number(x.pct), cents: Math.round((input.amountCents * Number(x.pct)) / totalPct) }));
+  parts[0]!.cents += input.amountCents - parts.reduce((s2, x) => s2 + x.cents, 0);
   const memo = (input.memo || '').trim().slice(0, 160);
   const did = id('odi');
   tx(() => {

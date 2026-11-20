@@ -1,7 +1,7 @@
 import { q, q1, insert, run, val, tx } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
-import { nowIso, addDays, lastOfMonth, cmp } from '../../lib/dates.ts';
-import type { Ctx } from '../../lib/auth.ts';
+import { nowIso, addDays, lastOfMonth, cmp, fmtMonth } from '../../lib/dates.ts';
+import { canAccessProperty, type Ctx } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { registerJob, orgKind } from '../../lib/jobs.ts';
@@ -69,6 +69,30 @@ export function importAllFeeds(orgId: string, through: string): number {
     n += importFeed(orgId, a.id, through);
   }
   return n;
+}
+
+// ---------- who may see which account ----------
+
+/** A bank account tied to a property belongs to the staff who can work on
+ * that property; an account with no property is the organization's own and
+ * takes whole-portfolio access. Every banking route decides through here. */
+export function canUseBankAccount(ctx: Ctx, acct: { property_id?: string | null } | null | undefined): boolean {
+  if (!acct) return false;
+  return acct.property_id ? canAccessProperty(ctx, acct.property_id) : ctx.allProperties;
+}
+
+/** The account, or nothing when it is another organization's or outside the
+ * reader's properties — callers answer "not found" either way. */
+export function bankAccountFor(ctx: Ctx, bankAccountId: string): any {
+  const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', bankAccountId, ctx.orgId);
+  return canUseBankAccount(ctx, acct) ? acct : undefined;
+}
+
+/** SQL for lists of bank accounts: `col` is the account's property_id column. */
+export function bankScopeSql(ctx: Ctx, col: string): { sql: string; params: string[] } {
+  if (ctx.allProperties) return { sql: '', params: [] };
+  if (!ctx.propertyIds.length) return { sql: ' AND 1=0', params: [] };
+  return { sql: ` AND ${col} IN (${ctx.propertyIds.map(() => '?').join(',')})`, params: [...ctx.propertyIds] };
 }
 
 // ---------- statement lines ----------
@@ -238,6 +262,13 @@ function periodEnd(periodKey: string, businessDate: string): string {
   return cmp(eom, businessDate) > 0 ? businessDate : eom;
 }
 
+/** False only for a live organization looking at a month that is still
+ * running: its statement is not out yet, so it must not be completed. */
+export function statementMonthOver(ctx: Ctx, periodKey: string): boolean {
+  if (!isLive(ctx.orgId)) return true;
+  return cmp(lastOfMonth(`${periodKey}-01`), ctx.businessDate) <= 0;
+}
+
 /** Sum of the statement lines on file through `date`, leaving out lines set
  * aside as not real. In a demo organization this IS the statement balance. */
 function linesBalance(bankAccountId: string, date: string): number {
@@ -377,7 +408,11 @@ export function autoMatch(ctx: Ctx, reconId: string): { matched: number; remaini
     // 2. everything else: against the entries the bank has not shown yet.
     // A match is only made when it is the single plausible one — two equal
     // candidates are a question for a person, not a coin toss.
-    const pool = new Map(unclearedBookItems(ctx.orgId, acct, '9999-12-31').map((i) => [i.id, i]));
+    // An entry and its own reversal never reached the bank and are not
+    // candidates: matching a line to the reversed half would leave the reversal
+    // standing alone as a deposit in transit and let the month tie on cash
+    // that is not there.
+    const pool = new Map(withoutReversedPairs(unclearedBookItems(ctx.orgId, acct, '9999-12-31')).map((i) => [i.id, i]));
     const take = (ids: string[]): void => { for (const x of ids) pool.delete(x); };
     for (const t of rest) {
       const amt = t.amount_cents as number;
@@ -466,8 +501,10 @@ export function postAdjustment(
   if (!t) throw new Error('bank txn not found');
   if (t.status !== 'unmatched') throw new Error('transaction already matched');
   const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=?', t.bank_account_id);
+  if (!canUseBankAccount(ctx, acct)) throw new Error('bank txn not found');
   const propertyId = acct.property_id || opts?.propertyId || null;
-  if (!propertyId || !q1('SELECT id FROM properties WHERE id=? AND org_id=?', propertyId, ctx.orgId)) {
+  // the entry lands on this property's books, so the poster must be able to work on it
+  if (!propertyId || !canAccessProperty(ctx, propertyId)) {
     throw new Error('Choose the property this entry belongs to.');
   }
   const amt = Math.abs(t.amount_cents);
@@ -507,7 +544,8 @@ export function matchEntries(ctx: Ctx, txnId: string, entryIds: string[], reconI
   const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=?', t.bank_account_id);
   const ids = [...new Set(entryIds.filter(Boolean))];
   if (!ids.length) throw new Error('Choose at least one entry to match this line to.');
-  const pool = new Map(unclearedBookItems(ctx.orgId, acct, '9999-12-31').map((i) => [i.id, i]));
+  // same candidate rule as the picker and auto-match: a reversed entry is not on offer
+  const pool = new Map(withoutReversedPairs(unclearedBookItems(ctx.orgId, acct, '9999-12-31')).map((i) => [i.id, i]));
   const chosen = ids.map((eid) => {
     const item = pool.get(eid);
     if (!item) throw new Error('One of those entries is no longer available — it may already be matched to another line.');
@@ -708,6 +746,15 @@ export function reconPreview(ctx: Ctx, bankAccountId: string, periodKey: string)
 export function completeRecon(ctx: Ctx, reconId: string): void {
   const rec = q1<any>('SELECT * FROM bank_recons WHERE id=? AND org_id=?', reconId, ctx.orgId);
   if (!rec || rec.status === 'completed') throw new Error('reconciliation not open');
+  // Completing locks the calendar month for good: no line can be added to it
+  // afterwards and there is no reopen. A real statement does not exist until
+  // the month is over, so a live month cannot be completed while it is still
+  // running — the lines from the rest of the month would have nowhere to go.
+  // Demo organizations keep the in-flight clamp (the simulated feed IS the
+  // statement, through the business date).
+  if (!statementMonthOver(ctx, rec.period_key)) {
+    throw new Error(`The statement month has not ended yet. ${fmtMonth(rec.period_key)} can be completed once the month is over and the full statement is entered.`);
+  }
   const open = unmatchedCount(rec.bank_account_id, rec.period_key);
   if (open > 0) {
     throw new Error(`${open} statement line${open === 1 ? ' is' : 's are'} still unmatched — every line must be matched, recorded on the books or set aside, and the difference must be zero to complete.`);
@@ -731,7 +778,8 @@ export function completeRecon(ctx: Ctx, reconId: string): void {
 /** unreconciled-item aging (M9.5) */
 export function unreconciledAging(ctx: Ctx): { account: any; buckets: Record<string, { n: number; amount: number }> }[] {
   const out: { account: any; buckets: Record<string, { n: number; amount: number }> }[] = [];
-  for (const a of q<any>('SELECT * FROM bank_accounts WHERE org_id=? AND active=1', ctx.orgId)) {
+  const scope = bankScopeSql(ctx, 'property_id');
+  for (const a of q<any>(`SELECT * FROM bank_accounts WHERE org_id=? AND active=1${scope.sql}`, ctx.orgId, ...scope.params)) {
     const buckets: Record<string, { n: number; amount: number }> = {
       '0-30': { n: 0, amount: 0 }, '31-60': { n: 0, amount: 0 }, '61-90': { n: 0, amount: 0 }, '90+': { n: 0, amount: 0 },
     };

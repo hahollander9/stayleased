@@ -11,6 +11,7 @@ import { accountBalance } from './service.ts';
 import {
   ensureBankAccounts, importAllFeeds, createRecon, autoMatch, postAdjustment, excludeTxn, completeRecon, reconSummary, reconPreview,
   unreconciledAging, unmatchedTotal, bankLabel, addStatementLine, setStatementClose, matchCandidates, matchEntries, unmatchTxn, markInOpeningBalance,
+  bankAccountFor, bankScopeSql, statementMonthOver,
 } from './banking.ts';
 import { closeChecklist, closePeriod, reopenPeriod, periodGrid, submitManualJe, decidePendingJe, createRecurringJe, pendingJeIsOwn, otherJeApprovers } from './close.ts';
 import { getSetting } from '../../lib/settings.ts';
@@ -52,23 +53,27 @@ export function routes(r: Router): void {
   r.get('/banking', requirePerm('banking:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const live = ctx.orgKind === 'live';
+    // a property's account shows to staff who can work on that property; an
+    // account with no property only to staff with the whole portfolio
+    const scope = bankScopeSql(ctx, 'b.property_id');
     const accounts = q<any>(
       `SELECT b.*, p.name AS property,
         (SELECT COUNT(*) FROM bank_txns t WHERE t.bank_account_id=b.id AND t.status='unmatched') AS open_txns,
         (SELECT COALESCE(SUM(amount_cents),0) FROM bank_txns t WHERE t.bank_account_id=b.id AND t.status!='excluded') AS balance,
         (SELECT r.period_key FROM bank_recons r WHERE r.bank_account_id=b.id AND r.status='completed' ORDER BY r.period_key DESC LIMIT 1) AS last_period,
         (SELECT r.statement_close_cents FROM bank_recons r WHERE r.bank_account_id=b.id AND r.status='completed' ORDER BY r.period_key DESC LIMIT 1) AS last_close
-       FROM bank_accounts b LEFT JOIN properties p ON p.id=b.property_id WHERE b.org_id=? AND b.active=1 ORDER BY b.created_at`,
-      ctx.orgId,
+       FROM bank_accounts b LEFT JOIN properties p ON p.id=b.property_id WHERE b.org_id=? AND b.active=1${scope.sql} ORDER BY b.created_at`,
+      ctx.orgId, ...scope.params,
     );
     const recons = q<any>(
       `SELECT r.*, b.name AS account FROM bank_recons r JOIN bank_accounts b ON b.id=r.bank_account_id
-       WHERE r.org_id=? ORDER BY r.period_key DESC, b.name LIMIT 40`, ctx.orgId,
+       WHERE r.org_id=?${scope.sql} ORDER BY r.period_key DESC, b.name LIMIT 40`, ctx.orgId, ...scope.params,
     );
     const aging = unreconciledAging(ctx);
+    const missScope = bankScopeSql(ctx, 'p.id');
     const missing = (val<number>(
       `SELECT COUNT(*) FROM properties p WHERE p.org_id=? AND NOT EXISTS
-         (SELECT 1 FROM bank_accounts b WHERE b.org_id=p.org_id AND b.property_id=p.id AND b.kind='operating')`, ctx.orgId,
+         (SELECT 1 FROM bank_accounts b WHERE b.org_id=p.org_id AND b.property_id=p.id AND b.kind='operating')${missScope.sql}`, ctx.orgId, ...missScope.params,
     ) || 0);
     const canRec = can(ctx, 'banking:reconcile');
     const setUp = when(missing > 0 && canRec, () => html`
@@ -124,6 +129,8 @@ export function routes(r: Router): void {
 
   r.post('/banking/accounts', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    // this creates an account for every property in the organization
+    if (!ctx.allProperties) return redirect('/banking', 'Creating accounts for every property needs access to all properties. Ask an administrator to do this.', 'err');
     ensureBankAccounts(ctx.orgId);
     audit(ctx, 'org', ctx.orgId, 'bank_accounts_created');
     return redirect('/banking', ctx.orgKind === 'live'
@@ -146,7 +153,7 @@ export function routes(r: Router): void {
   r.get('/banking/:id', requirePerm('banking:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const live = ctx.orgKind === 'live';
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     const txns = q<any>('SELECT * FROM bank_txns WHERE bank_account_id=? ORDER BY date DESC, imported_at DESC LIMIT 300', acct.id);
     const canRec = can(ctx, 'banking:reconcile');
@@ -186,7 +193,7 @@ export function routes(r: Router): void {
 
   r.post('/banking/:id/txn', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     const b = rq.body || {};
     const month = String(b.month || '');
@@ -208,7 +215,7 @@ export function routes(r: Router): void {
   r.get('/banking/:id/reconcile', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const live = ctx.orgKind === 'live';
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     // default month: first month with unmatched lines, else last full month
     const suggested = val<string>(
@@ -231,6 +238,8 @@ export function routes(r: Router): void {
     }
     if (!months.some(([k]) => k === month)) months.unshift([month, fmtMonth(month)]);
     const ties = s.unmatchedCount === 0 && s.tieDifference === 0;
+    // a live month still running has no statement yet: it can be worked on, not completed
+    const monthOver = statementMonthOver(ctx, month);
     const firstPeriod = val<string>('SELECT MIN(period_key) FROM bank_recons WHERE bank_account_id=?', acct.id);
     const notCleared = [...s.inTransit, ...s.outstanding].sort((a, b) => (a.date < b.date ? -1 : 1));
     const glName = COA.find(([c]) => c === acct.gl_account)?.[1] || 'Cash';
@@ -243,7 +252,7 @@ export function routes(r: Router): void {
       actions: html`
         ${when(open, () => html`
           <form method="post" action="/banking/${acct.id}/reconcile/${rec.id}/automatch" style="display:inline"><button class="btn">Auto-match</button></form>
-          <form method="post" action="/banking/${acct.id}/reconcile/${rec.id}/complete" style="display:inline"><button class="btn" ${ties ? '' : 'disabled'}>Complete at $0.00</button></form>`)}
+          <form method="post" action="/banking/${acct.id}/reconcile/${rec.id}/complete" style="display:inline"><button class="btn" ${ties && monthOver ? '' : 'disabled'}>Complete at $0.00</button></form>`)}
         ${when(!rec && !live, () => html`
           <form method="post" action="/banking/${acct.id}/reconcile/start" style="display:inline">
             <input type="hidden" name="month" value="${month}"><input type="hidden" name="automatch" value="1">
@@ -252,10 +261,11 @@ export function routes(r: Router): void {
         ${when(rec, () => html`<a class="btn btn-ghost" href="/banking/${acct.id}/reconcile/${rec.id}/report">Report</a>`)}`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>${field('Statement month', select('month', months, month))}</form>
+        ${when(!monthOver, () => html`<p class="callout warn">${fmtMonth(month)} has not ended, so its bank statement is not out yet. Lines can be entered and matched now; the month can be completed once it is over and the full statement is entered. Completing a month is final.</p>`)}
         ${when(!rec && live, () => card(`Start reconciling ${fmtMonth(month)}`, html`
           <form method="post" action="/banking/${acct.id}/reconcile/start" class="toolbar">
             <input type="hidden" name="month" value="${month}">
-            ${field('Ending balance on the bank statement', input('statement_close', { required: true, placeholder: '0.00' }), `as printed for ${fmtDate(s.end)}; put a minus sign in front if the account is overdrawn`)}
+            ${field('Ending balance on the bank statement', input('statement_close', { required: true, placeholder: '0.00' }), `as printed for ${fmtDate(lastOfMonth(`${month}-01`))}; put a minus sign in front if the account is overdrawn`)}
             <button class="btn">Start reconciliation</button>
           </form>
           <p class="small muted">Have the statement for ${fmtMonth(month)} in front of you. ${txns.length ? `${txns.length} statement line${txns.length === 1 ? ' is' : 's are'} on file for this month.` : html`No statement lines are on file for this month yet — <a href="/banking/${acct.id}">import the bank's file or add them by hand</a> first or after starting.`}</p>`))}
@@ -326,7 +336,7 @@ export function routes(r: Router): void {
 
   r.post('/banking/:id/reconcile/start', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     const month = String(rq.body?.month || '');
     const back = `/banking/${acct.id}/reconcile${/^\d{4}-\d{2}$/.test(month) ? `?month=${month}` : ''}`;
@@ -349,7 +359,7 @@ export function routes(r: Router): void {
   r.post('/banking/:id/reconcile/:rid/statement', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const rec = q1<any>('SELECT * FROM bank_recons WHERE id=? AND org_id=? AND bank_account_id=?', rq.params.rid!, ctx.orgId, rq.params.id!);
-    if (!rec) return notFound();
+    if (!rec || !bankAccountFor(ctx, rec.bank_account_id)) return notFound();
     const back = `/banking/${rec.bank_account_id}/reconcile?month=${rec.period_key}`;
     try {
       let close: number;
@@ -364,7 +374,7 @@ export function routes(r: Router): void {
   r.post('/banking/:id/reconcile/:rid/automatch', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const rec = q1<any>('SELECT * FROM bank_recons WHERE id=? AND org_id=?', rq.params.rid!, ctx.orgId);
-    if (!rec) return notFound();
+    if (!rec || !bankAccountFor(ctx, rec.bank_account_id)) return notFound();
     const back = `/banking/${rec.bank_account_id}/reconcile?month=${rec.period_key}`;
     try {
       const res = autoMatch(ctx, rec.id);
@@ -376,7 +386,7 @@ export function routes(r: Router): void {
   r.post('/banking/:id/reconcile/:rid/complete', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const rec = q1<any>('SELECT * FROM bank_recons WHERE id=? AND org_id=?', rq.params.rid!, ctx.orgId);
-    if (!rec) return notFound();
+    if (!rec || !bankAccountFor(ctx, rec.bank_account_id)) return notFound();
     const back = `/banking/${rec.bank_account_id}/reconcile?month=${rec.period_key}`;
     try {
       completeRecon(ctx, rec.id);
@@ -394,6 +404,7 @@ export function routes(r: Router): void {
     let c;
     try { c = matchCandidates(ctx, rq.params.id!); } catch { return notFound(); }
     const { txn: t, acct, items } = c;
+    if (!bankAccountFor(ctx, acct.id)) return notFound();
     const props = acct.property_id ? [] : propsFor(ctx);
     const accounts = q<any>(`SELECT code, name FROM gl_accounts WHERE org_id=? AND active=1 AND code!=? ORDER BY code`, ctx.orgId, acct.gl_account);
     const guess = t.kind === 'fee' ? '5710' : t.amount_cents > 0 ? '' : '';
@@ -443,7 +454,7 @@ export function routes(r: Router): void {
   r.post('/banking/txn/:id/match', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!t) return notFound();
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
     const ids = ([] as string[]).concat((rq.body?.entry_ids as string[] | string) || []);
     try {
       matchEntries(ctx, t.id, ids, null);
@@ -455,7 +466,7 @@ export function routes(r: Router): void {
   r.post('/banking/txn/:id/adjust', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!t) return notFound();
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
     const rec = String(rq.body?.recon || '') || null;
     const propertyId = String(rq.body?.property_id || '') || null;
     try {
@@ -471,7 +482,7 @@ export function routes(r: Router): void {
   r.post('/banking/txn/:id/exclude', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!t) return notFound();
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
     try {
       excludeTxn(ctx, t.id, null, String(rq.body?.reason || '').trim().slice(0, 200) || 'set aside in reconciliation');
       return redirect(lineBack(t), 'Statement line set aside.');
@@ -482,7 +493,7 @@ export function routes(r: Router): void {
   r.post('/banking/txn/:id/unmatch', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!t) return notFound();
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
     try {
       unmatchTxn(ctx, t.id);
       return redirect(lineBack(t), t.status === 'excluded' ? 'Statement line brought back.' : 'Match undone.');
@@ -492,7 +503,7 @@ export function routes(r: Router): void {
   });
   r.post('/banking/:id/entries/:eid/opening', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
     const month = String(rq.body?.month || '');
     const back = `/banking/${acct.id}/reconcile${/^\d{4}-\d{2}$/.test(month) ? `?month=${month}` : ''}`;
@@ -507,7 +518,7 @@ export function routes(r: Router): void {
   r.get('/banking/:id/reconcile/:rid/report', requirePerm('banking:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const s = reconSummary(ctx, rq.params.rid!);
-    if (!s.rec) return notFound();
+    if (!s.rec || !bankAccountFor(ctx, s.rec.bank_account_id)) return notFound();
     const done = s.rec.status === 'completed';
     return shell(rq, {
       title: `Reconciliation report — ${fmtMonth(s.rec.period_key)}`,

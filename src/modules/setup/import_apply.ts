@@ -1203,14 +1203,15 @@ export function applyDeposits(ctx: Ctx, batch: BatchRow): ApplySummary {
   const summary: ApplySummary = { properties: 0, units: 0, residents: 0, leases: 0, vendors: 0, balancesCents: 0, depositsCents: 0, skipped: validation.error };
   let short = 0;
   let filled = 0;
+  let filledGlCents = 0;
   tx(() => {
     for (const row of validation.rows) {
       if (row.level === 'error') continue;
       const rec = row.rec;
       const unit = q1<{ id: string }>('SELECT id FROM units WHERE property_id=? AND unit_number=?', batch.property_id, String(rec.unit ?? '').trim());
       const lease = unit
-        ? q1<{ id: string; deposit_cents: number }>(
-            `SELECT id, deposit_cents FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') ORDER BY created_at DESC LIMIT 1`,
+        ? q1<{ id: string; deposit_cents: number; import_batch_id: string | null; deposit_on_hand: number }>(
+            `SELECT id, deposit_cents, import_batch_id, deposit_on_hand FROM leases WHERE unit_id=? AND status IN ('active','month_to_month','notice') ORDER BY created_at DESC LIMIT 1`,
             unit.id,
           )
         : undefined;
@@ -1236,7 +1237,28 @@ export function applyDeposits(ctx: Ctx, batch: BatchRow): ApplySummary {
       if (fillsLease) {
         run('UPDATE leases SET deposit_cents=? WHERE id=?', held, lease!.id);
         filled++;
+        // the deposit subledger counts this lease's deposit from now on (same
+        // rule as depositsHeldTotal / depositHeld: carried in by an import, or
+        // marked on hand, with no deposit charge) — so the books must too
+        if (lease!.import_batch_id || lease!.deposit_on_hand) filledGlCents += held;
       }
+    }
+    // The lease rows now say this money is held; without the liability and the
+    // escrow cash beside it, "deposit liability equals deposits held" failed by
+    // the whole report and blocked month-end close for the organization.
+    if (filledGlCents > 0) {
+      if (!batch.property_id) throw new Error('This deposit report is not tied to a property.');
+      postBothBases(ctx, {
+        propertyId: batch.property_id, date: asOf,
+        memo: 'Migrated security deposits held (conversion)',
+        sourceKind: 'conversion', sourceId: batch.id,
+        lines: [
+          { account: '1020', debit: filledGlCents, memo: 'Security deposit cash carried in' },
+          { account: '2100', credit: filledGlCents, memo: 'Security deposits held' },
+        ],
+      });
+      // stamped so removing the import takes the entry with it
+      run(`UPDATE journal_entries SET import_batch_id=? WHERE org_id=? AND source_kind='conversion' AND source_id=?`, batch.id, ctx.orgId, batch.id);
     }
     summary.depositsShortCents = short;
     summary.depositsFilledOnLeases = filled;

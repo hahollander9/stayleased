@@ -847,6 +847,13 @@ export function routes(r: Router): void {
     const qtext = rq.query.get('q') || '';
     const params: unknown[] = [ctx.orgId];
     let where = 'org_id=?';
+    // Opened up from developers to anyone who sends messages, so it has to
+    // respect what they may see: staff scoped to some buildings get those
+    // buildings' messages, and nothing that belongs to no building.
+    if (!ctx.allProperties) {
+      if (!ctx.propertyIds.length) where += ' AND 1=0';
+      else { where += ` AND property_id IN (${ctx.propertyIds.map(() => '?').join(',')})`; params.push(...ctx.propertyIds); }
+    }
     if (channel) { where += ' AND channel=?'; params.push(channel); }
     if (template) { where += ' AND template_key=?'; params.push(template); }
     if (qtext) { where += ' AND (subject LIKE ? OR to_addr LIKE ? OR body LIKE ?)'; params.push(`%${qtext}%`, `%${qtext}%`, `%${qtext}%`); }
@@ -887,6 +894,7 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound('Message not found');
+    if (!ctx.allProperties && !(m.property_id && ctx.propertyIds.includes(m.property_id))) return notFound('Message not found');
     return shell(rq, {
       title: m.subject || `${m.channel.toUpperCase()} message`,
       active: '/dev/messages',
