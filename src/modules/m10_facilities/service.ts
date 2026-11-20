@@ -4,7 +4,8 @@ import { nowIso, addDays, diffDays, fmtDate } from '../../lib/dates.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { emit, on } from '../../lib/events.ts';
 import { registerJob } from '../../lib/jobs.ts';
-import { sendSms } from '../../lib/sim/messaging.ts';
+import { sendSms, isLiveOrg } from '../../lib/sim/messaging.ts';
+import { getSetting } from '../../lib/settings.ts';
 import { audit } from '../../lib/audit.ts';
 import { postJE } from '../m9_accounting/service.ts';
 import { createCharge } from '../m8_receivables/service.ts';
@@ -178,8 +179,21 @@ export function logMaterial(ctx: Ctx, woId: string, opts: { itemId?: string; des
   });
 }
 
+/** The hourly rate that prices logged labor on a work order at this property.
+ * It is the operator's own number (Settings → Maintenance). Unset in a live
+ * org it is 0 — hours are recorded with no dollar figure, because a rate we
+ * made up would show up in their cost-per-unit as if they had measured it.
+ * The demo org keeps its illustrative $45/h when nothing is set. */
+export function laborRateCents(ctx: Ctx, propertyId: string | null): number {
+  const set = Number(getSetting<number>(ctx, 'maintenance_labor_rate_cents', propertyId) || 0);
+  if (set > 0) return Math.round(set);
+  return isLiveOrg(ctx) ? 0 : 4500;
+}
+
 export function logLabor(ctx: Ctx, woId: string, opts: { userId: string; hours: number; rateCents?: number; note?: string }): void {
-  const rate = opts.rateCents ?? 4500;
+  const wo = q1<{ property_id: string }>('SELECT property_id FROM work_orders WHERE id=? AND org_id=?', woId, ctx.orgId);
+  if (!wo) throw new Error('work order not found');
+  const rate = opts.rateCents ?? laborRateCents(ctx, wo.property_id);
   insert('wo_labor', {
     id: id('wol'), org_id: ctx.orgId, work_order_id: woId, user_id: opts.userId,
     hours: opts.hours, rate_cents: rate, total_cents: Math.round(rate * opts.hours),
@@ -231,11 +245,26 @@ on('lease.notice', (ctx, payload) => {
 });
 
 export function advanceTurnTask(ctx: Ctx, taskId: string, opts: { status: string; actualCostCents?: number; assignUserId?: string; vendorId?: string }): void {
-  const task = q1<any>('SELECT t.*, tr.unit_id, tr.property_id, tr.id AS turn_id FROM turn_tasks t JOIN turns tr ON tr.id=t.turn_id WHERE t.id=? AND t.org_id=?', taskId, ctx.orgId);
+  const task = q1<any>(
+    `SELECT t.*, tr.unit_id, tr.property_id, tr.id AS turn_id, tr.move_out_date, tr.lease_id AS turn_lease_id
+     FROM turn_tasks t JOIN turns tr ON tr.id=t.turn_id WHERE t.id=? AND t.org_id=?`,
+    taskId, ctx.orgId,
+  );
   if (!task) throw new Error('task not found');
+  if (!['pending', 'in_progress', 'done', 'skipped'].includes(opts.status)) throw new Error('unknown task status');
   if (opts.vendorId) {
-    const vendor = q1<any>('SELECT * FROM vendors WHERE id=?', opts.vendorId);
-    if (vendor?.coi_expiry && vendor.coi_expiry < ctx.businessDate) throw new Error(`${vendor.name} COI expired — cannot assign`);
+    const vendor = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', opts.vendorId, ctx.orgId);
+    if (!vendor) throw new Error('vendor not found');
+    if (vendor.coi_expiry && vendor.coi_expiry < ctx.businessDate) throw new Error(`${vendor.name} COI expired — cannot assign`);
+  }
+  // Make-ready work cannot be finished in a home someone still lives in. A
+  // turn is created the day notice is given, weeks before move-out; ticking
+  // its tasks off early used to publish an occupied unit as available.
+  // Assigning a vendor and pencilling in a cost stay allowed — that is
+  // planning — but nothing is "done" (or skipped past) until the unit is empty.
+  const occ = turnOccupiedUntil(ctx, task);
+  if (occ && ['done', 'skipped'].includes(opts.status) && !['done', 'skipped'].includes(task.status)) {
+    throw new Error(`This unit is still occupied until ${fmtDate(occ)} — make-ready tasks can be assigned and priced now, and completed after move-out.`);
   }
   update('turn_tasks', taskId, {
     status: opts.status,
@@ -244,33 +273,55 @@ export function advanceTurnTask(ctx: Ctx, taskId: string, opts: { status: string
     vendor_id: opts.vendorId ?? task.vendor_id,
     completed_date: opts.status === 'done' ? ctx.businessDate : task.completed_date,
   });
-  // GL: actual cost posts to turn expense when a task completes with cost
-  const cost = opts.actualCostCents ?? 0;
-  if (opts.status === 'done' && cost > 0) {
-    for (const basis of ['accrual', 'cash'] as const) {
-      postJE(ctx, {
-        propertyId: task.property_id, date: ctx.businessDate, basis,
-        memo: `Turn ${task.name} — unit ${val<string>('SELECT unit_number FROM units WHERE id=?', task.unit_id)}`,
-        sourceKind: 'turn_cost', sourceId: task.turn_id,
-        lines: [
-          { account: '5020', debit: cost },
-          { account: '2200', credit: cost }, // accrued until vendor invoice clears via AP (M16)
-        ],
-      });
-    }
+  // The actual cost is an operational figure only: it does NOT post to the
+  // books. It used to post Dr 5020 / Cr 2200 on both bases "until the vendor
+  // invoice clears via AP" — but nothing ever relieved 2200, AP cannot post to
+  // a liability account, and entering the painter's bill in Payables then
+  // expensed the same work a second time. The expense reaches the ledger once,
+  // when the vendor's bill is entered in Payables (or the materials are logged
+  // from stock on the work order).
+  if (opts.status !== task.status || (opts.actualCostCents ?? task.actual_cost_cents) !== task.actual_cost_cents) {
+    audit(ctx, 'turn_task', taskId, 'update',
+      { status: task.status, actual_cost_cents: task.actual_cost_cents },
+      { status: opts.status, actual_cost_cents: opts.actualCostCents ?? task.actual_cost_cents });
   }
   // turn status roll-forward
   const tasks = q<any>('SELECT * FROM turn_tasks WHERE turn_id=? ORDER BY seq', task.turn_id);
   const allDone = tasks.every((t) => ['done', 'skipped'].includes(t.status));
   const anyStarted = tasks.some((t) => t.status !== 'pending');
-  if (allDone) {
+  if (allDone && !occ) {
+    const wasReady = val<string>('SELECT status FROM turns WHERE id=?', task.turn_id) === 'ready';
     update('turns', task.turn_id, { status: 'ready', completed_date: ctx.businessDate });
-    run("UPDATE units SET status='vacant_ready' WHERE id=? AND status IN ('vacant_not_ready','notice')", task.unit_id);
-    emit(ctx, 'turn.ready', 'turn', task.turn_id, { unitId: task.unit_id });
-    audit(ctx, 'turn', task.turn_id, 'ready');
+    // only an EMPTY unit becomes available — never one still on notice
+    run("UPDATE units SET status='vacant_ready' WHERE id=? AND org_id=? AND status='vacant_not_ready'", task.unit_id, ctx.orgId);
+    if (!wasReady) {
+      emit(ctx, 'turn.ready', 'turn', task.turn_id, { unitId: task.unit_id });
+      audit(ctx, 'turn', task.turn_id, 'ready');
+    }
   } else if (anyStarted) {
     run("UPDATE turns SET status='in_progress' WHERE id=? AND status='scheduled'", task.turn_id);
   }
+}
+
+/** The date this turn's unit is occupied until, or null once it is empty.
+ * The vacating lease decides when there is one: the unit is occupied while
+ * that lease is still running AND its move-out date is still ahead. A lease
+ * ended early (the resident left ahead of the notice date) frees the unit at
+ * once. With no lease on the turn, the unit's own status decides. */
+export function turnOccupiedUntil(
+  ctx: Ctx,
+  turn: { unit_id: string; move_out_date: string; turn_lease_id?: string | null; lease_id?: string | null },
+): string | null {
+  const leaseId = turn.turn_lease_id ?? turn.lease_id ?? null;
+  const lease = leaseId
+    ? q1<{ status: string; move_out_date: string | null }>('SELECT status, move_out_date FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId)
+    : undefined;
+  if (lease) {
+    const until = lease.move_out_date || turn.move_out_date;
+    return ['active', 'notice', 'month_to_month'].includes(lease.status) && until > ctx.businessDate ? until : null;
+  }
+  const unitStatus = val<string>('SELECT status FROM units WHERE id=? AND org_id=?', turn.unit_id, ctx.orgId);
+  return turn.move_out_date > ctx.businessDate && ['occupied', 'notice'].includes(String(unitStatus)) ? turn.move_out_date : null;
 }
 
 export function turnCost(turnId: string): { est: number; actual: number } {
@@ -295,10 +346,27 @@ registerJob({
       // rather than today: this job runs when the business date reaches the
       // move-out, but an import or a skipped day can land it later, and
       // "empty since the day we processed it" would under-count the loss.
+      //
+      // 'vacant_ready' is in the WHERE for units a turn marked ready while the
+      // resident was still in place (possible before that was blocked): the
+      // status stays, but the vacancy clock still has to start at move-out.
       run(
-        "UPDATE units SET status='vacant_not_ready', vacant_since=?, vacant_since_source='lease' WHERE id=? AND status='notice'",
+        `UPDATE units SET status=CASE WHEN status='vacant_ready' THEN 'vacant_ready' ELSE 'vacant_not_ready' END,
+           vacant_since=?, vacant_since_source='lease' WHERE id=? AND status IN ('notice','vacant_ready')`,
         lease.move_out_date || date, lease.unit_id,
       );
+      // A turn for this move-out whose tasks were all finished on the last
+      // day is ready the moment the unit empties.
+      const turn = q1<{ id: string; status: string }>(
+        `SELECT t.id, t.status FROM turns t WHERE t.unit_id=? AND t.org_id=? AND t.lease_id=?
+           AND t.status IN ('scheduled','in_progress','ready')
+           AND NOT EXISTS (SELECT 1 FROM turn_tasks x WHERE x.turn_id=t.id AND x.status NOT IN ('done','skipped'))`,
+        lease.unit_id, ctx.orgId, lease.id,
+      );
+      if (turn) {
+        if (turn.status !== 'ready') update('turns', turn.id, { status: 'ready', completed_date: date });
+        run("UPDATE units SET status='vacant_ready' WHERE id=? AND status='vacant_not_ready'", lease.unit_id);
+      }
       emit(ctx, 'lease.ended', 'lease', lease.id, { unitId: lease.unit_id, propertyId: lease.property_id });
     }
     return due.length ? `${due.length} move-outs processed` : 'no move-outs today';

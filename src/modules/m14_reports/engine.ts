@@ -164,7 +164,9 @@ export function processResult(res: ReportResult, opts: { sort?: string; dir?: st
     cols: res.cols,
     rows,
     groups,
-    totals: res.totals ?? sum(rows),
+    // A def may pass `totals: {}` to say "no grand total" (summing a balance
+    // sheet's assets + liabilities + equity is meaningless); group subtotals stay.
+    totals: res.totals ? (Object.keys(res.totals).length ? res.totals : null) : sum(rows),
     note: res.note,
     truncated,
   };
@@ -194,6 +196,7 @@ export function reportCsv(rendered: RenderedReport): string {
       const v = r[c.key];
       if (v === null || v === undefined) return '';
       if (c.kind === 'money') return (Number(v) / 100).toFixed(2);
+      if (c.kind === 'pct' && Number.isFinite(Number(v))) return Math.round(Number(v) * 10) / 10; // same 1 decimal as the page
       return typeof v === 'number' ? v : String(v);
     }));
   };
@@ -206,7 +209,7 @@ export function reportCsv(rendered: RenderedReport): string {
     rendered.rows.forEach(push);
   }
   if (rendered.totals) {
-    rows.push(cols.map((c, i) => (i === 0 ? 'TOTAL' : rendered.totals![c.key] !== undefined ? (c.kind === 'money' ? (Number(rendered.totals![c.key]) / 100).toFixed(2) : String(rendered.totals![c.key])) : '')));
+    rows.push(cols.map((c, i) => (i === 0 ? 'TOTAL' : rendered.totals![c.key] !== undefined ? (c.kind === 'money' ? (Number(rendered.totals![c.key]) / 100).toFixed(2) : c.kind === 'pct' && Number.isFinite(Number(rendered.totals![c.key])) ? String(Math.round(Number(rendered.totals![c.key]) * 10) / 10) : String(rendered.totals![c.key])) : '')));
   }
   return toCsv(cols.map((c) => c.label), rows);
 }

@@ -557,6 +557,14 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     </select>
   </form>`);
 
+  // In Standard the menu says "Who owes me" and the page it opened said
+  // "Receivables" — the plain words stopped one click in. The page a menu item
+  // lands on now carries that item's own words as its heading. Only the exact
+  // landing page: a lease or an invoice opened from it keeps its own title.
+  let pageTitle: Child = opts.title;
+  if (mode === 'standard') {
+    for (const t of standardTabs(ctx)) for (const g of t.groups) for (const i of g.items) if (i.href === r.path) pageTitle = i.label;
+  }
   const body = html`<div class="app">
     <header class="topchrome">
       <div class="brandbar">
@@ -595,7 +603,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         ${when(!opts.bareHead, () => html`<div class="page-head">
           <div class="titles">
             ${when(opts.crumbs?.length, () => html`<div class="crumbs">${join((opts.crumbs || []).map(([label, href]) => (href ? html`<a href="${href}">${label}</a>` : html`<span>${label}</span>`)), raw(' / ').s)}</div>`)}
-            <h1>${opts.title}</h1>
+            <h1>${pageTitle}</h1>
             ${when(opts.subtitle, () => html`<div class="subtitle">${opts.subtitle}</div>`)}
           </div>
           ${when(opts.actions, () => html`<div class="actions">${opts.actions}</div>`)}
@@ -760,7 +768,14 @@ export function tbl(
     // announced as an control rather than as decoration
     return html`<button type="button" class="th-sort" data-sort>${c.label}<span class="th-caret" aria-hidden="true"></span></button>`;
   };
-  return html`<div class="tbl-wrap"><table class="tbl ${opts?.density === 'tight' ? 'tight' : ''}"
+  // On a phone each row becomes a block of "label … value" lines (see .tbl[data-stack]),
+  // so every cell after the first carries its column's heading as text.
+  const labelText = (c: Col | undefined): string => (c ? html`${c.label}`.s.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '');
+  const dl = (i: number): Raw => {
+    const t = i > 0 ? labelText(cols[i]) : '';
+    return t ? raw(` data-label="${t.replaceAll('"', '&quot;')}"`) : raw('');
+  };
+  return html`<div class="tbl-wrap"><table class="tbl ${opts?.density === 'tight' ? 'tight' : ''}" data-stack
       ${sortable ? raw('data-sortable') : ''}>
     <thead><tr>${cols.map((c) => html`<th class="${c.num ? 'num' : ''}${c.href || (sortable && !c.nosort && !blank(c)) ? ' th-sortable' : ''}"
       ${c.sorted ? raw(`aria-sort="${c.sorted === 'asc' ? 'ascending' : 'descending'}"`) : ''}
@@ -768,9 +783,9 @@ export function tbl(
       ${c.w ? raw(`style="width:${c.w}"`) : ''}>${head(c)}</th>`)}</tr></thead>
     <tbody>${rows.map(
       (row) =>
-        html`<tr ${row.href ? raw(`data-href="${esc(row.href)}" tabindex="0"`) : ''}>${row.cells.map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}">${cell}</td>`)}</tr>`,
+        html`<tr ${row.href ? raw(`data-href="${esc(row.href)}" tabindex="0"`) : ''}>${row.cells.map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}"${dl(i)}>${cell}</td>`)}</tr>`,
     )}</tbody>
-    ${when(opts?.foot, () => html`<tfoot><tr>${(opts!.foot || []).map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}">${cell}</td>`)}</tr></tfoot>`)}
+    ${when(opts?.foot, () => html`<tfoot><tr>${(opts!.foot || []).map((cell, i) => html`<td class="${cols[i]?.num ? 'num' : ''}"${dl(i)}>${cell}</td>`)}</tr></tfoot>`)}
   </table></div>`;
 }
 
@@ -869,7 +884,7 @@ export function pager(r: Rq, total: number, perPage = 50): Raw {
 const STATUS_TONE: Record<string, string> = {
   // generic
   active: 'ok', ok: 'ok', paid: 'ok', settled: 'ok', completed: 'ok', complete: 'ok', approved: 'ok', signed: 'ok', executed: 'ok', fully_executed: 'ok', current: 'ok', covered: 'ok', reconciled: 'ok', ready: 'ok', published: 'ok', accepted: 'ok', open: 'info', matched: 'ok', received: 'ok', verified: 'ok', enrolled: 'ok', passed: 'ok', on: 'ok', yes: 'ok', posted: 'ok', acknowledged: 'ok',
-  pending: 'warn', in_progress: 'info', scheduled: 'info', draft: '', submitted: 'info', screening: 'info', processing: 'info', partially_signed: 'warn', notice: 'warn', review: 'warn', conditional: 'warn', lapsing: 'warn', exception: 'warn', retrying: 'warn', hold: 'warn', waitlist: 'warn', partial: 'warn', 'approve-with-conditions': 'warn', month_to_month: 'warn', proposed: 'info', offered: 'info', quoted: 'info', toured: 'info', applied: 'violet', new: 'accent', assigned: 'info', dispatched: 'info', in_transit: 'info',
+  pending: 'warn', in_progress: 'info', scheduled: 'info', draft: '', submitted: 'info', screening: 'info', processing: 'info', partially_signed: 'warn', notice: 'warn', review: 'warn', conditional: 'warn', lapsing: 'warn', exception: 'warn', retrying: 'warn', hold: 'warn', waitlist: 'warn', partial: 'warn', 'approve-with-conditions': 'warn', month_to_month: 'warn', proposed: 'info', offered: 'info', quoted: 'info', toured: 'info', applied: 'violet', new: '', assigned: 'info', dispatched: 'info', in_transit: 'info',
   failed: 'bad', nsf: 'bad', declined: 'bad', denied: 'bad', overdue: 'bad', lapsed: 'bad', delinquent: 'bad', canceled: 'bad', cancelled: 'bad', void: 'bad', evicted: 'bad', emergency: 'bad', down: 'bad', blocked: 'bad', error: 'bad', chargeback: 'bad', off: '', no: '', ended: '', closed: '', inactive: '', lost: '', expired: 'bad', missed: 'bad', reopened: 'warn',
   vacant_ready: 'ok', vacant_not_ready: 'warn', occupied: 'info', model: 'violet', urgent: 'bad', high: 'warn', normal: 'info', low: '',
 };

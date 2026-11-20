@@ -6,7 +6,7 @@ import { can, sysCtx, assertPerm } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting } from '../../lib/settings.ts';
-import { sendEmail } from '../../lib/sim/messaging.ts';
+import { sendEmail, isLiveOrg } from '../../lib/sim/messaging.ts';
 import { usd } from '../../lib/money.ts';
 import { createInvoice, submitInvoice } from '../m9_accounting/ap.ts';
 import { Pdf } from '../../lib/pdf.ts';
@@ -188,14 +188,70 @@ export function approvePo(ctx: Ctx, poId: string): void {
   const vendor = q1<any>('SELECT * FROM vendors WHERE id=?', po.vendor_id);
   run(`UPDATE purchase_orders SET status='approved', approved_by=?, approved_at=?, sent_at=? WHERE id=?`, ctx.userName, nowIso(), nowIso(), poId);
   if (vendor?.email) {
+    // Only point the vendor at a portal they can actually sign in to.
+    const portal = vendorHasPortal(ctx, po.vendor_id);
+    const needed = po.needed_by ? `, needed by ${fmtDate(po.needed_by)}` : '';
     sendEmail(ctx, {
       to: vendor.email, toName: vendor.name, subject: `Purchase order ${po.po_number} — ${usd(po.total_cents)}`,
-      body: `<p>${vendor.name},</p><p>Please acknowledge PO <b>${po.po_number}</b> (${usd(po.total_cents)}) in your vendor portal${po.needed_by ? `, needed by ${fmtDate(po.needed_by)}` : ''}.</p>`,
+      body: portal
+        ? `<p>${vendor.name},</p><p>Please acknowledge PO <b>${po.po_number}</b> (${usd(po.total_cents)}) in your vendor portal${needed}.</p>`
+        : `<p>${vendor.name},</p><p>${orgName(ctx)} has issued purchase order <b>${po.po_number}</b> (${usd(po.total_cents)})${needed}. Please reply to confirm you have it.</p>`,
       entity: 'purchase_order', entityId: poId, templateKey: 'po_sent',
     });
   }
   emit(ctx, 'po.approved', 'purchase_order', poId, { totalCents: po.total_cents });
   audit(ctx, 'purchase_order', poId, 'approve');
+}
+
+/** True when this vendor has a portal sign-in that works today. */
+export function vendorHasPortal(ctx: Ctx, vendorId: string): boolean {
+  return !!q1(`SELECT id FROM users WHERE org_id=? AND kind='vendor' AND vendor_id=? AND active=1`, ctx.orgId, vendorId);
+}
+
+function orgName(ctx: Ctx): string {
+  return q1<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId)?.name || 'Your property manager';
+}
+
+/** The purchase order as a document the operator can hand, attach or mail to
+ * the vendor themselves — the only way a PO leaves the building while no
+ * email rail is connected. */
+export async function poPdf(ctx: Ctx, poId: string): Promise<{ bytes: Uint8Array; poNumber: string }> {
+  const po = q1<any>(
+    `SELECT po.*, v.name AS vendor, v.contact_name, v.email AS vendor_email, v.phone AS vendor_phone, v.address AS vendor_address,
+       p.name AS property, p.address1, p.city, p.state, p.zip
+     FROM purchase_orders po JOIN vendors v ON v.id=po.vendor_id JOIN properties p ON p.id=po.property_id
+     WHERE po.id=? AND po.org_id=?`,
+    poId, ctx.orgId,
+  );
+  if (!po) throw new Error('PO not found');
+  const lines = q<any>('SELECT * FROM purchase_order_lines WHERE po_id=? AND org_id=? ORDER BY created_at, id', poId, ctx.orgId);
+  const pdf = await Pdf.create(`Purchase order ${po.po_number}`);
+  pdf.brandHeader(orgName(ctx), [po.property, [po.address1, po.city, po.state, po.zip].filter(Boolean).join(', ')]);
+  pdf.h1(`Purchase order ${po.po_number}`);
+  if (!['approved', 'acknowledged', 'partially_received', 'received', 'closed'].includes(po.status)) {
+    pdf.text(`NOT YET APPROVED — status: ${String(po.status).replaceAll('_', ' ')}. Do not fill this order.`, { bold: true });
+    pdf.space(4);
+  }
+  pdf.kv([
+    ['Vendor', po.vendor],
+    ...(po.contact_name ? [['Attention', po.contact_name] as [string, string]] : []),
+    ...(po.vendor_address ? [['Vendor address', po.vendor_address] as [string, string]] : []),
+    ...(po.vendor_email || po.vendor_phone ? [['Vendor contact', [po.vendor_email, po.vendor_phone].filter(Boolean).join(' · ')] as [string, string]] : []),
+    ['Deliver to', [po.property, po.address1, po.city, po.state, po.zip].filter(Boolean).join(', ')],
+    ['Ordered', fmtDate(String(po.created_at).slice(0, 10))],
+    ['Needed by', po.needed_by ? fmtDate(po.needed_by) : 'Not specified'],
+    ...(po.approved_by ? [['Approved by', `${po.approved_by} · ${fmtDate(String(po.approved_at || '').slice(0, 10))}`] as [string, string]] : []),
+    ...(po.memo ? [['Reference', po.memo] as [string, string]] : []),
+  ]);
+  pdf.space(8);
+  pdf.table(
+    [{ label: 'Item', w: 0.52 }, { label: 'Qty', w: 0.12, align: 'right' }, { label: 'Unit price', w: 0.18, align: 'right' }, { label: 'Amount', w: 0.18, align: 'right' }],
+    lines.map((l) => [String(l.description), String(l.qty), usd(l.unit_price_cents), usd(Math.round(l.qty * l.unit_price_cents))]),
+    { totals: ['Total', '', '', usd(po.total_cents)] },
+  );
+  pdf.space(10);
+  pdf.text(`Please quote ${po.po_number} on your invoice. Invoices are matched to this order and to what was received before they are paid.`, { muted: true, size: 9 });
+  return { bytes: await pdf.bytes(), poNumber: po.po_number as string };
 }
 
 export function acknowledgePo(ctx: Ctx, poId: string): void {
@@ -361,6 +417,19 @@ export function submitPoInvoice(
 ): { invoiceId: string; match: MatchResult } {
   const po = q1<any>('SELECT * FROM purchase_orders WHERE id=? AND org_id=?', input.poId, ctx.orgId);
   if (!po) throw new Error('PO not found');
+  if (!['approved', 'acknowledged', 'partially_received', 'received'].includes(po.status)) throw new Error('An invoice can only be entered against an approved purchase order.');
+  const invoiceNumber = String(input.invoiceNumber || '').trim();
+  if (!invoiceNumber) throw new Error('Enter the invoice number printed on the vendor’s invoice.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(input.invoiceDate || ''))) throw new Error('Enter the invoice date.');
+  input = { ...input, invoiceNumber, lines: input.lines.filter((l) => l.qty > 0 && l.unitPriceCents > 0) };
+  if (!input.lines.length) throw new Error('Enter the quantity and unit price for at least one line of the invoice.');
+  if (input.lines.some((l) => !Number.isFinite(l.qty) || !Number.isInteger(l.unitPriceCents))) throw new Error('Quantities and prices must be numbers.');
+  // the same paper invoice keyed twice would be paid twice
+  const dup = q1<any>(
+    `SELECT id FROM vendor_invoices WHERE org_id=? AND vendor_id=? AND lower(invoice_number)=lower(?) AND status!='void'`,
+    ctx.orgId, po.vendor_id, invoiceNumber,
+  );
+  if (dup) throw new Error(`Invoice ${invoiceNumber} from this vendor is already entered.`);
   const polines = q<any>('SELECT * FROM purchase_order_lines WHERE po_id=?', input.poId);
   const glFor = (desc: string): string => polines.find((p) => p.description === desc)?.gl_account || polines[0]?.gl_account || '5910';
   const vendor = q1<any>('SELECT * FROM vendors WHERE id=?', po.vendor_id);
@@ -415,7 +484,7 @@ export async function remittanceAdvice(ctx: Ctx, paymentId: string): Promise<str
     ['Status', p.status],
   ]);
   pdf.space(8);
-  pdf.text('This payment was issued by Summit Ridge Management Co. via the StayLeased platform (simulated rails).', { muted: true, size: 9 });
+  pdf.text(`This payment was issued by ${orgName(ctx)}${isLiveOrg(ctx) ? '.' : ' via the StayLeased platform (simulated rails).'}`, { muted: true, size: 9 });
   const f = putFile(sysCtx(ctx.orgId), Buffer.from(await pdf.bytes()), {
     name: `remittance-${p.check_number}.pdf`, mime: 'application/pdf', entity: 'ap_payment', entityId: paymentId, visibility: 'staff',
   });
@@ -451,7 +520,8 @@ export async function ten99Pdf(ctx: Ctx, year: number): Promise<Uint8Array> {
   const s = ten99Summary(ctx, year);
   const pdf = await Pdf.create(`1099-NEC summary ${year}`);
   pdf.h1(`1099-NEC summary — tax year ${year}`);
-  pdf.text(`Vendors paid $600+ on simulated rails. Generated ${fmtDate(ctx.businessDate)}.`, { muted: true, size: 9 });
+  pdf.text(`${orgName(ctx)} — 1099-eligible vendors paid $600 or more in ${year}${isLiveOrg(ctx) ? '' : ' (demo data, simulated payments)'}. Generated ${fmtDate(ctx.businessDate)}.`, { muted: true, size: 9 });
+  pdf.text('A working summary for preparing 1099-NEC forms — it is not a filing. Only the last four digits of each taxpayer ID are stored here.', { muted: true, size: 9 });
   pdf.space(6);
   for (const r of s.rows) {
     pdf.text(`${r.vendor}  ·  TIN ${r.tin}  ·  ${usd(r.paidCents)}${r.w9 ? '' : '   ** W-9 MISSING **'}`, { size: 10.5 });

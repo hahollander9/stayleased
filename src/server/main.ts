@@ -33,6 +33,7 @@ export function buildRouter(): Router {
     '/assets/mk/dashboard-light.png': ['src/ui/mk-assets/dashboard-light.png', 'image/png'],
     '/assets/mk/ai-queue-light.png': ['src/ui/mk-assets/ai-queue-light.png', 'image/png'],
     '/assets/mk/hero-dashboard.png': ['src/ui/mk-assets/hero-dashboard.png', 'image/png'],
+    '/assets/mk/hero-home.png': ['src/ui/mk-assets/hero-home.png', 'image/png'],
     '/assets/mk/feat-ai.png': ['src/ui/mk-assets/feat-ai.png', 'image/png'],
     '/assets/mk/feat-accounting.png': ['src/ui/mk-assets/feat-accounting.png', 'image/png'],
     '/assets/mk/feat-portal.png': ['src/ui/mk-assets/feat-portal.png', 'image/png'],

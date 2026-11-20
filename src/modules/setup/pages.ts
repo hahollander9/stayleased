@@ -111,11 +111,20 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const b = rq.body;
     const name = String(b.name || '').trim();
-    const slug = slugify(String(b.slug || name));
+    // The address is generated when the box is left blank, and a generated one
+    // is made unique here. Slugs are unique across every customer, so "Summit
+    // Ridge" used to be refused with "that URL slug is already in use" — about a
+    // slug the person never typed, held by a company they cannot see.
+    const typedSlug = String(b.slug || '').trim();
+    let slug = slugify(typedSlug || name);
+    if (!typedSlug && slug) {
+      const baseSlug = slug;
+      for (let n = 2; q1('SELECT id FROM properties WHERE slug=?', slug) && n < 500; n++) slug = `${baseSlug}-${n}`;
+    }
     const errs: string[] = [];
     if (name.length < 2) errs.push('Property name is required.');
     if (!slug || slug.length < 2) errs.push('A valid URL slug is required.');
-    if (slug && q1('SELECT id FROM properties WHERE slug=?', slug)) errs.push('That URL slug is already in use.');
+    if (typedSlug && slug && q1('SELECT id FROM properties WHERE slug=?', slug)) errs.push('That web address is already taken — try another, or leave it blank.');
     const type = PROPERTY_TYPES.some((t) => t[0] === b.type) ? String(b.type) : 'multifamily';
     const state = String(b.state || '').trim().toUpperCase().slice(0, 2);
     if (String(b.address1 || '').trim().length < 3) errs.push('Street address is required.');

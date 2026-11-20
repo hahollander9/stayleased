@@ -1,17 +1,17 @@
 import { html, when, type Child } from '../../lib/html.ts';
 import { notFound, redirect, type Router } from '../../lib/http.ts';
-import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, can, propFilter, type Ctx } from '../../lib/auth.ts';
 import { q, q1 } from '../../lib/db.ts';
 import { fmtDate, fmtMonth } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
-import { shell, card, tbl, statusBadge, field, select, input, registerNav, kpis } from '../../ui/ui.ts';
+import { shell, card, tbl, statusBadge, field, select, input, moneyInput, registerNav, kpis } from '../../ui/ui.ts';
 import { toCsv, type Basis } from './statements.ts';
 import { Pdf } from '../../lib/pdf.ts';
 import {
   reserveOverview, upsertReservePlan, requestReserveDraw, decideReserveDraw, fundDueReserves,
 } from './reserves.ts';
-import { createOwner, setOwnershipShare, ownersOverview, ownerStatement } from './owners.ts';
+import { createOwner, setOwnershipShare, ownersOverview, ownerStatement, recordOwnerDistribution, voidOwnerDistribution, listOwnerDistributions } from './owners.ts';
 
 /** M9.9/M9.10 pages — replacement reserves and owner statements. */
 
@@ -158,6 +158,9 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const list = ownersOverview(ctx);
     const props = q<any>('SELECT * FROM properties WHERE org_id=? ORDER BY name', ctx.orgId);
+    const dpf = propFilter(ctx, 'id');
+    const distProps = q<any>(`SELECT id, name FROM properties WHERE org_id=?${dpf.sql} ORDER BY name`, ctx.orgId, ...dpf.params);
+    const dists = listOwnerDistributions(ctx, { limit: 50 });
     return shell(rq, {
       title: 'Owners',
       active: '/owners',
@@ -193,8 +196,55 @@ export function routes(r: Router): void {
                 ${field('Ownership %', input('pct', { placeholder: 'e.g. 50', required: true }), 'Set 0 to remove. Total per property can never exceed 100%.')}
                 <button class="btn">Save share</button>
               </form>`)}
-          </div>`)}`,
+          </div>
+          ${card('Record a distribution', html`
+            <form method="post" action="/owners/distribution">
+              <div class="grid2">
+                ${field('Property', select('property', distProps.map((p): [string, string] => [p.id, p.name]), '', { required: true, blank: 'Choose…' }))}
+                ${field('Date the money left the account', input('date', { type: 'date', value: ctx.businessDate, required: true }))}
+                ${field('Total paid to the owners', moneyInput('amount', null, { required: true }))}
+                ${field('Note (optional)', input('memo', { placeholder: 'e.g. third quarter distribution' }))}
+              </div>
+              <button class="btn">Record distribution</button>
+            </form>
+            <p class="small muted">This records a payment already made from the property's operating account. StayLeased does not send money to owners. The total is divided between the property's owners by their shares, taken out of owner equity (3020) and the operating cash account (1010) on both books, and waits in bank reconciliation to be matched to the bank's line.</p>`)}`)}
+        ${card('Distributions', tbl(
+          [{ label: 'Date' }, { label: 'Property' }, { label: 'Note' }, { label: 'Status' }, { label: 'Amount', num: true }, { label: '' }],
+          dists.map((d) => ({
+            cells: [
+              fmtDate(d.date), d.property_name, d.memo || '—', statusBadge(d.status === 'posted' ? 'posted' : 'void', d.status === 'posted' ? 'recorded' : 'void'), usd(d.amount_cents),
+              d.status === 'posted' && can(ctx, 'owners:manage')
+                ? html`<form method="post" action="/owners/distribution/${d.id}/void" data-confirm="Void this distribution record? Its entries are reversed."><button class="btn btn-ghost btn-sm">Void</button></form>`
+                : '',
+            ],
+          })),
+          { empty: 'No distributions recorded yet.' },
+        ), { flush: true })}`,
     });
+  });
+
+  r.post('/owners/distribution', requirePerm('owners:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    try {
+      let amount: number;
+      try { amount = parseUsd(String(rq.body.amount || '')); } catch { throw new Error('Enter the amount that was paid out, like 2500.00.'); }
+      recordOwnerDistribution(ctx, {
+        propertyId: String(rq.body.property || ''), amountCents: amount,
+        date: String(rq.body.date || ''), memo: String(rq.body.memo || ''),
+      });
+      return redirect('/owners', `Distribution of ${usd(amount)} recorded. No money was sent from StayLeased.`);
+    } catch (e) {
+      return redirect('/owners', (e as Error).message, 'err');
+    }
+  });
+
+  r.post('/owners/distribution/:id/void', requirePerm('owners:manage'), (rq) => {
+    try {
+      voidOwnerDistribution(rq.ctx as Ctx, rq.params.id!);
+      return redirect('/owners', 'Distribution voided and its entries reversed.');
+    } catch (e) {
+      return redirect('/owners', (e as Error).message, 'err');
+    }
   });
 
   r.post('/owners/new', requirePerm('owners:manage'), (rq) => {
@@ -258,6 +308,13 @@ export function routes(r: Router): void {
             cells: [x.propertyName, pctFmt(x.pct), usd(x.income), usd(x.expenses), usd(x.equityIncome), usd(x.capitalShare), usd(x.reserveShare)],
           })),
           { empty: 'No holdings assigned to this owner yet.', foot },
+        ), { flush: true })}
+        ${card('Distributions received', tbl(
+          [{ label: 'Date' }, { label: 'Property' }, { label: 'Note' }, { label: 'Share' }, { label: 'Status' }, { label: 'Total paid out', num: true }, { label: 'This owner', num: true }],
+          listOwnerDistributions(ctx, { ownerId: st.owner.id }).map((d) => ({
+            cells: [fmtDate(d.date), d.property_name, d.memo || '—', pctFmt(d.share_pct), statusBadge(d.status === 'posted' ? 'posted' : 'void', d.status === 'posted' ? 'recorded' : 'void'), usd(d.amount_cents), d.status === 'posted' ? html`<b>${usd(d.share_cents)}</b>` : html`<span class="muted">${usd(d.share_cents)}</span>`],
+          })),
+          { empty: 'No distributions recorded for this owner yet.' },
         ), { flush: true })}
         <p class="small muted">Amounts are this owner's percentage share of each property's operating results for the period, their share of capital contributions/(distributions) posted to 3020, and their share of the designated reserve balance. The underlying books stay whole — shares are computed at read time.</p>`,
     });

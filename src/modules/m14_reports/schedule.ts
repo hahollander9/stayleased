@@ -1,7 +1,7 @@
 import { q, q1, run, j } from '../../lib/db.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { putFile } from '../../lib/files.ts';
-import { sendEmail } from '../../lib/sim/messaging.ts';
+import { sendEmail, isLiveOrg, messageOrigin } from '../../lib/sim/messaging.ts';
 import type { Ctx } from '../../lib/auth.ts';
 import { reportDef, resolveParams, processResult, reportCsv } from './engine.ts';
 import { runCustom, type BuilderConfig } from './builder.ts';
@@ -36,7 +36,7 @@ export function runSavedReport(ctx: Ctx, saved: any): { csv: string; rows: numbe
 
 export function deliverSavedReport(ctx: Ctx, saved: any, date: string): string {
   const { csv, rows, name } = runSavedReport(ctx, saved);
-  const owner = q1<any>('SELECT * FROM users WHERE id=?', saved.owner_user_id);
+  const owner = q1<any>('SELECT * FROM users WHERE id=? AND org_id=?', saved.owner_user_id, ctx.orgId);
   const file = putFile(ctx, new TextEncoder().encode(csv), {
     name: `${name.replaceAll(/[^a-z0-9]+/gi, '-').toLowerCase()}-${date}.csv`,
     mime: 'text/csv',
@@ -45,6 +45,7 @@ export function deliverSavedReport(ctx: Ctx, saved: any, date: string): string {
     visibility: 'staff',
     ownerUserId: saved.owner_user_id,
   });
+  const origin = messageOrigin(ctx); // absolute links: an inbox has no page to be relative to
   if (owner?.email) {
     sendEmail(ctx, {
       to: owner.email,
@@ -52,8 +53,8 @@ export function deliverSavedReport(ctx: Ctx, saved: any, date: string): string {
       toUserId: owner.id,
       subject: `Scheduled report: ${name} — ${date}`,
       body: `<p>Your ${saved.schedule} report <b>${name}</b> ran for ${date} with <b>${rows}</b> rows.</p>
-        <p>📎 Attachment: <a href="/f/${file.id}">${file.name}</a></p>
-        <p>Manage or edit this report under <a href="/reports/saved/${saved.id}">Reports → Saved</a>.</p>`,
+        <p>📎 Attachment: <a href="${origin}/f/${file.id}">${file.name}</a></p>
+        <p>Manage or edit this report under <a href="${origin}/reports/saved/${saved.id}">Reports → Saved</a>.</p>`,
       templateKey: 'scheduled_report',
       entity: 'saved_report',
       entityId: saved.id,
@@ -81,6 +82,9 @@ registerJob({
         run('UPDATE saved_reports SET last_run_date=? WHERE id=?', date, saved.id); // never wedge the queue
       }
     }
-    return delivered ? `${delivered} report${delivered === 1 ? '' : 's'} delivered` : 'nothing scheduled today';
+    if (!delivered) return 'nothing scheduled today';
+    return isLiveOrg(ctx)
+      ? `${delivered} report${delivered === 1 ? '' : 's'} run and filed (email delivery is not connected — the file is on the saved report and in the Outbox)`
+      : `${delivered} report${delivered === 1 ? '' : 's'} delivered`;
   },
 });

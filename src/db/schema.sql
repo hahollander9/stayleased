@@ -602,7 +602,23 @@ CREATE TABLE IF NOT EXISTS refunds (
   method TEXT NOT NULL DEFAULT 'check',
   reference TEXT,
   date TEXT NOT NULL,
-  status TEXT NOT NULL DEFAULT 'issued',
+  status TEXT NOT NULL DEFAULT 'issued', -- pending (owed, check not yet written) | issued
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+
+-- One row per waived late / returned-payment fee, linking the fee to the
+-- credit that waived it. UNIQUE(charge_id) is the guard: the same fee cannot
+-- be waived (credited) twice, from any screen. A table rather than a column
+-- on charges so existing databases get it at boot with no ALTER. No foreign
+-- key on purpose: property delete and import removal clear charges without
+-- knowing this table, and an orphaned row here is inert.
+CREATE TABLE IF NOT EXISTS fee_waivers (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  charge_id TEXT NOT NULL UNIQUE,
+  waiver_charge_id TEXT NOT NULL,
+  reason TEXT NOT NULL,
   created_by TEXT,
   created_at TEXT NOT NULL
 );
@@ -818,7 +834,8 @@ CREATE TABLE IF NOT EXISTS vendors (
   phone TEXT,
   email TEXT,
   address TEXT,
-  tin_last4 TEXT, -- fake W-9 data
+  contact_name TEXT, -- the person to ask for (vendors.name is the business)
+  tin_last4 TEXT, -- last four digits of the taxpayer ID on the W-9
   w9_on_file INTEGER NOT NULL DEFAULT 0,
   is_1099 INTEGER NOT NULL DEFAULT 1,
   coi_expiry TEXT, -- insurance certificate expiry
@@ -1623,7 +1640,9 @@ CREATE TABLE IF NOT EXISTS insurance_policies (
   file_id TEXT,
   source TEXT NOT NULL DEFAULT 'upload', -- upload|enroll|auto_enroll
   reminder_stage INTEGER NOT NULL DEFAULT 0, -- lapse reminders sent (0-3)
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  reviewed_by TEXT, -- staff member who verified / rejected / recorded it
+  review_note TEXT -- why staff rejected it (shown to the resident)
 );
 CREATE INDEX IF NOT EXISTS idx_inspol ON insurance_policies(org_id, lease_id, status);
 
@@ -2368,3 +2387,48 @@ CREATE TABLE IF NOT EXISTS oi_messages (
 );
 CREATE INDEX IF NOT EXISTS idx_oi_messages ON oi_messages(org_id, status, received_at);
 CREATE INDEX IF NOT EXISTS idx_oi_messages_contact ON oi_messages(org_id, contact_id, received_at);
+
+
+-- ---------- Bank reconciliation without a feed (m9 banking) ----------
+-- Which journal entries a statement line cleared. One line can clear several
+-- entries (one deposit slip, five rent checks). bank_txn_id NULL = the entry
+-- was already at the bank before the first statement reconciled here.
+CREATE TABLE IF NOT EXISTS bank_txn_links (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  bank_account_id TEXT NOT NULL,
+  bank_txn_id TEXT,
+  entry_id TEXT NOT NULL,
+  cleared_date TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_banklink_acct ON bank_txn_links(bank_account_id, entry_id);
+CREATE INDEX IF NOT EXISTS idx_banklink_txn ON bank_txn_links(bank_txn_id);
+CREATE INDEX IF NOT EXISTS idx_pay_batch ON payments(settlement_batch_id);
+
+-- ---------- Owner distributions (m9 owners) ----------
+-- A record of money paid to owners outside StayLeased, and each owner's part.
+CREATE TABLE IF NOT EXISTS owner_distributions (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  property_id TEXT NOT NULL,
+  date TEXT NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  memo TEXT,
+  je_id TEXT,
+  status TEXT NOT NULL DEFAULT 'posted', -- posted|void
+  created_by TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ownerdist ON owner_distributions(org_id, property_id, date);
+CREATE TABLE IF NOT EXISTS owner_distribution_shares (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  distribution_id TEXT NOT NULL,
+  owner_id TEXT NOT NULL,
+  pct REAL NOT NULL,
+  amount_cents INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_ownerdist_share ON owner_distribution_shares(org_id, owner_id);

@@ -59,7 +59,11 @@ function signupPage(rq: Rq, errs: string[] = [], b: Record<string, any> = {}): R
             <button class="btn" style="width:100%;justify-content:center">Create company</button>
           </form>
           <p class="small muted" style="margin-top:12px">You'll get an empty portfolio with the standard multifamily chart of accounts, ready to import your properties, residents, and balances — no simulated data.</p>`
-        : html`<p>StayLeased is currently invite-only. If you'd like access for your portfolio, reach out and we'll set you up with an invite code.</p>`}
+        : html`<p>Early access is by invitation. Book a walkthrough and an invite code follows.</p>
+          <div class="btn-row" style="margin-top:14px">
+            <a class="btn" href="/#walkthrough">Book a live demo</a>
+            <a class="btn btn-ghost" href="/login?demo=1">Explore the demo</a>
+          </div>`}
       <p class="small muted" style="margin-top:10px">Already have an account? <a href="/login">Sign in</a></p>
     `,
   );

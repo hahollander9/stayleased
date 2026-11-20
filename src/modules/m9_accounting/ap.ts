@@ -6,11 +6,18 @@ import { can } from '../../lib/auth.ts';
 import { emit } from '../../lib/events.ts';
 import { audit } from '../../lib/audit.ts';
 import { getSetting } from '../../lib/settings.ts';
+import { orgKind } from '../../lib/jobs.ts';
 import { postJE } from './service.ts';
 
 /** M9.6 — accounts payable: vendor invoices with split GL coding, approval
- * routing by amount, payment runs (simulated check/ACH), positive-pay-style
- * register with void/reissue, and inter-property due-to/due-from automation. */
+ * routing by amount, payment runs, a payment register with void/reissue, and
+ * inter-property due-to/due-from automation.
+ *
+ * A payment run RECORDS payments: it posts the entries and lists each payment
+ * on the register. It does not print a check or send an ACH — no money moves
+ * from here. In a demo organization the simulated bank feed later "clears"
+ * them; in a real company a payment is cleared when its statement line is
+ * matched during bank reconciliation. */
 
 export interface InvoiceLineInput {
   glAccount: string;
@@ -39,6 +46,10 @@ export function createInvoice(ctx: Ctx, input: InvoiceInput): string {
   if (input.lines.some((l) => l.amountCents <= 0)) throw new Error('line amounts must be positive');
   const vendor = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', input.vendorId, ctx.orgId);
   if (!vendor) throw new Error('vendor not found');
+  // every property the invoice touches gets journal entries; none may be someone else's
+  for (const pid of new Set([input.propertyId, ...input.lines.map((l) => l.propertyId || input.propertyId)])) {
+    if (!q1('SELECT id FROM properties WHERE id=? AND org_id=?', pid, ctx.orgId)) throw new Error('property not found');
+  }
   const total = input.lines.reduce((s, l) => s + l.amountCents, 0);
   const invId = id('vin');
   tx(() => {
@@ -154,8 +165,20 @@ function nextCheckNumber(orgId: string): string {
  * differs from the invoice property, due-to/due-from automation kicks in. */
 export function createPaymentRun(
   ctx: Ctx,
-  opts: { runDate: string; method: 'check' | 'ach'; invoiceIds: string[]; payFromPropertyId?: string | null },
+  opts: {
+    runDate: string; method: 'check' | 'ach'; invoiceIds: string[]; payFromPropertyId?: string | null;
+    /** the real check number or bank reference, per invoice id, as written by the person paying */
+    references?: Record<string, string>;
+  },
 ): string {
+  // A demo organization numbers its simulated checks itself. A real company
+  // writes its own checks: inventing "check 5001" for one would put a number
+  // on the register that is on no piece of paper. There the reference is what
+  // the operator typed, or blank.
+  const autoNumber = orgKind(ctx.orgId) !== 'live';
+  if (opts.payFromPropertyId && !q1('SELECT id FROM properties WHERE id=? AND org_id=?', opts.payFromPropertyId, ctx.orgId)) {
+    throw new Error('paying property not found');
+  }
   // a repeated id would pay the same invoice twice in one run
   const invoices = [...new Set(opts.invoiceIds)].map((iid) => {
     const inv = q1<any>(`SELECT * FROM vendor_invoices WHERE id=? AND org_id=? AND status='approved'`, iid, ctx.orgId);
@@ -173,8 +196,9 @@ export function createPaymentRun(
     for (const inv of invoices) {
       const payer = opts.payFromPropertyId || inv.property_id;
       const payId = id('app');
-      const checkNo = nextCheckNumber(ctx.orgId);
-      const jeId = postApJes(ctx, inv, payer, opts.runDate, checkNo);
+      const typed = String(opts.references?.[inv.id] || '').trim().slice(0, 40);
+      const checkNo = typed || (autoNumber ? nextCheckNumber(ctx.orgId) : '');
+      const jeId = postApJes(ctx, inv, payer, opts.runDate, checkNo, opts.method);
       insert('ap_payments', {
         id: payId, org_id: ctx.orgId, run_id: runId, invoice_id: inv.id, vendor_id: inv.vendor_id,
         property_id: payer, amount_cents: inv.total_cents, method: opts.method,
@@ -188,47 +212,65 @@ export function createPaymentRun(
   return runId;
 }
 
-/** accrual: DR 2010 / CR 1010 (+ due-to/due-from when payer ≠ invoice property);
- * cash basis recognizes the expense at payment. */
-function postApJes(ctx: Ctx, inv: any, payerPropId: string, date: string, checkNo: string): string {
+/** The entries behind one payment.
+ *
+ * An invoice can be coded to several properties (a shared landscaping bill).
+ * Approval put each property's expense and its own share of AP on its own
+ * books, so payment has to relieve AP property by property too:
+ *
+ *   paying property   accrual  DR 2010 its own share · DR 1300 the others' share · CR 1010 the whole check
+ *                     cash     DR its own expense lines · DR 1300 the others' share · CR 1010
+ *   each other one    accrual  DR 2010 its share · CR 2300 (owed to the payer)
+ *                     cash     DR its expense lines · CR 2300
+ *
+ * This used to look only at the invoice header: the header property's AP was
+ * debited for the whole check, so it went negative while the line property's
+ * AP could never be paid, and the two bases disagreed about who bore the cost.
+ * With every line on the paying property it reduces to DR 2010 / CR 1010. */
+function postApJes(ctx: Ctx, inv: any, payerPropId: string, date: string, checkNo: string, method: string = 'check'): string {
   const lines = q<any>('SELECT * FROM vendor_invoice_lines WHERE invoice_id=?', inv.id);
   const vendor = vendorName(ctx, inv.vendor_id);
-  const memo = `Pay ${vendor} — inv ${inv.invoice_number} (check ${checkNo})`;
-  let jeId = '';
-  const intercompany = payerPropId !== inv.property_id;
-  if (!intercompany) {
-    jeId = postJE(ctx, {
-      propertyId: inv.property_id, date, basis: 'accrual', memo, sourceKind: 'ap_payment', sourceId: inv.id,
-      lines: [{ account: '2010', debit: inv.total_cents }, { account: '1010', credit: inv.total_cents }],
+  const how = checkNo ? `${method === 'ach' ? 'ACH' : 'check'} ${checkNo}` : method === 'ach' ? 'ACH' : 'check';
+  const memo = `Pay ${vendor} — inv ${inv.invoice_number} (${how})`;
+  const byProp = new Map<string, any[]>();
+  for (const l of lines) {
+    const pid = (l.property_id as string) || (inv.property_id as string);
+    byProp.set(pid, [...(byProp.get(pid) || []), l]);
+  }
+  const sum = (ls: any[]): number => ls.reduce((s2, l) => s2 + (l.amount_cents as number), 0);
+  const expense = (ls: any[]): { account: string; debit: number; memo: string }[] =>
+    ls.map((l) => ({ account: l.gl_account as string, debit: l.amount_cents as number, memo: l.description as string }));
+  const own = byProp.get(payerPropId) || [];
+  const ownCents = sum(own);
+  const othersCents = inv.total_cents - ownCents;
+  const payerMemo = othersCents === 0 ? memo : ownCents === 0 ? `${memo} on behalf of affiliate` : `${memo} — part on behalf of affiliates`;
+  const jeId = postJE(ctx, {
+    propertyId: payerPropId, date, basis: 'accrual', memo: payerMemo, sourceKind: 'ap_payment', sourceId: inv.id,
+    lines: [
+      ...(ownCents ? [{ account: '2010', debit: ownCents }] : []),
+      ...(othersCents ? [{ account: '1300', debit: othersCents }] : []),
+      { account: '1010', credit: inv.total_cents },
+    ],
+  });
+  postJE(ctx, {
+    propertyId: payerPropId, date, basis: 'cash', memo: payerMemo, sourceKind: 'ap_payment', sourceId: inv.id,
+    lines: [
+      ...expense(own),
+      ...(othersCents ? [{ account: '1300', debit: othersCents }] : []),
+      { account: '1010', credit: inv.total_cents },
+    ],
+  });
+  for (const [pid, ls] of byProp) {
+    if (pid === payerPropId) continue;
+    const share = sum(ls);
+    // this property: AP relieved without paying cash; it now owes the payer
+    postJE(ctx, {
+      propertyId: pid, date, basis: 'accrual', memo: `${memo} — paid by affiliate`, sourceKind: 'intercompany', sourceId: inv.id,
+      lines: [{ account: '2010', debit: share }, { account: '2300', credit: share }],
     });
     postJE(ctx, {
-      propertyId: inv.property_id, date, basis: 'cash', memo, sourceKind: 'ap_payment', sourceId: inv.id,
-      lines: [
-        ...lines.map((l: any) => ({ account: l.gl_account, debit: l.amount_cents, memo: l.description })),
-        { account: '1010', credit: inv.total_cents },
-      ],
-    });
-  } else {
-    // payer property: cash out, due-from affiliate
-    jeId = postJE(ctx, {
-      propertyId: payerPropId, date, basis: 'accrual', memo: `${memo} on behalf of affiliate`, sourceKind: 'ap_payment', sourceId: inv.id,
-      lines: [{ account: '1300', debit: inv.total_cents }, { account: '1010', credit: inv.total_cents }],
-    });
-    postJE(ctx, {
-      propertyId: payerPropId, date, basis: 'cash', memo: `${memo} on behalf of affiliate`, sourceKind: 'ap_payment', sourceId: inv.id,
-      lines: [{ account: '1300', debit: inv.total_cents }, { account: '1010', credit: inv.total_cents }],
-    });
-    // invoice property: AP relieved, due-to affiliate
-    postJE(ctx, {
-      propertyId: inv.property_id, date, basis: 'accrual', memo: `${memo} — paid by affiliate`, sourceKind: 'intercompany', sourceId: inv.id,
-      lines: [{ account: '2010', debit: inv.total_cents }, { account: '2300', credit: inv.total_cents }],
-    });
-    postJE(ctx, {
-      propertyId: inv.property_id, date, basis: 'cash', memo: `${memo} — paid by affiliate`, sourceKind: 'intercompany', sourceId: inv.id,
-      lines: [
-        ...lines.map((l: any) => ({ account: l.gl_account, debit: l.amount_cents, memo: l.description })),
-        { account: '2300', credit: inv.total_cents },
-      ],
+      propertyId: pid, date, basis: 'cash', memo: `${memo} — paid by affiliate`, sourceKind: 'intercompany', sourceId: inv.id,
+      lines: [...expense(ls), { account: '2300', credit: share }],
     });
   }
   return jeId;
@@ -268,7 +310,7 @@ export function voidApPayment(ctx: Ctx, paymentId: string, reason: string, reiss
       const jl = q<any>('SELECT * FROM journal_lines WHERE entry_id=?', je.id);
       postJE(ctx, {
         propertyId: je.property_id, date: ctx.businessDate, basis: je.basis,
-        memo: `VOID check ${p.check_number}: ${reason}`, sourceKind: 'ap_void', sourceId: paymentId, reversalOf: je.id,
+        memo: `VOID ${p.method === 'ach' ? 'ACH' : 'check'}${p.check_number ? ` ${p.check_number}` : ''}: ${reason}`, sourceKind: 'ap_void', sourceId: paymentId, reversalOf: je.id,
         lines: jl.filter((l: any) => l.debit_cents || l.credit_cents).map((l: any) => ({ account: l.account_code, debit: l.credit_cents || undefined, credit: l.debit_cents || undefined })),
       });
     }

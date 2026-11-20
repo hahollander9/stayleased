@@ -1,16 +1,18 @@
 import { html, raw, when, esc, type Child, type Raw } from '../../lib/html.ts';
 import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, propFilter, canAccessProperty, can, hashPassword, tempPassword, type Ctx } from '../../lib/auth.ts';
-import { q, q1, val, run, j } from '../../lib/db.ts';
+import { q, q1, val, run, j, insert, tx } from '../../lib/db.ts';
+import { id } from '../../lib/ids.ts';
 import { toCsv } from '../../lib/csv.ts';
 import { audit } from '../../lib/audit.ts';
 import { ensurePortalAccess } from './portal.ts';
-import { fmtDate, diffDays } from '../../lib/dates.ts';
-import { usd } from '../../lib/money.ts';
+import { fmtDate, diffDays, addMonths, addDays, nowIso, minDate } from '../../lib/dates.ts';
+import { usd, parseUsd } from '../../lib/money.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, select, registerNav, registerSearch,
   historyPanel, pager, emptyState, input, viewBar, rememberDensity, type Density, type Col,
 } from '../../ui/ui.ts';
+import { createLeaseManual, recordNotice, withdrawNotice, recordMoveOut, cancelPendingLease, PENDING_STATUSES, MANUAL_ENTRY_BATCH, type ManualLeasePerson } from '../m6_leases/service.ts';
 import { leaseLedger, leaseBalance } from '../m8_receivables/service.ts';
 
 registerNav('Residents', { href: '/residents', label: 'Residents', perm: 'residents:view', match: ['/residents'] });
@@ -121,6 +123,97 @@ function residentListRows(ctx: Ctx, rq: Rq): { rows: any[]; sort: ResidentSort |
     rows.sort((a, b) => sgn * cmp(a, b));
   }
   return { rows, sort, dir, query };
+}
+
+// ---------- a lease entered by hand: the form ----------
+
+const EXTRA_PEOPLE = 3;
+const EMAIL_RE = /^[^@\s]+@[^@\s]+\.[^@\s]+$/;
+
+/** an optional money field: '' → fallback; garbage → a message a person can act on */
+function moneyField(raw: unknown, label: string, fallback: number | null = null): number {
+  const s = String(raw ?? '').trim();
+  if (!s) {
+    if (fallback === null) throw new Error(`Enter ${label}.`);
+    return fallback;
+  }
+  try {
+    return parseUsd(s);
+  } catch {
+    throw new Error(`${label[0]!.toUpperCase()}${label.slice(1)} must be an amount, like 1450.00.`);
+  }
+}
+
+/** units this person may lease right now: no current household, nothing in progress */
+function leasableUnits(ctx: Ctx): any[] {
+  const pf = propFilter(ctx, 'u.property_id');
+  return q<any>(
+    `SELECT u.id, u.unit_number, u.status, u.market_rent_cents, p.name AS prop_name FROM units u
+     JOIN properties p ON p.id=u.property_id
+     WHERE u.org_id=?${pf.sql}
+       AND NOT EXISTS (SELECT 1 FROM leases l WHERE l.unit_id=u.id AND l.org_id=u.org_id
+         AND ((l.status IN ('active','month_to_month') AND l.move_out_date IS NULL)
+           OR (l.renewal_of_lease_id IS NULL AND l.status IN ('draft','out_for_signature','partially_signed','fully_executed'))))
+     ORDER BY p.name, u.unit_number`,
+    ctx.orgId, ...pf.params,
+  ).sort((a, b) => String(a.prop_name).localeCompare(String(b.prop_name))
+    || String(a.unit_number).localeCompare(String(b.unit_number), 'en', { numeric: true }));
+}
+
+function newLeaseForm(rq: Rq, b: Record<string, unknown>, err?: string) {
+  const ctx = rq.ctx as Ctx;
+  const units = leasableUnits(ctx);
+  const val0 = (k: string, d = ''): string => (b[k] === undefined ? d : String(b[k]));
+  const today = ctx.businessDate;
+  if (!units.length) {
+    return shell(rq, {
+      title: 'New lease', active: '/leases', crumbs: [['Leases', '/leases']],
+      content: emptyState('No unit is free for a new lease', 'Every unit already has a current lease or one in progress. Add units under Properties, or record a move-out first.', html`<a class="btn" href="/properties">Go to properties</a>`),
+    });
+  }
+  const unitNote: Record<string, string> = { vacant_ready: 'vacant', vacant_not_ready: 'vacant, not ready', notice: 'on notice', occupied: 'no lease on file', down: 'down', model: 'model' };
+  const person = (i: number): Raw => html`
+    <div class="grid cols-2">
+      ${field(i === 0 ? 'First name' : `Person ${i + 1} first name`, input(`p${i}_first`, { value: val0(`p${i}_first`), required: i === 0 }))}
+      ${field(i === 0 ? 'Last name' : `Person ${i + 1} last name`, input(`p${i}_last`, { value: val0(`p${i}_last`), required: i === 0 }))}
+      ${field(i === 0 ? 'Email' : `Person ${i + 1} email`, input(`p${i}_email`, { value: val0(`p${i}_email`), type: 'email' }), i === 0 ? 'Optional. Needed later for portal access and e-signature.' : undefined)}
+      ${field(i === 0 ? 'Phone' : `Person ${i + 1} phone`, input(`p${i}_phone`, { value: val0(`p${i}_phone`), type: 'tel' }))}
+    </div>
+    ${when(i > 0, () => field(`Person ${i + 1} is a`, select(`p${i}_role`, [['co', 'Co-resident (on the lease)'], ['occupant', 'Occupant (lives here, not on the lease)'], ['guarantor', 'Guarantor']], val0(`p${i}_role`, 'co'))))}`;
+  return shell(rq, {
+    title: 'New lease',
+    active: '/leases',
+    crumbs: [['Leases', '/leases']],
+    subtitle: 'Enter a lease by hand — for a new move-in, or a household that already lives here.',
+    content: html`
+      ${when(err, () => html`<div class="flash err" role="alert">${err}</div>`)}
+      <form method="post" action="/leases/new">
+        ${card('Home', field('Unit', select('unit_id', units.map((u): [string, string] => [u.id, `${u.prop_name} · ${u.unit_number} (${unitNote[u.status as string] || u.status})`]), val0('unit_id', rq.query.get('unit') || ''), { required: true, blank: 'Choose a unit…' }),
+          'Only units without a current lease are listed.'))}
+        ${card('Primary resident', html`${person(0)}
+          ${field('Household name', input('household_name', { value: val0('household_name'), placeholder: 'Leave blank to use the resident’s name' }))}`)}
+        ${card('Other people (optional)', html`${Array.from({ length: EXTRA_PEOPLE }, (_, k) => html`${person(k + 1)}${k < EXTRA_PEOPLE - 1 ? raw('<hr style="border:0;border-top:1px solid var(--line);margin:12px 0" />') : ''}`)}
+          <p class="small muted">More people can be added from the lease page afterwards.</p>`)}
+        ${card('Term and rent', html`<div class="grid cols-2">
+          ${field('Lease start', input('start_date', { type: 'date', required: true, value: val0('start_date', today) }))}
+          ${field('Lease end', input('end_date', { type: 'date', required: true, value: val0('end_date', addDays(addMonths(today, 12), -1)) }))}
+          ${field('Monthly rent', raw(`<input id="nl_rent" name="rent" type="text" inputmode="decimal" value="${esc(val0('rent'))}" placeholder="0.00" required />`))}
+          ${field('Moved in on', input('move_in_date', { type: 'date', value: val0('move_in_date') }), 'Only if different from the lease start. The first month is prorated from this date.')}
+        </div>`)}
+        ${card('Security deposit', html`<div class="grid cols-2">
+          ${field('Deposit amount', raw(`<input id="nl_deposit" name="deposit" type="text" inputmode="decimal" value="${esc(val0('deposit'))}" placeholder="0.00" />`), 'Leave blank if there is no deposit.')}
+          ${field('Has the deposit been collected?', select('deposit_on_hand', [['no', 'Not yet — bill it to the household at move-in'], ['yes', 'Yes — it is already in the bank']], val0('deposit_on_hand', 'no')),
+            'If it is already in the bank it is recorded as held and not billed again. If it is collected later, record that payment on the lease.')}
+        </div>`)}
+        ${card('If the household already lives here', html`<div class="grid cols-2">
+          ${field('Start billing rent from', input('billing_start_date', { type: 'date', value: val0('billing_start_date') }), 'The first month this system should bill. Leave blank to bill from the lease start.')}
+          ${field('Balance owed today', raw(`<input id="nl_opening_balance" name="opening_balance" type="text" inputmode="decimal" value="${esc(val0('opening_balance'))}" placeholder="0.00" />`), 'What the household owes right now for earlier months, if anything. It becomes the first line of their ledger.')}
+        </div>`)}
+        ${card('Signature', field('Is the lease signed?', select('signed', [['yes', 'Yes, signed on paper — make it active'], ['no', 'Not yet — save a draft to send for e-signature']], val0('signed', 'yes')),
+          'A signed lease becomes active on its start date (right away if that date has passed): the unit shows occupied and rent is billed.'))}
+        <button class="btn">Create lease</button> <a class="btn btn-ghost" href="/leases">Cancel</a>
+      </form>`,
+  });
 }
 
 export function routes(r: Router): void {
@@ -311,7 +404,18 @@ export function routes(r: Router): void {
               : res.email
                 ? html`<form method="post" action="/residents/${res.id}/portal-invite"><button class="btn btn-sm">Create portal access & send invite</button></form>`
                 : html`<span class="muted small">Add an email to enable portal access.</span>`}
-          </div>`)}`)}
+          </div>
+          <details style="margin-top:12px"><summary class="small"><b>Edit name and contact details</b></summary>
+            <form method="post" action="/residents/${res.id}" style="margin-top:10px">
+              <div class="grid cols-2">
+                ${field('First name', input('first_name', { value: res.first_name, required: true }))}
+                ${field('Last name', input('last_name', { value: res.last_name, required: true }))}
+                ${field('Email', input('email', { value: res.email || '', type: 'email' }), res.user_id ? 'Also changes the email this resident signs in to the portal with.' : undefined)}
+                ${field('Phone', input('phone', { value: res.phone || '', type: 'tel' }))}
+              </div>
+              <button class="btn btn-sm">Save changes</button>
+            </form>
+          </details>`)}`)}
           ${card('Household extras', html`
             ${dl([
               ['Pets', pets.length ? pets.map((x) => `${x.name} (${x.species}${x.breed ? ` · ${x.breed}` : ''})`).join(', ') : 'None'],
@@ -340,6 +444,153 @@ export function routes(r: Router): void {
   // ---------- leases ----------
   // portal access from the resident record — create+invite, or rotate the
   // credential and show it once (the m1 staff-reset pattern, for residents)
+  r.post('/residents/:id', requirePerm('residents:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const res = q1<any>('SELECT * FROM residents WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!res || !canAccessProperty(ctx, res.property_id)) return notFound('Resident not found');
+    const first = String(rq.body.first_name || '').trim();
+    const last = String(rq.body.last_name || '').trim();
+    const email = String(rq.body.email || '').trim().toLowerCase();
+    const phone = String(rq.body.phone || '').trim();
+    const back = (msg: string) => redirect(`/residents/${res.id}`, msg, 'err');
+    if (!first || !last) return back('Enter a first and last name.');
+    if (email && !EMAIL_RE.test(email)) return back('That email address does not look right.');
+    if (res.user_id && !email) return back('This resident signs in to the portal with their email, so it cannot be blank.');
+    if (res.user_id && email !== String(res.email || '').toLowerCase()
+      && q1('SELECT id FROM users WHERE email=? AND id != ?', email, res.user_id)) {
+      return back('Another account already signs in with that email address.');
+    }
+    tx(() => {
+      run('UPDATE residents SET first_name=?, last_name=?, email=?, phone=? WHERE id=? AND org_id=?', first, last, email || null, phone || null, res.id, ctx.orgId);
+      // the portal sign-in follows the resident's email and name
+      if (res.user_id) run(`UPDATE users SET email=?, name=? WHERE id=? AND org_id=? AND kind='resident'`, email, `${first} ${last}`, res.user_id, ctx.orgId);
+    });
+    audit(ctx, 'resident', res.id, 'update',
+      { first_name: res.first_name, last_name: res.last_name, email: res.email, phone: res.phone },
+      { first_name: first, last_name: last, email: email || null, phone: phone || null });
+    return redirect(`/residents/${res.id}`, 'Saved.');
+  });
+
+  // ---------- a lease entered by hand (registered before /leases/:id) ----------
+  r.get('/leases/new', requirePerm('leases:manage'), (rq) => newLeaseForm(rq, {}));
+
+  r.post('/leases/new', requirePerm('leases:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const b = rq.body as Record<string, unknown>;
+    const str = (k: string): string => String(b[k] ?? '').trim();
+    let out: { leaseId: string; status: string };
+    try {
+      const unit = q1<any>('SELECT id, property_id FROM units WHERE id=? AND org_id=?', str('unit_id'), ctx.orgId);
+      if (!unit || !canAccessProperty(ctx, unit.property_id)) throw new Error('Choose a unit.');
+      const people: ManualLeasePerson[] = [];
+      for (let i = 0; i <= EXTRA_PEOPLE; i++) {
+        const role = i === 0 ? 'primary' : str(`p${i}_role`);
+        if (!['primary', 'co', 'occupant', 'guarantor'].includes(role)) continue;
+        people.push({
+          firstName: str(`p${i}_first`), lastName: str(`p${i}_last`), email: str(`p${i}_email`), phone: str(`p${i}_phone`),
+          role: role as ManualLeasePerson['role'],
+        });
+      }
+      out = createLeaseManual(ctx, {
+        unitId: unit.id, people, householdName: str('household_name'),
+        startDate: str('start_date'), endDate: str('end_date'), moveInDate: str('move_in_date') || null,
+        rentCents: moneyField(b.rent, 'the monthly rent'),
+        depositCents: moneyField(b.deposit, 'the deposit', 0),
+        depositOnHand: str('deposit_on_hand') === 'yes',
+        billingStartDate: str('billing_start_date') || null,
+        openingBalanceCents: moneyField(b.opening_balance, 'the balance owed', 0),
+        signed: str('signed') !== 'no',
+      });
+    } catch (e) {
+      return newLeaseForm(rq, b, (e as Error).message);
+    }
+    const lease = q1<any>('SELECT start_date FROM leases WHERE id=?', out.leaseId);
+    return redirect(
+      `/leases/${out.leaseId}?tab=overview`,
+      out.status === 'active' ? 'Lease created and active — the unit is occupied and rent is on the ledger.'
+        : out.status === 'fully_executed' ? `Lease saved. It becomes active on ${fmtDate(lease.start_date)}, and rent is billed from then.`
+          : 'Draft lease saved. Send it for signature when it is ready.',
+    );
+  });
+
+  // ---------- notice to vacate and move-out, recorded by staff ----------
+  const leaseFor = (rq: Rq): any => {
+    const ctx = rq.ctx as Ctx;
+    const l = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    return l && canAccessProperty(ctx, l.property_id) ? l : null;
+  };
+  const leaseAction = (rq: Rq, ok: string, fn: (ctx: Ctx, l: any) => void) => {
+    const l = leaseFor(rq);
+    if (!l) return notFound('Lease not found');
+    try {
+      fn(rq.ctx as Ctx, l);
+    } catch (e) {
+      return redirect(`/leases/${l.id}?tab=overview`, (e as Error).message, 'err');
+    }
+    return redirect(`/leases/${l.id}?tab=overview`, ok);
+  };
+
+  r.post('/leases/:id/notice', requirePerm('leases:manage'), (rq) =>
+    leaseAction(rq, 'Notice recorded. The unit shows on notice and its make-ready is scheduled. Rent is billed through the move-out date.', (ctx, l) =>
+      recordNotice(ctx, l.id, String(rq.body.move_out || ''), { noticeDate: String(rq.body.notice_date || '') || null })));
+
+  r.post('/leases/:id/notice/withdraw', requirePerm('leases:manage'), (rq) =>
+    leaseAction(rq, 'Notice withdrawn — the household is staying, and rent is billed in full again.', (ctx, l) => withdrawNotice(ctx, l.id)));
+
+  r.post('/leases/:id/move-out', requirePerm('leases:manage'), (rq) =>
+    leaseAction(rq, 'Move-out recorded. The lease has ended, rent is billed through the move-out date, and the unit is vacant. Settle the deposit on the Deposit tab.', (ctx, l) =>
+      recordMoveOut(ctx, l.id, String(rq.body.move_out || ''))));
+
+  // ---------- cancel a lease that never started ----------
+  r.post('/leases/:id/cancel', requirePerm('leases:manage'), (rq) => {
+    const l = leaseFor(rq);
+    if (!l) return notFound('Lease not found');
+    let out: { depositReversedCents: number };
+    try {
+      out = cancelPendingLease(rq.ctx as Ctx, l.id);
+    } catch (e) {
+      return redirect(`/leases/${l.id}?tab=overview`, (e as Error).message, 'err');
+    }
+    return redirect(`/leases/${l.id}?tab=overview`, out.depositReversedCents > 0
+      ? `Lease canceled. The unit is free for another lease. The ${usd(out.depositReversedCents)} deposit is no longer recorded as held — return that money to the household yourself; nothing was sent.`
+      : 'Lease canceled. The unit is free for another lease. No money was recorded on it.');
+  });
+
+  // ---------- household: add or remove a person ----------
+  r.post('/leases/:id/household', requirePerm('residents:manage'), (rq) =>
+    leaseAction(rq, 'Added to the household.', (ctx, l) => {
+      if (['ended', 'renewed', 'canceled'].includes(l.status)) throw new Error('This lease is closed — its household can no longer be changed.');
+      const first = String(rq.body.first_name || '').trim();
+      const last = String(rq.body.last_name || '').trim();
+      const email = String(rq.body.email || '').trim().toLowerCase();
+      const phone = String(rq.body.phone || '').trim();
+      const role = String(rq.body.role || 'co');
+      if (!first || !last) throw new Error('Enter a first and last name.');
+      if (!['co', 'occupant', 'guarantor'].includes(role)) throw new Error('Choose how this person is on the lease.');
+      if (email && !EMAIL_RE.test(email)) throw new Error('That email address does not look right.');
+      const rid = id('res');
+      tx(() => {
+        insert('residents', {
+          id: rid, org_id: ctx.orgId, property_id: l.property_id, user_id: null, first_name: first, last_name: last,
+          email: email || null, phone: phone || null,
+          kind: role === 'guarantor' ? 'guarantor' : role === 'occupant' ? 'occupant' : 'adult', created_at: nowIso(),
+        });
+        insert('household_members', { id: id('hm'), org_id: ctx.orgId, lease_id: l.id, resident_id: rid, role, created_at: nowIso() });
+      });
+      audit(ctx, 'lease', l.id, 'household_add', null, { resident: rid, name: `${first} ${last}`, role });
+    }));
+
+  r.post('/leases/:id/household/:rid/remove', requirePerm('residents:manage'), (rq) =>
+    leaseAction(rq, 'Removed from this lease. Their record is kept.', (ctx, l) => {
+      const hm = q1<any>(
+        `SELECT hm.id, hm.role, r.first_name, r.last_name FROM household_members hm JOIN residents r ON r.id=hm.resident_id
+         WHERE hm.lease_id=? AND hm.resident_id=? AND hm.org_id=?`, l.id, rq.params.rid!, ctx.orgId);
+      if (!hm) throw new Error('That person is not on this lease.');
+      if (hm.role === 'primary') throw new Error('The primary resident cannot be removed — a lease needs someone responsible for it.');
+      run('DELETE FROM household_members WHERE id=? AND org_id=?', hm.id, ctx.orgId);
+      audit(ctx, 'lease', l.id, 'household_remove', { resident: rq.params.rid, name: `${hm.first_name} ${hm.last_name}`, role: hm.role }, null);
+    }));
+
   r.post('/residents/:id/portal-invite', requirePerm('residents:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const res = q1<any>('SELECT * FROM residents WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
@@ -389,6 +640,7 @@ export function routes(r: Router): void {
       title: 'Leases',
       active: '/leases',
       subtitle: `${total} lease${total === 1 ? '' : 's'}${status ? ` · ${status}` : ' · current'}`,
+      actions: when(can(ctx, 'leases:manage'), () => html`<a class="btn" href="/leases/new">New lease</a>`),
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Status', select('status', LEASE_STATUSES.map((s): [string, string] => [s, s.replaceAll('_', ' ')]), status, { blank: 'Current (active/MTM/notice)' }))}
@@ -463,6 +715,51 @@ export function routes(r: Router): void {
             })),
           ), { flush: true })}
         </div>
+        ${when(can(ctx, 'residents:manage') && !['ended', 'renewed', 'canceled'].includes(l.status), () => card('Change the household', html`
+          <form method="post" action="/leases/${l.id}/household">
+            <div class="grid cols-2">
+              ${field('First name', input('first_name', { required: true }))}
+              ${field('Last name', input('last_name', { required: true }))}
+              ${field('Email', input('email', { type: 'email' }))}
+              ${field('Phone', input('phone', { type: 'tel' }))}
+            </div>
+            ${field('This person is a', select('role', [['co', 'Co-resident (on the lease)'], ['occupant', 'Occupant (lives here, not on the lease)'], ['guarantor', 'Guarantor']], 'co'))}
+            <button class="btn btn-sm">Add person</button>
+          </form>
+          ${when(household.some((h) => h.role !== 'primary'), () => html`<div style="margin-top:12px">${household.filter((h) => h.role !== 'primary').map((h) => html`
+            <form method="post" action="/leases/${l.id}/household/${h.id}/remove" data-confirm="Remove ${h.first_name} ${h.last_name} from this lease?" style="display:inline-block;margin:0 6px 6px 0">
+              <button class="btn btn-sm btn-ghost">Remove ${h.first_name} ${h.last_name}</button>
+            </form>`)}</div>`)}
+          <p class="small muted" style="margin-top:8px">To correct a name, email or phone, open the person from the household list.</p>`))}
+        ${when(can(ctx, 'leases:manage') && ['active', 'month_to_month', 'notice', 'ended'].includes(l.status), () => card('Notice and move-out', l.status === 'ended'
+          ? html`<p>Moved out ${fmtDate(l.move_out_date || l.end_date)}. <a href="/leases/${l.id}?tab=deposit">Settle the deposit</a> once final charges are on the ledger.</p>`
+          : html`
+          <div class="grid cols-2">
+            <form method="post" action="/leases/${l.id}/notice">
+              <h3 style="font-size:14px;margin:0 0 6px">${l.status === 'notice' ? 'Change the planned move-out' : 'Record notice to vacate'}</h3>
+              ${field('Notice given on', input('notice_date', { type: 'date', required: true, max: ctx.businessDate, value: l.notice_date || ctx.businessDate }))}
+              ${field('Planned move-out date', input('move_out', { type: 'date', required: true, value: l.move_out_date || '' }))}
+              <button class="btn btn-sm">${l.status === 'notice' ? 'Save' : 'Record notice'}</button>
+              <p class="small muted" style="margin-top:6px">The unit shows as on notice and its make-ready is scheduled. The lease ends on the move-out date, and rent is billed through that day — a month already billed is adjusted.</p>
+            </form>
+            <form method="post" action="/leases/${l.id}/move-out" data-confirm="End this lease as of the move-out date? The unit becomes vacant.">
+              <h3 style="font-size:14px;margin:0 0 6px">Record the move-out</h3>
+              ${field('Moved out on', input('move_out', { type: 'date', required: true, max: ctx.businessDate, value: l.move_out_date ? minDate(l.move_out_date, ctx.businessDate) : ctx.businessDate }))}
+              <button class="btn btn-sm btn-danger">End lease</button>
+              <p class="small muted" style="margin-top:6px">Use this once the household has actually left — on the planned day, earlier or later. Rent is billed through that day: anything already billed past it is credited back, and the unit becomes vacant.</p>
+            </form>
+          </div>
+          ${when(l.status === 'notice', () => html`<form method="post" action="/leases/${l.id}/notice/withdraw" data-confirm="Withdraw the notice? The household stays and the make-ready is canceled." style="margin-top:10px">
+            <button class="btn btn-sm btn-ghost">Withdraw notice — the household is staying</button></form>`)}`))}
+        ${when(can(ctx, 'leases:manage') && PENDING_STATUSES.includes(l.status) && !l.renewal_of_lease_id && (!l.import_batch_id || l.import_batch_id === MANUAL_ENTRY_BATCH), () => card('Cancel this lease', html`
+          <p>This lease has not started. Cancel it if the household is not moving in or it was entered by mistake — the unit is free for another lease and nothing is billed.</p>
+          <p class="small muted">${l.deposit_on_hand && l.deposit_cents > 0
+            ? `The ${usd(l.deposit_cents)} deposit recorded as already held comes off the books: deposit cash and deposits held both go down by ${usd(l.deposit_cents)}. Return that money to the household yourself — canceling does not send a payment.`
+            : 'No deposit or rent has been recorded on this lease, so there is no money to return.'}</p>
+          <form method="post" action="/leases/${l.id}/cancel" data-confirm="Cancel this lease? This cannot be undone.">
+            <button class="btn btn-sm btn-danger">Cancel lease</button>
+          </form>`))}
+        ${when(l.status === 'canceled', () => card('Canceled', html`<p>This lease was canceled before it started. Nothing is billed on it and the unit is free for another lease.</p>`))}
         ${card('Recurring charge schedule', tbl(
           [{ label: 'Charge' }, { label: 'Kind' }, { label: 'Window' }, { label: 'Monthly', num: true }],
           schedule.map((s) => ({

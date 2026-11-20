@@ -806,6 +806,29 @@ html[data-theme="dark"] .mk-hero-clip::before { background: radial-gradient(46% 
 .mk-card, .mkp-sub, .mkp-points li, .mkp-stat { overflow-wrap: break-word; }
 .mk-hero-in > *, .mkp-hero-in > *, .mk-grid2 > *, .mk-grid3 > *, .mk-grid5 > *, .mk-two > *, .mk-two-col > * { min-width: 0; }
 
+/* ---------- calm pass (2026-11-18) ----------
+ * The first screen was all type: a 92px headline over three lines, with the one
+ * product image starting below the fold, cropped and faded until its text was
+ * 7px. The headline steps down, the image comes up whole and readable, and the
+ * small grey labels come up to a size a person reads without leaning in. */
+.mk-hero-in { padding-top: 52px; }
+.mk-hero h1 { font-size: clamp(40px, 5vw, 66px); line-height: 1.02; letter-spacing: -.03em; }
+.mk-sub { font-size: 18.5px; margin: 20px auto 26px; }
+.mk-shotwrap { padding-top: 22px; }
+.mk-shot { max-height: none; }
+.mk-shot::after { content: none; }
+.mk-lead { font-size: 18px; line-height: 1.55; }
+.mk-card p { font-size: 15.5px; line-height: 1.55; }
+.mk-hero-note { color: var(--ink2); }
+.mk-kicker { letter-spacing: .04em; }
+.mk-form-grid > label { min-width: 0; }
+.mk-form-card input, .mk-form-card select, .mk-form-card textarea { width: 100%; box-sizing: border-box; min-height: 44px; font-size: 16px; }
+@media (max-width: 760px) {
+  .mk-hero h1 { font-size: clamp(34px, 9vw, 44px); }
+  .mk-shot { max-height: none; }
+  #mktop { display: none; }
+}
+
 /* responsive */
 @media (max-width: 980px) {
   .mk-wrap { padding: 0 24px; }

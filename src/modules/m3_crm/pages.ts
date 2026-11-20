@@ -18,6 +18,7 @@ import {
   buildQuote, quotedRent, funnelStats, roundRobinAssign, highExposureFloorplans, LEAD_SOURCES, completeNextTask,
 } from './service.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
+import { isLiveOrg, deliveryNote } from '../../lib/sim/messaging.ts';
 
 registerNav('Leasing', { href: '/leads', label: 'Leads', perm: 'leasing:view', match: ['/leads'] });
 registerNav('Leasing', { href: '/tours', label: 'Tours', perm: 'leasing:view' });
@@ -323,7 +324,7 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect(`/leads/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/leads/${rq.params.id}`, 'Sent (see Message console).');
+    return redirect(`/leads/${rq.params.id}`, `${deliveryNote(ctx)}.`);
   });
 
   r.post('/leads/:id/call', requirePerm('leasing:manage'), (rq) => {
@@ -357,7 +358,7 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect(`/leads/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/leads/${rq.params.id}`, 'Tour booked — confirmation sent.');
+    return redirect(`/leads/${rq.params.id}`, isLiveOrg(ctx) ? 'Tour booked. The confirmation was not emailed — it is saved in the Outbox, because email delivery is not connected yet.' : 'Tour booked — confirmation sent.');
   });
 
   r.post('/tours/:id/complete', requirePerm('leasing:manage'), (rq) => {
@@ -386,7 +387,7 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect(`/leads/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/leads/${rq.params.id}`, 'Quote built and emailed.');
+    return redirect(`/leads/${rq.params.id}`, isLiveOrg(ctx) ? 'Quote built. It was not emailed — the message is saved in the Outbox, because email delivery is not connected yet.' : 'Quote built and emailed.');
   });
 
   // ---------- tours schedule ----------

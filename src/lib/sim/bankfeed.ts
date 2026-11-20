@@ -46,6 +46,13 @@ function put(orgId: string, accountId: string, t: {
 
 /** import everything knowable through `through` (the org business date). */
 export function importFeed(orgId: string, bankAccountId: string, through: string): number {
+  // Fenced where it WRITES (security doctrine, #122). This function invents
+  // bank lines from the books, marks vendor payments cleared and mirrors
+  // journal entries as if a bank had reported them. In a real company that is
+  // fabricated bank evidence, so it does nothing there — whichever route,
+  // job or button called it. A live org's statement lines come from a file
+  // the operator uploads or lines they type in.
+  if (q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', orgId)?.kind === 'live') return 0;
   const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', bankAccountId, orgId);
   if (!acct) throw new Error('bank account not found');
   const propId = acct.property_id;

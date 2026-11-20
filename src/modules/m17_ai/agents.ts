@@ -1,21 +1,23 @@
-import { q, q1, val, insert, run, j, js } from '../../lib/db.ts';
+import { q, q1, val, insert, run, j, js, tx } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, monthKey, fmtDate, addMonths } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { sysCtx, type Ctx } from '../../lib/auth.ts';
 import { on, emit } from '../../lib/events.ts';
-import { getSetting, getSettingMerged, scorerMode } from '../../lib/settings.ts';
+import { getSetting, getSettingMerged, scorerMode, settingIsExplicit } from '../../lib/settings.ts';
 import { getDials } from '../../lib/sim/dials.ts';
 import { llm } from '../../lib/sim/llm.ts';
 import { screenFairHousing } from '../../lib/fairhousing.ts';
 import { sendEmail } from '../../lib/sim/messaging.ts';
-import { propose, registerExecutor, type ActionOutput } from './framework.ts';
+import { audit } from '../../lib/audit.ts';
+import { registerJob } from '../../lib/jobs.ts';
+import { propose, registerExecutor, aiEnabled, type ActionOutput } from './framework.ts';
 import { messageLead, bookTour, tourSlots, quotedRent } from '../m3_crm/service.ts';
 import { triageWo, woEvent } from '../m10_facilities/service.ts';
 import { createPaymentPlan, openCollectionCase } from '../m8_receivables/payments.ts';
 import { leaseBalance } from '../m8_receivables/service.ts';
 import { latestAssessment } from '../m19_scoring/service.ts';
-import { renewalMatrix } from '../m6_leases/service.ts';
+import { renewalMatrix, renewalHeldForDelinquency } from '../m6_leases/service.ts';
 
 /** M17 agents 1-4: Leasing, Maintenance, Payments, Renewals. Each grounds
  * itself in live service-layer data, formats prose through the LlmProvider,
@@ -44,9 +46,22 @@ function afterHours(ctx: Ctx, propertyId?: string | null): boolean {
   return hour < Number(hours.start.slice(0, 2)) || hour >= Number(hours.end.slice(0, 2));
 }
 
+/** Has the operator actually recorded this policy? A reply to a prospect may
+ * state a term only when somebody at the company chose it. The code default
+ * (two pets, $35 pet rent, a $250 deposit; tours 9 to 5:30 six days a week) is
+ * a placeholder for the settings form, not a policy — in a real company,
+ * quoting it is inventing terms on the operator's behalf. The demo company's
+ * world IS the defaults, so it keeps them. */
+function operatorSet(ctx: Ctx, key: string, propertyId?: string | null): boolean {
+  return ctx.orgKind !== 'live' || settingIsExplicit(ctx, key, propertyId);
+}
+
 export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { id: string; status: string } | null {
-  const lead = q1<any>('SELECT l.*, p.name AS prop_name FROM leads l JOIN properties p ON p.id=l.property_id WHERE l.id=?', leadId);
+  const lead = q1<any>('SELECT l.*, p.name AS prop_name FROM leads l JOIN properties p ON p.id=l.property_id WHERE l.id=? AND l.org_id=?', leadId, ctx.orgId);
   if (!lead) return null;
+  // things the prospect asked that the records cannot answer — each one holds
+  // the reply for a person, whatever the dial says
+  const unanswered: string[] = [];
   const intent = detectLeadIntent(message);
   const facts: Record<string, unknown> = { leadName: lead.first_name, leadId, message, propertyName: lead.prop_name };
 
@@ -60,7 +75,8 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
   if (intent.asksAvailability || intent.asksPrice || units.length) {
     facts.units = units.length
       ? `Right now we have ${units.length === 1 ? 'one home' : units.length + ' homes'} ready for you: ${units.map((u) => `<b>${u.unit_number}</b> (${u.fp}, ${u.sqft} sq ft)`).join(', ')}.`
-      : 'Nothing is move-in ready this second, but homes open up weekly — want me to put you on the first-look list?';
+      // no claim about how often homes come up — nobody recorded that
+      : 'Nothing is move-in ready right now. Would you like me to add you to our first-look list, so you hear from us when a home opens up?';
   }
   if (intent.asksPrice && units.length) {
     facts.pricing = `On a 12-month lease those run ${units.map((u) => `${usd(quotedRent(ctx, u, 12))}/mo (${u.unit_number})`).join(', ')} — live pricing, no games.`;
@@ -69,14 +85,27 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
     // the property's own policy: pet rent, deposit and the restricted-breed
     // list vary by building and by municipal ordinance, and this sentence is
     // sent to a prospect about ONE building
-    const pol = getSettingMerged<{ maxPets: number; petRentCents: number; depositCents: number; restricted: string }>(ctx, 'pet_policy', lead.property_id);
-    facts.petPolicy = `Pets are family here: up to ${pol.maxPets} per home, ${usd(pol.petRentCents)}/mo pet rent and a ${usd(pol.depositCents)} deposit each. (Restricted breeds: ${pol.restricted}.)`;
+    if (operatorSet(ctx, 'pet_policy', lead.property_id)) {
+      const pol = getSettingMerged<{ maxPets: number; petRentCents: number; depositCents: number; restricted: string }>(ctx, 'pet_policy', lead.property_id);
+      facts.petPolicy = `Pets are family here: up to ${pol.maxPets} per home, ${usd(pol.petRentCents)}/mo pet rent and a ${usd(pol.depositCents)} deposit each. (Restricted breeds: ${pol.restricted}.)`;
+    } else {
+      facts.petPolicy = 'On pets: let me confirm our pet policy for this community and get back to you with the details.';
+      unanswered.push('pet policy');
+    }
   }
   // tour proposal: tomorrow's first open slots
+  // Slots are offered only from tour hours the operator recorded; otherwise
+  // the reply asks the prospect for times and a person confirms one.
   const tomorrow = addDays(ctx.businessDate, 1);
-  const slots = tourSlots(ctx, lead.property_id, tomorrow).slice(0, 3);
+  const hoursSet = operatorSet(ctx, 'tour_hours', lead.property_id);
+  const slots = hoursSet ? tourSlots(ctx, lead.property_id, tomorrow).slice(0, 3) : [];
   let tour: { date: string; startTime: string } | null = null;
-  if (intent.wantsTour && slots.length) {
+  if (!hoursSet) {
+    if (intent.wantsTour) {
+      facts.tourLine = 'I would be glad to set up a tour. Tell me a couple of days and times that work for you and we will confirm one.';
+      unanswered.push('tour hours');
+    }
+  } else if (intent.wantsTour && slots.length) {
     tour = { date: tomorrow, startTime: slots[0]! };
     facts.tourLine = `I can hold <b>${fmtDate(tomorrow)} at ${slots[0]}</b> for a tour${slots.length > 1 ? ` (or ${slots.slice(1).join(' / ')})` : ''} — say the word and it's yours.`;
   } else if (slots.length) {
@@ -88,24 +117,27 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
   // to the approved neutral wording before it can be sent.
   const fh = screenFairHousing(rawDraft);
   const draft = fh.ok ? rawDraft : fh.safe;
-  const confidence = intent.wantsHuman ? 0.4 : 0.92;
+  // 0.6 sits below the 0.7 auto floor: a reply that had to defer an answer is
+  // read by a person before it goes, so they can fill in what the records lack
+  const confidence = intent.wantsHuman ? 0.4 : unanswered.length ? 0.6 : 0.92;
   const oh = afterHours(ctx, lead.property_id);
   const notes = [
     intent.wantsHuman ? 'low confidence: prospect asked for a person — held for staff even on autonomous' : null,
+    unanswered.length ? `held for staff: no ${unanswered.join(' or ')} is recorded in Settings for this property, so the reply promises a follow-up instead of stating terms` : null,
     fh.ok ? null : `fair-housing guardrail rewrote ${fh.flags.length} phrase(s): ${[...new Set(fh.flags.map((f) => f.category))].join(', ')}`,
   ].filter(Boolean);
   const askedFor = [
     intent.asksAvailability ? 'availability' : null, intent.asksPrice ? 'pricing' : null,
     intent.asksPets ? 'pet policy' : null, intent.wantsTour ? 'a tour' : null,
   ].filter(Boolean).join(', ') || 'a general question';
-  const rationale = `Prospect asked about ${askedFor}; reply grounded in ${units.length ? `${units.length} vacant-ready unit${units.length === 1 ? '' : 's'} (${units.map((u) => u.unit_number).join(', ')}) with live 12-month quotes` : 'live availability (nothing move-in ready, first-look list offered)'}${tour ? `; tour slot held for ${fmtDate(tomorrow)} ${slots[0]} because openings existed` : ''}${oh ? '; handled after hours so the lead is not lost overnight' : ''}${intent.wantsHuman ? '; held for staff because the prospect asked for a person' : ''}.`;
+  const rationale = `Prospect asked about ${askedFor}; reply grounded in ${units.length ? `${units.length} vacant-ready unit${units.length === 1 ? '' : 's'} (${units.map((u) => u.unit_number).join(', ')}) with live 12-month quotes` : 'live availability (nothing move-in ready, first-look list offered)'}${tour ? `; tour slot held for ${fmtDate(tomorrow)} ${slots[0]} because openings existed` : ''}${oh ? '; handled after hours so the lead is not lost overnight' : ''}${intent.wantsHuman ? '; held for staff because the prospect asked for a person' : ''}${unanswered.length ? `; ${unanswered.join(' and ')} not recorded in Settings, so nothing was stated about ${unanswered.length === 1 ? 'it' : 'them'}` : ''}.`;
   return propose(ctx, {
     agent: 'leasing',
     propertyId: lead.property_id,
     entity: 'lead',
     entityId: leadId,
     title: `${oh ? 'After-hours reply' : 'Reply'} to ${lead.first_name} ${lead.last_name}${tour ? ' + book tour' : ''}${intent.wantsHuman ? ' — HUMAN REQUESTED' : ''}`,
-    input: { message, intent, afterHours: oh, groundedUnits: units.map((u) => u.unit_number), fairHousingFlags: fh.flags },
+    input: { message, intent, afterHours: oh, groundedUnits: units.map((u) => u.unit_number), fairHousingFlags: fh.flags, notRecorded: unanswered },
     rationale,
     output: {
       kind: 'leasing.send_reply',
@@ -273,12 +305,18 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
     bal >= bounds.minInstallmentCents * 2 &&
     !q1<any>(`SELECT id FROM payment_plans WHERE lease_id=? AND status='active'`, leaseId) &&
     (!assess || assess.bucket === 'engage'); // watch = a nudge, not plan pressure
+  // ONE installment count, used by the message and by the plan proposed beside
+  // it. They were computed separately (3 in the email, 4 in the plan).
+  const n = Math.min(bounds.maxInstallments, Math.max(2, Math.ceil(bal / (bounds.minInstallmentCents * 2))));
   const planLine = planEligible
-    ? `Money tight? We can split this into ${Math.min(bounds.maxInstallments, 3)} installments — no judgment, takes two minutes to set up.`
+    ? `Money tight? We can split this into ${n} installments — no judgment, takes two minutes to set up.`
     : null;
 
   const draft = llm().complete('collections_outreach', {
     name: contact?.first_name || 'there', balance: usd(bal), days, tone, planLine, propertyName: lease.prop_name,
+    // online payments are not open in a live organization (POST /portal/pay
+    // turns residents away), so the message must not send them to the portal
+    portalPay: ctx.orgKind !== 'live',
   });
   // Derive the flag from the scrub result rather than calling BANNED.test():
   // a /g regex carries `lastIndex` across calls, so a module-level regex used
@@ -301,7 +339,6 @@ export function draftCollectionsOutreach(ctx: Ctx, leaseId: string): { id: strin
   });
 
   if (planEligible) {
-    const n = Math.min(bounds.maxInstallments, Math.max(2, Math.ceil(bal / (bounds.minInstallmentCents * 2))));
     const per = Math.ceil(bal / n / 100) * 100;
     const installments = Array.from({ length: n }, (_, i) => ({
       dueDate: addDays(ctx.businessDate, 7 + i * 14),
@@ -384,8 +421,20 @@ export function draftRenewalOutreach(ctx: Ctx, leaseId: string): { id: string; s
   );
   const streak = onTimeStreak(ctx, leaseId);
   const rating = val<number>(`SELECT AVG(rating) FROM work_orders WHERE lease_id=? AND rating IS NOT NULL`, leaseId);
-  const options = renewalMatrix(ctx, lease);
+  // The message and the offer on file must say the same thing. If staff already
+  // sent an offer, the outreach quotes THAT offer; otherwise it prices a new one
+  // and the executor puts it on file in the same step as the send.
+  const onFile = q1<any>(
+    `SELECT * FROM renewal_offers WHERE lease_id=? AND org_id=? AND status IN ('sent','countered','accepted') ORDER BY created_at DESC LIMIT 1`,
+    leaseId, ctx.orgId,
+  );
+  if (onFile?.status === 'accepted') return null; // already renewed
+  const options: RenewalOption[] = onFile ? j<RenewalOption[]>(onFile.options, []) : renewalMatrix(ctx, lease);
+  if (!options.length) return null;
+  // "Accept in your portal" is only true for a resident who can sign in
+  const portalAccept = !!contact?.user_id;
   const draft = llm().complete('renewal_outreach', {
+    portalAccept,
     name: contact?.first_name || 'there', propertyName: lease.prop_name, endDate: fmtDate(lease.end_date),
     onTimeStreak: streak, avgRating: rating ? Math.round(rating * 10) / 10 : null,
     optionsHtml: `<ul>${options.map((o) => `<li><b>${o.term_months} months</b> — ${usd(o.rent_cents)}/mo</li>`).join('')}</ul>`,
@@ -396,23 +445,69 @@ export function draftRenewalOutreach(ctx: Ctx, leaseId: string): { id: string; s
     entity: 'lease',
     entityId: leaseId,
     title: `Renewal outreach — ${lease.household_name} (ends ${lease.end_date}, ${streak}mo on-time streak)`,
-    input: { streak, rating, options },
+    input: { streak, rating, options, portalAccept, existingOfferId: onFile?.id || null },
     rationale: `Lease ends ${fmtDate(lease.end_date)}; options priced from the renewal matrix; the message is personalized on the household's ${streak}-month on-time streak${rating ? ` and ${Math.round(rating * 10) / 10}★ maintenance feedback` : ''} because retention beats a turn.`,
-    output: { kind: 'renewals.send_outreach', draft, subject: `Let's keep ${lease.unit_number} yours 🏡`, leaseId, residentId: contact?.id },
+    output: { kind: 'renewals.send_outreach', draft, subject: `Let's keep ${lease.unit_number} yours 🏡`, leaseId, residentId: contact?.id, options },
     confidence: 0.9,
   });
 }
 
+interface RenewalOption { term_months: number; rent_cents: number }
+
+function readOptions(v: unknown): RenewalOption[] {
+  return (Array.isArray(v) ? v : [])
+    .map((o: any) => ({ term_months: Math.round(Number(o?.term_months)), rent_cents: Math.round(Number(o?.rent_cents)) }))
+    .filter((o) => o.term_months > 0 && o.rent_cents > 0);
+}
+const sameOptions = (a: RenewalOption[], b: RenewalOption[]): boolean => {
+  const key = (x: RenewalOption[]): string => x.map((o) => `${o.term_months}:${o.rent_cents}`).sort().join('|');
+  return key(a) === key(b);
+};
+
+/** The message quotes renewal terms and tells the resident they can accept
+ * them. That is only true if a renewal_offers row carrying those exact terms
+ * is on file when the message goes out — the portal's accept form, and staff's
+ * Renewals page, both read that row. So the offer is recorded and the message
+ * sent in one transaction; if the offer cannot stand, nothing is sent. */
 registerExecutor('renewals.send_outreach', (ctx, action, output) => {
-  const lease = q1<any>('SELECT * FROM leases WHERE id=?', String(output.leaseId));
-  const res = output.residentId ? q1<any>('SELECT * FROM residents WHERE id=?', String(output.residentId)) : null;
-  if (!res?.email) return 'no primary contact email';
-  sendEmail(ctx, {
-    to: res.email, toName: `${res.first_name} ${res.last_name}`, subject: String(output.subject),
-    body: String(output.draft), propertyId: lease.property_id, entity: 'lease', entityId: lease.id,
-    personId: res.id, templateKey: 'ai_renewal',
+  const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', String(output.leaseId), ctx.orgId);
+  if (!lease) return 'lease not found — nothing sent';
+  const res = output.residentId ? q1<any>('SELECT * FROM residents WHERE id=? AND org_id=?', String(output.residentId), ctx.orgId) : null;
+  if (!res?.email) return 'no primary contact email — nothing sent';
+  // actions drafted before the terms travelled with the output kept them in input
+  const drafted = readOptions(output.options ?? j<{ options?: unknown }>(action.input, {}).options);
+  if (!drafted.length) return 'no renewal terms on this draft — nothing sent';
+  const prior = q1<any>(
+    `SELECT * FROM renewal_offers WHERE lease_id=? AND org_id=? AND status IN ('sent','countered','accepted') ORDER BY created_at DESC LIMIT 1`,
+    lease.id, ctx.orgId,
+  );
+  if (prior?.status === 'accepted') return 'this household has already accepted a renewal — nothing sent';
+  if (prior && !sameOptions(readOptions(j<unknown>(prior.options, [])), drafted)) {
+    return 'a renewal offer with different terms is already on file — nothing sent; draft the outreach again';
+  }
+  if (!prior && renewalHeldForDelinquency(ctx, lease.id)) {
+    return 'renewal held: delinquency escalation — nothing sent';
+  }
+  return tx(() => {
+    let offerId = prior?.id as string | undefined;
+    if (!offerId) {
+      offerId = id('rno');
+      insert('renewal_offers', {
+        id: offerId, org_id: ctx.orgId, property_id: lease.property_id, lease_id: lease.id,
+        options: js(drafted), status: 'sent', expires_date: addDays(ctx.businessDate, 30), created_at: nowIso(),
+      });
+      emit(ctx, 'renewal.offered', 'renewal_offer', offerId, { leaseId: lease.id });
+      audit(ctx, 'renewal_offer', offerId, 'create', null, { leaseId: lease.id, options: drafted.length, via: 'renewals_ai', actionId: action.id });
+    }
+    sendEmail(ctx, {
+      to: res.email, toName: `${res.first_name} ${res.last_name}`, subject: String(output.subject),
+      body: String(output.draft), propertyId: lease.property_id, entity: 'renewal_offer', entityId: offerId,
+      personId: res.id, templateKey: 'ai_renewal',
+    });
+    return prior
+      ? `renewal outreach queued for the offer already on file (${offerId.slice(-6)})`
+      : `renewal offer ${offerId.slice(-6)} recorded + outreach queued`;
   });
-  return 'renewal outreach sent';
 });
 
 /** counter-offer evaluation: within the approved band → accept path;
@@ -498,6 +593,99 @@ registerExecutor('renewals.escalate', (ctx, action, output) => {
     });
   }
   return pm ? `escalated to ${pm.name} with thread note` : 'no PM found to escalate to';
+});
+
+// ---------- the daily watch (dormant until setAiHooksLive) ----------
+
+/** The approval queue tells the operator that agents check overdue balances
+ * and upcoming lease ends once a day. These two jobs are what makes that true:
+ * before them, a collections or renewal draft existed only if someone pressed
+ * the button on that one household's page.
+ *
+ * Neither job judges severity. They decide only WHO gets looked at — a balance
+ * past the property's own grace period; a lease inside the renewal window with
+ * no offer out — and hand each household to the same drafting function the
+ * button calls. Everything lands in the approval queue under the agent's dial.
+ * A household is left alone while it has a draft waiting, a recent one (a week
+ * for collections, a month for renewals), an active payment plan, or an open
+ * collection case. */
+const WATCH_LIMIT = 50; // per run; the rest are picked up on the next pass
+
+function recentlyDrafted(ctx: Ctx, agent: 'payments' | 'renewals', leaseId: string, days: number): boolean {
+  const since = new Date(Date.now() - days * 86400000).toISOString();
+  return !!q1<any>(
+    `SELECT id FROM ai_actions WHERE org_id=? AND agent=? AND entity_id=? AND (status='proposed' OR created_at>=?) LIMIT 1`,
+    ctx.orgId, agent, leaseId, since,
+  );
+}
+
+export function watchOverdueBalances(ctx: Ctx, date: string): number {
+  const leases = q<any>(
+    `SELECT l.id, l.property_id, MIN(c.due_date) AS first_due FROM leases l
+       JOIN charges c ON c.lease_id=l.id AND c.status='active' AND c.amount_cents>0 AND c.due_date<?
+      WHERE l.org_id=? AND l.status IN ('active','month_to_month','notice')
+        AND NOT EXISTS (SELECT 1 FROM payment_plans pp WHERE pp.lease_id=l.id AND pp.status='active')
+        AND NOT EXISTS (SELECT 1 FROM collection_cases cc WHERE cc.lease_id=l.id AND cc.status='open')
+      GROUP BY l.id ORDER BY first_due`,
+    date, ctx.orgId,
+  );
+  let drafted = 0;
+  for (const l of leases) {
+    if (drafted >= WATCH_LIMIT) break;
+    if (leaseBalance(ctx, l.id) <= 0) continue;
+    // the oldest charge still short of paid, and the property's own grace period
+    const oldest = val<string>(
+      `SELECT MIN(due_date) FROM charges WHERE lease_id=? AND status='active' AND amount_cents>0
+         AND (SELECT COALESCE(SUM(pa.amount_cents),0) FROM payment_applications pa JOIN payments p ON p.id=pa.payment_id AND p.status IN ('pending','settled') WHERE pa.charge_id=charges.id) < amount_cents`,
+      l.id,
+    );
+    if (!oldest) continue;
+    const grace = Number(getSettingMerged<{ graceDays?: number }>(ctx, 'late_fee_policy', l.property_id)?.graceDays) || 0;
+    if (date <= addDays(oldest, grace)) continue;
+    if (recentlyDrafted(ctx, 'payments', l.id, 7)) continue;
+    if (draftCollectionsOutreach(ctx, l.id)) drafted++;
+  }
+  return drafted;
+}
+
+export function watchLeaseEnds(ctx: Ctx, date: string): number {
+  const leases = q<any>(
+    `SELECT l.id FROM leases l WHERE l.org_id=? AND l.status='active' AND l.end_date BETWEEN ? AND ?
+       AND NOT EXISTS (SELECT 1 FROM renewal_offers ro WHERE ro.lease_id=l.id AND ro.status IN ('sent','accepted','countered'))
+     ORDER BY l.end_date`,
+    ctx.orgId, addDays(date, 1), addDays(date, 90),
+  );
+  let drafted = 0;
+  for (const l of leases) {
+    if (drafted >= WATCH_LIMIT) break;
+    if (recentlyDrafted(ctx, 'renewals', l.id, 30)) continue;
+    if (draftRenewalOutreach(ctx, l.id)) drafted++;
+  }
+  return drafted;
+}
+
+registerJob({
+  key: 'ai_collections_watch',
+  name: 'Payments AI: overdue balances',
+  describe: 'Once a day, drafts collections outreach (and a payment plan proposal when the balance qualifies) for households past the grace period. Drafts go to the AI approval queue; households with a recent draft, an active plan or an open collection case are left alone.',
+  run: (ctx, date) => {
+    if (!live) return 'agents not started';
+    if (!aiEnabled(ctx)) return 'AI is paused — nothing drafted';
+    const n = watchOverdueBalances(ctx, date);
+    return n ? `${n} collections draft${n === 1 ? '' : 's'} added to the approval queue` : 'no new overdue balances to draft for';
+  },
+});
+
+registerJob({
+  key: 'ai_renewals_watch',
+  name: 'Renewals AI: upcoming lease ends',
+  describe: 'Once a day, drafts renewal outreach for leases ending in the next 90 days that have no renewal offer out. Drafts go to the AI approval queue; the offer is recorded when the outreach is approved.',
+  run: (ctx, date) => {
+    if (!live) return 'agents not started';
+    if (!aiEnabled(ctx)) return 'AI is paused — nothing drafted';
+    const n = watchLeaseEnds(ctx, date);
+    return n ? `${n} renewal draft${n === 1 ? '' : 's'} added to the approval queue` : 'no upcoming lease ends to draft for';
+  },
 });
 
 // ---------- event hooks (dormant until setAiHooksLive) ----------

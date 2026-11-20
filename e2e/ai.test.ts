@@ -52,7 +52,7 @@ test('gate: Leasing AI drafted a grounded reply for Alicia — approval sends it
 
   // approve → executes: email + tour
   const form = mgr.locator(`form[action="/ai/${action.id}/approve"]`);
-  await Promise.all([mgr.waitForLoadState('networkidle'), form.locator('button:has-text("Approve & execute")').click()]);
+  await Promise.all([mgr.waitForLoadState('networkidle'), form.locator('button:has-text("OK, send it")').click()]);
   assert.match((await mgr.textContent('.flash')) || '', /Approved and executed.*tour booked/i);
   const tour = q1<any>(`SELECT * FROM tours WHERE lead_id=? AND status='scheduled'`, alicia.id);
   assert.ok(tour, 'tour exists in M3');
@@ -103,7 +103,7 @@ test('gate: Maintenance AI triages an emergency correctly (gas → emergency, un
   // approve applies the triage + audit note
   await mgr.goto(`${base}/ai`);
   const form = mgr.locator(`form[action="/ai/${action.id}/approve"]`);
-  await Promise.all([mgr.waitForLoadState('networkidle'), form.locator('button:has-text("Approve & execute")').click()]);
+  await Promise.all([mgr.waitForLoadState('networkidle'), form.locator('button:has-text("OK, send it")').click()]);
   const events = q1<any>(`SELECT COUNT(*) n FROM wo_events WHERE work_order_id=? AND body LIKE 'AI triage%'`, wo.id);
   assert.equal(events.n, 1, 'AI triage note on the work order');
 });

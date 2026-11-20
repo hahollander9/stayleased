@@ -7,6 +7,7 @@ import { usd } from '../../lib/money.ts';
 import { hasRealAddress, formatAddress } from '../../lib/address.ts';
 import { v } from '../../lib/validate.ts';
 import { logo } from '../../ui/ui.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 import { intakeLead, bookTour, tourSlots } from '../m3_crm/service.ts';
 import { MK_PAGES, MK_GROUPS } from './features.ts';
 
@@ -46,15 +47,31 @@ export const DEFAULT_MARKETING: Marketing = {
   published: true,
 };
 
+/** What a live property's site says before its operator has written anything:
+ * nothing about the building that nobody has confirmed. */
+export const LIVE_DEFAULT_MARKETING: Marketing = {
+  ...DEFAULT_MARKETING,
+  heroTitle: 'Welcome home',
+  heroSub: 'See current availability and get in touch with the leasing office.',
+  about: 'Contact the leasing office for availability, pricing and a tour.',
+  neighborhood: '',
+  amenities: [],
+  photos: [],
+};
+
 export function marketingOf(prop: any): Marketing {
   const stored = j<Partial<Marketing>>(prop.marketing, {});
-  const mk = { ...DEFAULT_MARKETING, ...stored };
+  const live = !!prop.org_id && q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', prop.org_id)?.kind === 'live';
+  // The demo defaults describe an invented building (a pool deck, a fitness
+  // center, online payments). A real operator's page starts with none of
+  // that: only what they typed is published, and an empty list hides its
+  // section rather than advertising amenities the building may not have.
+  const mk = { ...(live ? LIVE_DEFAULT_MARKETING : DEFAULT_MARKETING), ...stored };
   // A real operator's building is not on the public web until they put it
   // there. The demo world publishes by default because the pages are the demo;
   // an imported live property did too, which listed a customer's availability
   // and rents at /p/<name> and in the sitemap the moment the rent roll applied.
-  if (stored.published === undefined && prop.org_id
-    && q1<{ kind: string }>('SELECT kind FROM orgs WHERE id=?', prop.org_id)?.kind === 'live') mk.published = false;
+  if (stored.published === undefined && live) mk.published = false;
   return mk;
 }
 
@@ -115,10 +132,11 @@ function siteDoc(prop: any, mk: Marketing, title: string, body: Raw, extraHead: 
 }
 
 function siteNav(prop: any): Raw {
+  const mk = marketingOf(prop);
   return html`<nav class="site-nav">
     <div class="sn-name">${logo(20, 'currentColor')} ${prop.name}</div>
     <a href="/p/${prop.slug}#floorplans">Floorplans</a>
-    <a href="/p/${prop.slug}#amenities">Amenities</a>
+    ${when(mk.sections.amenities && mk.amenities.length, () => html`<a href="/p/${prop.slug}#amenities">Amenities</a>`)}
     <a href="/p/${prop.slug}#tour" class="btn" style="color:#fff">Book a tour</a>
   </nav>`;
 }
@@ -174,13 +192,13 @@ export function routes(r: Router): void {
         </div></div>`)}</div>
         <p class="small muted" style="margin-top:10px">Pricing and availability are live from our property system — never stale.</p>
       </section>`)}
-      ${when(mk.sections.gallery, () => html`<section id="gallery"><h2>Gallery</h2>
+      ${when(mk.sections.gallery && mk.photos.length, () => html`<section id="gallery"><h2>Gallery</h2>
         <div class="gallery">${mk.photos.map((p) => html`<div class="ph" style="--ph-a:${p.a};--ph-b:${p.b}">${p.label}</div>`)}</div>
       </section>`)}
-      ${when(mk.sections.amenities, () => html`<section id="amenities"><h2>Amenities</h2>
+      ${when(mk.sections.amenities && mk.amenities.length, () => html`<section id="amenities"><h2>Amenities</h2>
         <div class="grid cols-3">${mk.amenities.map((a) => html`<div class="card"><div class="card-body">✓ ${a}</div></div>`)}</div>
       </section>`)}
-      ${when(mk.sections.neighborhood, () => html`<section id="neighborhood"><h2>The neighborhood</h2>
+      ${when(mk.sections.neighborhood && mk.neighborhood.trim(), () => html`<section id="neighborhood"><h2>The neighborhood</h2>
         <p style="max-width:760px">${mk.neighborhood}</p>
       </section>`)}
       ${when(mk.sections.tour, () => tourSection(prop))}
@@ -204,7 +222,7 @@ export function routes(r: Router): void {
         <div class="field"><label>Tour type</label><select name="type"><option value="in_person">With our team</option><option value="self_guided">Self-guided</option><option value="virtual">Virtual</option></select></div>
         <div class="field full"><button class="btn" style="color:#fff">Confirm my tour</button></div>
       </form>
-      <p class="small muted">You'll get an instant email confirmation and a reminder the day before.</p>
+      <p class="small muted">${isLiveOrg({ orgId: prop.org_id }) ? 'The leasing office will be in touch to confirm your tour.' : "You'll get an instant email confirmation and a reminder the day before."}</p>
     </section>`;
   }
 
@@ -248,7 +266,9 @@ export function routes(r: Router): void {
       beds: rq.body.beds !== '' && rq.body.beds !== undefined ? parseInt(String(rq.body.beds), 10) : null,
       message: [rq.body.plan ? `Interested in ${rq.body.plan}.` : '', rq.body.message || ''].filter(Boolean).join(' ') || null,
     });
-    return redirect(`/p/${prop.slug}`, 'Thanks! Our leasing team will reach out shortly — check your inbox.');
+    return redirect(`/p/${prop.slug}`, isLiveOrg({ orgId: prop.org_id })
+      ? 'Thanks! Our leasing team will reach out shortly.'
+      : 'Thanks! Our leasing team will reach out shortly — check your inbox.');
   });
 
   r.post('/p/:slug/tour', (rq) => {
@@ -272,7 +292,9 @@ export function routes(r: Router): void {
     } catch {
       return redirect(`/p/${prop.slug}#tour`, 'That time was just taken — pick another slot.', 'err');
     }
-    return redirect(`/p/${prop.slug}`, `You're booked! Check ${parsed.value.email} for your confirmation.`);
+    return redirect(`/p/${prop.slug}`, isLiveOrg(ctx)
+      ? 'You’re booked! The leasing office will be in touch to confirm.'
+      : `You're booked! Check ${parsed.value.email} for your confirmation.`);
   });
 
   // ---------- corporate brand site ----------

@@ -1,13 +1,14 @@
 import { html, when, join, type Child } from '../../lib/html.ts';
 import { notFound, redirect, htmlRes, type Router } from '../../lib/http.ts';
-import { requirePerm, requireResident, can, propFilter, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, requireResident, devOnly, can, propFilter, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, j, insert, run } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, fmtTs, addDays } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
 import { getSetting, setSetting } from '../../lib/settings.ts';
 import { shell, card, tbl, dl, statusBadge, field, select, input, textarea, checkbox, registerNav, kpis, tabs, emptyState, doc } from '../../ui/ui.ts';
-import { sendEmail, sendSms } from '../../lib/sim/messaging.ts';
+import { sendEmail, sendSms, isLiveOrg, deliveryNote, deliveryLabel, RECORDED } from '../../lib/sim/messaging.ts';
+import { audit } from '../../lib/audit.ts';
 import { TEMPLATES } from '../../lib/templates.ts';
 import {
   ensureThread, resolvePerson, inboundMessage, commPrefs, setOptout, inQuietHours,
@@ -81,6 +82,7 @@ export function routes(r: Router): void {
     if (!t) return notFound();
     const person = resolvePerson(ctx.orgId, t.person_kind, t.person_id);
     const prefs = commPrefs(ctx.orgId, t.person_kind, t.person_id);
+    const live = isLiveOrg(ctx);
     // unified timeline: outbox both directions + calls + internal notes
     const msgs = q<any>(
       `SELECT id, 'msg' AS kind, channel, direction, subject, body, template_key, created_at FROM outbox_messages WHERE org_id=? AND (thread_id=? OR person_id=?)`,
@@ -126,7 +128,7 @@ export function routes(r: Router): void {
                 return html`<div class="list-item" style="${inbound ? 'background:var(--accent-soft);border-radius:8px' : ''}">
                   <div class="li-main">
                     <div class="li-title">${inbound ? '↩' : m.channel === 'sms' ? '💬' : '✉'} ${m.subject || (m.channel === 'sms' ? 'SMS' : 'Message')}
-                      ${m.template_key ? html`<span class="badge">${m.template_key}</span>` : ''} ${m.kind === 'msg' && !inbound && m.channel === 'email' ? statusBadge(undefined, q1<any>('SELECT status FROM outbox_messages WHERE id=?', m.id)?.status) : ''}</div>
+                      ${m.template_key ? html`<span class="badge">${m.template_key}</span>` : ''} ${m.kind === 'msg' && !inbound && m.channel === 'email' ? statusBadge(undefined, deliveryLabel(q1<any>('SELECT status FROM outbox_messages WHERE id=? AND org_id=?', m.id, ctx.orgId)?.status)) : ''}</div>
                     <div class="li-sub" style="white-space:pre-wrap">${String(m.body).replace(/<[^>]+>/g, ' ').slice(0, 400)}</div>
                   </div><div class="small muted">${fmtTs(m.created_at)}</div>
                 </div>`;
@@ -141,8 +143,9 @@ export function routes(r: Router): void {
                   ${field('Subject (email)', input('subject', { placeholder: 'Re: your message' }))}
                 </div>
                 ${field('Message', textarea('body', { rows: 3, required: true, placeholder: 'Type your reply…' }))}
-                <button class="btn">Send</button>
+                <button class="btn">${live ? 'Save to Outbox' : 'Send'}</button>
               </form>
+              ${when(live, () => html`<p class="small muted">Email and text delivery are not connected yet. A reply is saved to this conversation and the Outbox, and does not reach the person — call them or send it from your own email.</p>`)}
               ${when(inQuietHours(ctx, t.property_id), () => html`<p class="small muted">🌙 It's quiet hours — SMS replies will note the send anyway (staff-initiated replies are allowed; automated sends defer).</p>`)}`)}
           </div>
           <div>
@@ -161,7 +164,14 @@ export function routes(r: Router): void {
                 ${field('Visible to staff only', textarea('body', { rows: 2, required: true }))}
                 <button class="btn btn-sm btn-ghost">Add note</button>
               </form>`)}
-            ${when(ctx.perms.has('dev:console'), () => card('Demo', html`
+            ${card('Consent', html`
+              <form method="post" action="/inbox/${t.id}/consent">
+                ${checkbox('email_ok', 'May receive community emails', !prefs.emailOptout)}
+                ${checkbox('sms_ok', 'Has agreed to receive text messages', !prefs.smsOptout)}
+                <p class="small muted">Record text consent only when the person has asked for texts. The change is logged with your name.</p>
+                <button class="btn btn-sm btn-ghost">Save consent</button>
+              </form>`)}
+            ${when(ctx.perms.has('dev:console') && !live, () => card('Demo', html`
               <form method="post" action="/inbox/${t.id}/simulate-reply">
                 ${field('Simulate an inbound reply', textarea('body', { rows: 2, value: 'Thanks — quick question about my balance?' }))}
                 <button class="btn btn-sm btn-ghost">Receive reply</button>
@@ -183,8 +193,23 @@ export function routes(r: Router): void {
     } else if (person.phone) {
       sendSms(ctx, { to: person.phone, toName: person.name, body, propertyId: t.property_id, personId: person.id, entity: 'thread', entityId: t.id });
     }
-    run('UPDATE threads SET needs_reply=0 WHERE id=?', t.id);
-    return redirect(`/inbox/${t.id}`, 'Reply sent');
+    else return redirect(`/inbox/${t.id}`, 'No email address or mobile number on file for this person.', 'err');
+    run('UPDATE threads SET needs_reply=0 WHERE id=? AND org_id=?', t.id, ctx.orgId);
+    return redirect(`/inbox/${t.id}`, isLiveOrg(ctx) ? `Reply saved. ${deliveryNote(ctx)}.` : 'Reply sent');
+  });
+
+  // Staff-recorded consent (a resident can also set this in the portal).
+  r.post('/inbox/:id/consent', requirePerm('comms:send'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const t = q1<any>('SELECT * FROM threads WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!t) return notFound();
+    const before = commPrefs(ctx.orgId, t.person_kind, t.person_id);
+    const emailOk = rq.body?.email_ok === '1';
+    const smsOk = rq.body?.sms_ok === '1';
+    setOptout(ctx, t.person_kind, t.person_id, 'email', !emailOk);
+    setOptout(ctx, t.person_kind, t.person_id, 'sms', !smsOk);
+    audit(ctx, 'comm_prefs', t.person_id, 'consent', { email: !before.emailOptout, sms: !before.smsOptout }, { email: emailOk, sms: smsOk });
+    return redirect(`/inbox/${t.id}`, 'Consent saved');
   });
 
   r.post('/inbox/:id/note', requirePerm('comms:view'), (rq) => {
@@ -211,8 +236,11 @@ export function routes(r: Router): void {
     return redirect(`/inbox/${t.id}`, 'Call logged');
   });
 
-  r.post('/inbox/:id/simulate-reply', requirePerm('dev:console'), (rq) => {
+  // Demo-only: a live org has no inbound rail, so a "reply" here would be an
+  // invented message that also wakes the leasing agent.
+  r.post('/inbox/:id/simulate-reply', devOnly, requirePerm('dev:console'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    if (isLiveOrg(ctx)) return redirect(`/inbox/${rq.params.id}`, 'Simulated replies are for the demo only — inbound email and text are not connected.', 'err');
     const t = q1<any>('SELECT * FROM threads WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!t) return notFound();
     inboundMessage(ctx, { personKind: t.person_kind, personId: t.person_id, channel: 'email', body: String(rq.body?.body || 'Simulated reply') });
@@ -249,17 +277,19 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Communications',
       active: '/comms',
-      subtitle: 'Mass messages, templates, announcements and the automation audit',
+      subtitle: isLiveOrg(ctx)
+        ? 'Mass messages, templates, announcements and the automation audit. Email and text delivery are not connected yet — messages are saved to the Outbox and do not reach residents.'
+        : 'Mass messages, templates, announcements and the automation audit',
       actions: html`
         <a class="btn btn-ghost" href="/comms/templates">Template library</a>
         <a class="btn btn-ghost" href="/comms/automations">Automations</a>
         <a class="btn btn-ghost" href="/comms/announcements">Announcements</a>
         <a class="btn" href="/comms/mass/new">New mass message</a>`,
       content: card('Mass messages', tbl(
-        [{ label: 'Subject' }, { label: 'Scheduled' }, { label: 'Channels' }, { label: 'Recipients' }, { label: 'Sent' }, { label: 'Skipped' }, { label: 'Status' }],
+        [{ label: 'Subject' }, { label: 'Scheduled' }, { label: 'Channels' }, { label: 'Recipients' }, { label: isLiveOrg(ctx) ? 'Saved to Outbox' : 'Sent' }, { label: 'Skipped' }, { label: 'Status' }],
         masses.map((m) => ({
           href: `/comms/mass/${m.id}`,
-          cells: [m.subject, fmtDate(m.scheduled_for), j<string[]>(m.channels, []).join(' + '), String(m.recipients), String(m.sent_count || 0), String(m.skipped_count || 0), statusBadge(m.status)],
+          cells: [m.subject, fmtDate(m.scheduled_for), j<string[]>(m.channels, []).join(' + '), String(m.recipients), String(m.sent_count || 0), String(m.skipped_count || 0), statusBadge(m.status, deliveryLabel(m.status))],
         })),
         { empty: 'No mass messages yet.' },
       ), { flush: true }),
@@ -331,6 +361,7 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM mass_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound();
+    const live = isLiveOrg(ctx);
     const recipients = q<any>(
       `SELECT mr.*, r.first_name || ' ' || r.last_name AS name, u.unit_number FROM mass_recipients mr
        JOIN residents r ON r.id=mr.resident_id LEFT JOIN leases l ON l.id=mr.lease_id LEFT JOIN units u ON u.id=l.unit_id
@@ -341,19 +372,22 @@ export function routes(r: Router): void {
       title: m.subject,
       active: '/comms',
       crumbs: [['Communications', '/comms']],
-      subtitle: html`${statusBadge(m.status)} · scheduled ${fmtDate(m.scheduled_for)} · ${j<string[]>(m.channels, []).join(' + ')}`,
-      actions: when(m.status !== 'sent', () => html`<form method="post" action="/comms/mass/${m.id}/send-now"><button class="btn">Send now</button></form>`),
+      subtitle: html`${statusBadge(m.status, deliveryLabel(m.status))} · scheduled ${fmtDate(m.scheduled_for)} · ${j<string[]>(m.channels, []).join(' + ')}`,
+      actions: when(m.status !== 'sent' && m.status !== RECORDED, () => html`<form method="post" action="/comms/mass/${m.id}/send-now"><button class="btn">${live ? 'Save to Outbox now' : 'Send now'}</button></form>`),
       content: html`
         ${kpis([
           { label: 'Recipients', value: String(recipients.length) },
-          { label: 'Sent', value: String(recipients.filter((x) => x.status === 'sent').length), tone: 'ok' },
+          live
+            ? { label: 'Saved to Outbox (not delivered)', value: String(recipients.filter((x) => x.status === RECORDED).length) }
+            : { label: 'Sent', value: String(recipients.filter((x) => x.status === 'sent').length), tone: 'ok' as const },
           { label: 'Skipped (opt-out / no address)', value: String(recipients.filter((x) => x.status.startsWith('skipped')).length), tone: 'warn' },
           { label: 'Deferred (quiet hours)', value: String(recipients.filter((x) => x.status === 'deferred_quiet').length) },
         ])}
+        ${when(live, () => html`<div class="callout warn">Email and text delivery are not connected yet. Each message below is saved to the <a href="/dev/messages?template=mass">Outbox</a> with the resident's name and address so you can send it yourself; nothing has reached a resident.</div>`)}
         ${card('Recipients', tbl(
-          [{ label: 'Resident' }, { label: 'Unit' }, { label: 'Channel' }, { label: 'Status' }, { label: 'Reason / sent' }],
+          [{ label: 'Resident' }, { label: 'Unit' }, { label: 'Channel' }, { label: 'Status' }, { label: live ? 'Reason / saved' : 'Reason / sent' }],
           recipients.map((x) => ({
-            cells: [x.name, x.unit_number || '—', x.channel, statusBadge(x.status === 'sent' ? 'ok' : x.status.startsWith('skipped') ? 'warn' : x.status, x.status), x.reason || (x.sent_at ? fmtTs(x.sent_at) : '')],
+            cells: [x.name, x.unit_number || '—', x.channel, statusBadge(x.status === 'sent' ? 'ok' : x.status.startsWith('skipped') ? 'warn' : x.status, deliveryLabel(x.status)), x.reason || (x.sent_at ? fmtTs(x.sent_at) : '')],
           })),
         ), { flush: true })}`,
     });
@@ -363,7 +397,8 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     run(`UPDATE mass_messages SET scheduled_for=? WHERE id=? AND org_id=?`, ctx.businessDate, rq.params.id!, ctx.orgId);
     const r2 = runMassMessages(ctx, ctx.businessDate);
-    return redirect(`/comms/mass/${rq.params.id}`, `${r2.sent} sent, ${r2.skipped} skipped, ${r2.deferred} deferred`);
+    const verb = isLiveOrg(ctx) ? 'saved to the Outbox (not delivered — email and text delivery are not connected yet)' : 'sent';
+    return redirect(`/comms/mass/${rq.params.id}`, `${r2.sent} ${verb}, ${r2.skipped} skipped, ${r2.deferred} deferred`);
   });
 
   // ---------- template library ----------
@@ -424,7 +459,7 @@ export function routes(r: Router): void {
       crumbs: [['Communications', '/comms']],
       subtitle: 'Every automated message is traceable to its trigger entity; lifecycle templates can be toggled per org',
       content: card(null, tbl(
-        [{ label: 'Template' }, { label: 'Sent' }, { label: 'Last' }, { label: 'Latest trigger' }, { label: 'Enabled' }],
+        [{ label: 'Template' }, { label: isLiveOrg(ctx) ? 'Messages' : 'Sent' }, { label: 'Last' }, { label: 'Latest trigger' }, { label: 'Enabled' }],
         rows.map((r2) => ({
           cells: [
             html`<span class="mono small">${r2.key}</span>`, String(r2.count), fmtTs(r2.last),

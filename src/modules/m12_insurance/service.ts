@@ -11,6 +11,7 @@ import { verifyPolicy } from '../../lib/sim/insurance.ts';
 import { createCharge, leaseBalance } from '../m8_receivables/service.ts';
 import { recordPayment, registerDepositAlternativeHook } from '../m8_receivables/payments.ts';
 import { usd } from '../../lib/money.ts';
+import { sendEmail, isLiveOrg } from '../../lib/sim/messaging.ts';
 
 /** M12 — insurance & risk: compliance engine (third-party verification via the
  * InsuranceCarrier sim, master-policy enrollment, lapse → auto-enroll with
@@ -49,13 +50,153 @@ function primaryContact(orgId: string, leaseId: string): any | null {
   );
 }
 
-/** resident uploads a third-party policy → carrier verification (sim) */
+/** The property's real master tenant-liability policy, if the operator has
+ * entered one in Settings → Insurance. A live org has no community program
+ * until both the carrier and the policy number are on file; the demo keeps
+ * its simulated program. */
+export function masterPolicyConfig(ctx: Ctx, propertyId: string): { carrier: string; policyNumber: string; simulated: boolean } | null {
+  if (!isLiveOrg(ctx)) return { carrier: 'StayLeased Community Master Policy (sim)', policyNumber: '', simulated: true };
+  const carrier = String(getSetting<string>(ctx, 'master_policy_carrier', propertyId) || '').trim();
+  const policyNumber = String(getSetting<string>(ctx, 'master_policy_number', propertyId) || '').trim();
+  return carrier && policyNumber ? { carrier, policyNumber, simulated: false } : null;
+}
+
+/** Policies waiting for a person in the office to check them (live orgs). */
+export function pendingPolicies(ctx: Ctx, propertyIds?: string[] | null): any[] {
+  const rows = q<any>(
+    `SELECT ip.*, l.household_name, u.unit_number, p.name AS property
+     FROM insurance_policies ip JOIN leases l ON l.id=ip.lease_id JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=ip.property_id
+     WHERE ip.org_id=? AND ip.status='pending_verification' AND ip.kind='third_party' ORDER BY ip.created_at`,
+    ctx.orgId,
+  );
+  return propertyIds ? rows.filter((r) => propertyIds.includes(r.property_id)) : rows;
+}
+
+/** Staff checked the proof and accept the policy: it becomes the lease's
+ * active coverage and replaces any master enrollment. */
+export function verifyPolicyByStaff(ctx: Ctx, policyId: string): void {
+  const p = q1<any>('SELECT * FROM insurance_policies WHERE id=? AND org_id=?', policyId, ctx.orgId);
+  if (!p) throw new Error('policy not found');
+  if (p.status !== 'pending_verification') throw new Error('This policy has already been reviewed.');
+  if (p.end_date && p.end_date < ctx.businessDate) throw new Error('This policy has already expired — ask the resident for current proof.');
+  tx(() => {
+    run(`UPDATE insurance_policies SET status='active', verified_at=?, reviewed_by=?, review_note=NULL WHERE id=? AND org_id=?`, nowIso(), ctx.userName, p.id, ctx.orgId);
+    cancelMasterEnrollment(ctx, p.lease_id, 'third-party policy verified');
+  });
+  const contact = primaryContact(ctx.orgId, p.lease_id);
+  if (contact?.email) {
+    notify(ctx, 'insurance_verified', {
+      email: contact.email, name: `${contact.first_name} ${contact.last_name}`,
+      propertyId: p.property_id, entity: 'insurance_policy', entityId: p.id, personId: contact.id,
+    }, { first_name: contact.first_name, policy: p.policy_number, carrier: p.carrier, end_date: p.end_date ? fmtDate(p.end_date) : 'further notice', property: contact.property_name });
+  }
+  emit(ctx, 'insurance.verified', 'insurance_policy', p.id, { leaseId: p.lease_id, by: 'staff' });
+  audit(ctx, 'insurance_policy', p.id, 'verify', { status: p.status }, { status: 'active', by: ctx.userName });
+}
+
+/** Staff checked the proof and cannot accept it; the reason is kept and shown
+ * to the resident. */
+export function rejectPolicyByStaff(ctx: Ctx, policyId: string, reason: string): void {
+  const p = q1<any>('SELECT * FROM insurance_policies WHERE id=? AND org_id=?', policyId, ctx.orgId);
+  if (!p) throw new Error('policy not found');
+  if (p.status !== 'pending_verification') throw new Error('This policy has already been reviewed.');
+  const why = reason.trim().slice(0, 300);
+  if (!why) throw new Error('Say why the policy cannot be accepted — the resident sees this reason.');
+  run(`UPDATE insurance_policies SET status='rejected', reviewed_by=?, review_note=? WHERE id=? AND org_id=?`, ctx.userName, why, p.id, ctx.orgId);
+  const contact = primaryContact(ctx.orgId, p.lease_id);
+  if (contact?.email) {
+    notify(ctx, 'insurance_rejected', {
+      email: contact.email, name: `${contact.first_name} ${contact.last_name}`,
+      propertyId: p.property_id, entity: 'insurance_policy', entityId: p.id, personId: contact.id,
+    }, {
+      first_name: contact.first_name, policy: p.policy_number, carrier: p.carrier, reason: why, property: contact.property_name,
+      master_fee: usd(getSetting<number>(ctx, 'master_policy_fee_cents', p.property_id)),
+    });
+  }
+  audit(ctx, 'insurance_policy', p.id, 'reject', { status: p.status }, { status: 'rejected', reason: why, by: ctx.userName });
+}
+
+/** Staff record a policy from proof they are holding (a declarations page
+ * handed in at the desk). The person recording it is the verification. */
+export function recordPolicyByStaff(
+  ctx: Ctx,
+  input: { leaseId: string; carrier: string; policyNumber: string; liabilityCents: number; startDate: string; endDate: string; fileId?: string | null },
+): string {
+  const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', input.leaseId, ctx.orgId);
+  if (!lease) throw new Error('lease not found');
+  const carrier = input.carrier.trim();
+  const number = input.policyNumber.trim();
+  if (!carrier || !number) throw new Error('Enter the carrier and the policy number from the proof.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.endDate) || input.endDate < ctx.businessDate) throw new Error('Enter the date the policy expires — it must be today or later.');
+  const required = requiredLiability(ctx, lease.property_id);
+  if (input.liabilityCents < required) throw new Error(`Liability coverage is below the ${usd(required)} this property requires.`);
+  const pid = id('pol');
+  tx(() => {
+    insert('insurance_policies', {
+      id: pid, org_id: ctx.orgId, property_id: lease.property_id, lease_id: lease.id,
+      kind: 'third_party', carrier: carrier.slice(0, 120), policy_number: number.slice(0, 60),
+      liability_cents: input.liabilityCents, start_date: input.startDate, end_date: input.endDate,
+      status: 'active', verified_at: nowIso(), reviewed_by: ctx.userName,
+      file_id: input.fileId ?? null, source: 'staff', created_at: nowIso(),
+    });
+    cancelMasterEnrollment(ctx, lease.id, 'third-party policy recorded by staff');
+  });
+  emit(ctx, 'insurance.verified', 'insurance_policy', pid, { leaseId: lease.id, by: 'staff' });
+  audit(ctx, 'insurance_policy', pid, 'record', null, { carrier, policy: number, by: ctx.userName });
+  return pid;
+}
+
+/** Live orgs: there is no carrier connection, so an upload is checked for the
+ * things the platform CAN check (complete, in date, enough liability) and
+ * then waits for a person in the office. Nothing is marked verified here. */
+function submitPolicyForReview(
+  ctx: Ctx, lease: any,
+  input: { leaseId: string; carrier: string; policyNumber: string; liabilityCents: number; startDate: string; endDate: string; fileId?: string | null },
+): { policyId: string; outcome: string } {
+  const carrier = input.carrier.trim();
+  const number = input.policyNumber.trim();
+  if (!carrier || !number) throw new Error('Enter your insurance company and policy number.');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.endDate) || input.endDate < ctx.businessDate) throw new Error('Enter the date your policy expires — it must be today or later.');
+  const required = requiredLiability(ctx, lease.property_id);
+  if (input.liabilityCents < required) throw new Error(`Your lease requires at least ${usd(required)} of liability coverage. This policy shows ${usd(input.liabilityCents)}.`);
+  if (q1(`SELECT id FROM insurance_policies WHERE lease_id=? AND org_id=? AND policy_number=? AND status IN ('pending_verification','active')`, lease.id, ctx.orgId, number)) {
+    throw new Error('That policy is already on file.');
+  }
+  const pid = id('pol');
+  insert('insurance_policies', {
+    id: pid, org_id: ctx.orgId, property_id: lease.property_id, lease_id: lease.id,
+    kind: 'third_party', carrier: carrier.slice(0, 120), policy_number: number.slice(0, 60),
+    liability_cents: input.liabilityCents, start_date: input.startDate, end_date: input.endDate,
+    status: 'pending_verification', verified_at: null,
+    file_id: input.fileId ?? null, source: 'upload', created_at: nowIso(),
+  });
+  const contact = primaryContact(ctx.orgId, lease.id);
+  if (contact?.email) {
+    sendEmail(ctx, {
+      to: contact.email, toName: `${contact.first_name} ${contact.last_name}`, personId: contact.id,
+      subject: 'We received your renters insurance policy',
+      body: `<p>Hi ${escHtml(contact.first_name)},</p><p>We received policy ${escHtml(number)} with ${escHtml(carrier)}. The office will review it and let you know. Until then your coverage shows as pending review.</p><p>— ${escHtml(contact.property_name)}</p>`,
+      templateKey: 'insurance_received', propertyId: lease.property_id, entity: 'insurance_policy', entityId: pid,
+    });
+  }
+  emit(ctx, 'insurance.submitted', 'insurance_policy', pid, { leaseId: lease.id, outcome: 'pending' });
+  audit(ctx, 'insurance_policy', pid, 'submit', null, { outcome: 'pending', note: 'waiting for staff review' });
+  return { policyId: pid, outcome: 'pending' };
+}
+
+function escHtml(v: unknown): string {
+  return String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
+}
+
+/** resident uploads a third-party policy → carrier verification (sim) in the
+ * demo; staff review in a live org */
 export function submitPolicy(
   ctx: Ctx,
   input: { leaseId: string; carrier: string; policyNumber: string; liabilityCents: number; startDate: string; endDate: string; fileId?: string | null },
 ): { policyId: string; outcome: string } {
   const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', input.leaseId, ctx.orgId);
   if (!lease) throw new Error('lease not found');
+  if (isLiveOrg(ctx)) return submitPolicyForReview(ctx, lease, input);
   const required = requiredLiability(ctx, lease.property_id);
   const res = verifyPolicy(input.carrier, input.policyNumber, input.liabilityCents, required);
   const pid = id('pol');
@@ -96,12 +237,16 @@ export function enrollMaster(ctx: Ctx, leaseId: string, source: 'enroll' | 'auto
   if (!lease) throw new Error('lease not found');
   const existing = q1<any>(`SELECT id FROM insurance_policies WHERE lease_id=? AND kind='master' AND status='active'`, leaseId);
   if (existing) return existing.id as string;
+  // Enrolling bills the resident and marks the home covered. In a live org
+  // that is only true if the property really holds a master policy.
+  const master = masterPolicyConfig(ctx, lease.property_id);
+  if (!master) throw new Error('No master policy is set up for this property. Add the carrier and policy number under Settings → Insurance first.');
   const fee = getSetting<number>(ctx, 'master_policy_fee_cents', lease.property_id);
   const pid = id('pol');
   tx(() => {
     insert('insurance_policies', {
       id: pid, org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId,
-      kind: 'master', carrier: 'StayLeased Community Master Policy (sim)', policy_number: `MP-${leaseId.slice(-6).toUpperCase()}`,
+      kind: 'master', carrier: master.carrier, policy_number: master.simulated ? `MP-${leaseId.slice(-6).toUpperCase()}` : master.policyNumber,
       liability_cents: requiredLiability(ctx, lease.property_id), start_date: ctx.businessDate, end_date: null,
       status: 'active', verified_at: nowIso(), source, created_at: nowIso(),
     });
@@ -143,8 +288,9 @@ export function complianceSweep(ctx: Ctx, date: string): { lapsed: number; remin
     run(`UPDATE insurance_policies SET status='lapsed' WHERE id=?`, p.id);
     lapsed++;
   }
-  // pending verifications re-check (SLOW carrier queue)
-  for (const p of q<any>(`SELECT * FROM insurance_policies WHERE org_id=? AND status='pending_verification'`, ctx.orgId)) {
+  // pending verifications re-check (SLOW carrier queue) — the simulated
+  // carrier only. In a live org a pending policy waits for staff review.
+  for (const p of isLiveOrg(ctx) ? [] : q<any>(`SELECT * FROM insurance_policies WHERE org_id=? AND status='pending_verification'`, ctx.orgId)) {
     const required = requiredLiability(ctx, p.property_id);
     const res = verifyPolicy(p.carrier, p.policy_number.replace(/SLOW/i, ''), p.liability_cents, required);
     if (res.outcome === 'verified') {
@@ -212,6 +358,10 @@ export function complianceSweep(ctx: Ctx, date: string): { lapsed: number; remin
       // the platform default.
       if (lease.billing_start_date && lease.billing_start_date > date) continue;
       if (lease.import_batch_id && getSetting<boolean>(ctx, 'auto_enroll_migrated', lease.property_id) !== true) continue;
+      // No real master policy on file → nothing to place anyone on.
+      if (!masterPolicyConfig(ctx, lease.property_id)) continue;
+      // A policy the office has not reviewed yet is not a lapse.
+      if (q1(`SELECT id FROM insurance_policies WHERE lease_id=? AND status='pending_verification'`, lease.id)) continue;
       enrollMaster({ ...ctx, businessDate: date } as Ctx, lease.id, 'auto_enroll');
       enrolled++;
       const contact = primaryContact(ctx.orgId, lease.id);
@@ -250,7 +400,14 @@ export function complianceStats(ctx: Ctx, propertyId?: string | null): { covered
 
 // ---------- deposit alternative (M12.3) ----------
 
+/** The deposit alternative (surety) and the institutional guaranty are
+ * simulated programs: no provider stands behind them. Fenced here, where they
+ * write, so no caller can put one on a real company's lease or application —
+ * a live lease would activate with no deposit charged, bill a program fee for
+ * cover that does not exist, and have its move-out balance wiped by a surety
+ * payout nobody makes. */
 export function enrollDepositAlternative(ctx: Ctx, leaseId: string, mode: 'monthly' | 'one_time'): string {
+  if (isLiveOrg(ctx)) throw new Error('The deposit alternative is a simulated program and is not available for a live company.');
   const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
   if (!lease) throw new Error('lease not found');
   if (q1('SELECT id FROM deposit_alternatives WHERE lease_id=?', leaseId)) throw new Error('already enrolled');
@@ -290,6 +447,8 @@ export function enrollDepositAlternative(ctx: Ctx, leaseId: string, mode: 'month
 /** at move-out: surety covers the final balance up to coverage; remainder stays
  * with the resident. Returns the claim amount. */
 export function settleAlternativeClaim(ctx: Ctx, leaseId: string, date: string): number {
+  // no surety exists to pay a claim for a live company — never credit one
+  if (isLiveOrg(ctx)) return 0;
   const alt = q1<any>(`SELECT * FROM deposit_alternatives WHERE lease_id=? AND status='active'`, leaseId);
   if (!alt) return 0;
   const balance = leaseBalance(ctx, leaseId);
@@ -320,6 +479,7 @@ export function quoteGuaranty(ctx: Ctx, applicationId: string): { feeCents: numb
 }
 
 export function attachGuaranty(ctx: Ctx, applicationId: string): string {
+  if (isLiveOrg(ctx)) throw new Error('The institutional guaranty is a simulated program and is not available for a live company.');
   const app = q1<any>('SELECT * FROM applications WHERE id=? AND org_id=?', applicationId, ctx.orgId);
   if (!app) throw new Error('application not found');
   const existing = q1<any>('SELECT id FROM guaranty_contracts WHERE application_id=?', applicationId);

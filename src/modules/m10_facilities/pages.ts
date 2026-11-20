@@ -1,6 +1,7 @@
 import { html, raw, when, join } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/http.ts';
-import { requirePerm, propFilter, canAccessProperty, can, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, propFilter, canAccessProperty, can, hashPassword, tempPassword, type Ctx } from '../../lib/auth.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 import { q, q1, val, run, insert, update } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, addDays, diffDays } from '../../lib/dates.ts';
@@ -8,6 +9,7 @@ import { usd } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
 import { audit } from '../../lib/audit.ts';
 import { putFile } from '../../lib/files.ts';
+import { getSetting } from '../../lib/settings.ts';
 import {
   shell, card, tbl, kpis, dl, tabs, statusBadge, field, input, select, textarea, moneyInput,
   registerNav, registerSearch, pager, emptyState, historyPanel, checkbox,
@@ -17,7 +19,7 @@ import { bars, donut, lines as lineChart } from '../../lib/charts.ts';
 import {
   WO_TRANSITIONS, SLA_HOURS, transitionWo, triageWo, assignWo, woEvent, logMaterial, logLabor, woCost,
   TURN_STAGES, createTurn, advanceTurnTask, turnCost, INSPECTION_TEMPLATES, createInspection, postInspectionDamages,
-  facilitiesStats, notifyAssignedTech, notifyTechsOfBoard,
+  facilitiesStats, notifyAssignedTech, notifyTechsOfBoard, laborRateCents, turnOccupiedUntil,
   inviteBid, recordBid, declineBid, awardBid, bidsFor, type BidRow,
 } from './service.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
@@ -106,6 +108,30 @@ registerDashboardExtras((ctx, propertyId) => {
 
 const WO_CATEGORIES = ['plumbing', 'electrical', 'hvac', 'appliance', 'doors_locks', 'pest', 'grounds', 'safety', 'turn', 'pm', 'other'];
 const PRIORITIES = ['emergency', 'high', 'normal', 'low'];
+
+/** What to tell the dispatcher after a work order changes hands. The job is
+ * really in the tech's My day queue either way; only the demo's simulated
+ * text rail "notifies" anyone. A live org has no SMS provider connected. */
+function techNotice(ctx: Ctx, userId: string): string {
+  if (!isLiveOrg(ctx)) return 'the tech has been notified.';
+  const name = val<string>('SELECT name FROM users WHERE id=? AND org_id=?', userId, ctx.orgId) || 'the tech';
+  return `it is in ${name}’s My day queue. Text delivery is not connected yet, so let them know yourself.`;
+}
+
+/** The trades a vendor can be filed under (the import maps free text onto the
+ * same list — see normVendorCategory). */
+const VENDOR_CATEGORIES = [
+  'plumbing', 'electrical', 'hvac', 'appliance', 'cleaning', 'landscaping', 'painting', 'locks',
+  'flooring', 'pest', 'roofing', 'restoration', 'utility', 'general',
+];
+
+/** The portal login bound to a vendor record, if one was ever created. */
+function vendorPortalUser(ctx: Ctx, vendorId: string): { id: string; email: string; active: number; last_login_at: string | null } | undefined {
+  return q1<{ id: string; email: string; active: number; last_login_at: string | null }>(
+    `SELECT id, email, active, last_login_at FROM users WHERE org_id=? AND kind='vendor' AND vendor_id=? ORDER BY active DESC, created_at LIMIT 1`,
+    ctx.orgId, vendorId,
+  );
+}
 
 function techs(ctx: Ctx): { id: string; name: string }[] {
   return q<any>(
@@ -264,6 +290,8 @@ export function routes(r: Router): void {
     const next = WO_TRANSITIONS[w.status] || [];
     const cost = woCost(w.id);
     const bidCount = val<number>('SELECT COUNT(*) FROM wo_bids WHERE work_order_id=? AND org_id=?', w.id, ctx.orgId) || 0;
+    const laborRate = laborRateCents(ctx, w.property_id);
+    const laborRateSet = Number(getSetting<number>(ctx, 'maintenance_labor_rate_cents', w.property_id) || 0) > 0;
 
     return shell(rq, {
       title: w.summary,
@@ -321,7 +349,7 @@ export function routes(r: Router): void {
                 [{ label: 'Item' }, { label: 'Qty', num: true }, { label: 'Total', num: true }],
                 [
                   ...materials.map((m) => ({ cells: [m.description, m.qty, usd(m.total_cents)] as any[] })),
-                  ...labor.map((l) => ({ cells: [html`Labor — ${l.who}`, `${l.hours}h`, usd(l.total_cents)] as any[] })),
+                  ...labor.map((l) => ({ cells: [html`Labor — ${l.who}`, `${l.hours}h`, l.rate_cents ? usd(l.total_cents) : html`<span class="muted small">hours only</span>`] as any[] })),
                 ],
                 { empty: 'Nothing logged yet.', foot: ['Total', '', usd(cost)] },
               )}
@@ -337,7 +365,11 @@ export function routes(r: Router): void {
                 ${field('Tech', select('user_id', techs(ctx).map((t): [string, string] => [t.id, t.name]), ctx.userId))}
                 ${field('Hours', input('hours', { type: 'number', value: 1, step: '0.25', min: '0.25' }))}
                 <button class="btn btn-sm btn-ghost">Log labor</button>
-              </form>`)}`)}
+              </form>
+              <p class="small muted" style="margin:6px 0 0">${laborRate
+                ? html`Labor is priced at ${usd(laborRate)} an hour${isLiveOrg(ctx) || laborRateSet ? '' : ' (an example rate for the demo)'}.`
+                : html`No labor rate is set, so hours are recorded without a cost.`}
+                ${when(can(ctx, 'admin:settings'), () => html` <a href="/admin/settings?section=maintenance">${laborRate ? 'Change the rate' : 'Set a labor rate'}</a>`)}</p>`)}`)}
           </div>
         </div>`,
     });
@@ -373,7 +405,7 @@ export function routes(r: Router): void {
       return redirect(`/workorders/${rq.params.id}`, (e as Error).message, 'err');
     }
     if (userId && userId !== before) notifyAssignedTech(ctx, rq.params.id!, userId);
-    return redirect(`/workorders/${rq.params.id}`, userId && userId !== before ? 'Assigned — the tech has been notified.' : 'Assigned.');
+    return redirect(`/workorders/${rq.params.id}`, userId && userId !== before ? `Assigned — ${techNotice(ctx, userId)}` : 'Assigned.');
   });
 
   r.post('/workorders/:id/note', requirePerm('workorders:manage'), (rq) => {
@@ -404,10 +436,14 @@ export function routes(r: Router): void {
 
   r.post('/workorders/:id/labor', requirePerm('workorders:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    logLabor(ctx, rq.params.id!, {
-      userId: String(rq.body.user_id || ctx.userId),
-      hours: v.number({ min: 0.25, max: 24 }).parse(rq.body.hours || 1),
-    });
+    try {
+      logLabor(ctx, rq.params.id!, {
+        userId: String(rq.body.user_id || ctx.userId),
+        hours: v.number({ min: 0.25, max: 24 }).parse(rq.body.hours || 1),
+      });
+    } catch (e) {
+      return redirect(`/workorders/${rq.params.id}`, (e as Error).message, 'err');
+    }
     return redirect(`/workorders/${rq.params.id}`, 'Labor logged.');
   });
 
@@ -435,7 +471,8 @@ export function routes(r: Router): void {
     // a real change of hands — re-dropping a card in the lane it came from is
     // not news.
     if (lane !== 'unassigned' && lane !== wo.assigned_to_user_id) notifyAssignedTech(ctx, woId, lane);
-    return redirect('/dispatch', lane === 'unassigned' ? 'Moved to unassigned.' : 'Reassigned — the tech has been notified.');
+    return redirect('/dispatch', lane === 'unassigned' ? 'Moved to unassigned.'
+      : lane !== wo.assigned_to_user_id ? `Reassigned — ${techNotice(ctx, lane)}` : 'Reassigned.');
   });
 
   // Broadcast the board to the whole maintenance team.
@@ -444,6 +481,11 @@ export function routes(r: Router): void {
     const { sent, recipients } = notifyTechsOfBoard(ctx, ctx.currentPropertyId);
     if (!sent) return redirect('/dispatch', 'No active maintenance techs to notify — add someone with a maintenance role first.', 'err');
     audit(ctx, 'dispatch', ctx.businessDate, 'notify_techs', null, { recipients: sent });
+    // A live org has no text-message provider: the summaries are written to
+    // the Outbox and reach nobody's phone. Say that, not "sent".
+    if (isLiveOrg(ctx)) {
+      return redirect('/dispatch', `Board summary saved to the Outbox for ${sent} tech${sent === 1 ? '' : 's'} (${recipients.join(', ')}). Nothing was texted — text delivery is not connected yet, so tell the team yourself.`);
+    }
     return redirect('/dispatch', `Dispatch sent to ${sent} tech${sent === 1 ? '' : 's'}: ${recipients.join(', ')}.`);
   });
 
@@ -495,7 +537,9 @@ export function routes(r: Router): void {
       wide: true,
       actions: html`<div style="display:flex;gap:6px;flex-wrap:wrap">
         <form method="post" action="/dispatch/notify" style="margin:0">
-          <button class="btn btn-sm btn-ghost" title="Text every active tech the state of the board: what is unassigned, what is an emergency, what is past SLA, and what is on them">Notify all techs (${team.length})</button>
+          ${isLiveOrg(ctx)
+            ? html`<button class="btn btn-sm btn-ghost" title="Writes each tech a summary of the board (what is unassigned, what is an emergency, what is past SLA, what is on them) to the Outbox. Text delivery is not connected yet, so nothing reaches their phone.">Save board summary to Outbox (${team.length})</button>`
+            : html`<button class="btn btn-sm btn-ghost" title="Text every active tech the state of the board: what is unassigned, what is an emergency, what is past SLA, and what is on them">Notify all techs (${team.length})</button>`}
         </form>
       </div>`,
       content: html`
@@ -757,12 +801,14 @@ export function routes(r: Router): void {
     );
     const cost = turnCost(t.id);
     const vendors = q<any>(`SELECT * FROM vendors WHERE org_id=? AND active=1 ORDER BY name`, ctx.orgId);
+    const occupiedUntil = turnOccupiedUntil(ctx, t);
     return shell(rq, {
       title: `Turn — ${t.unit_number}`,
       active: '/turns',
       crumbs: [['Turn board', '/turns']],
       subtitle: html`${statusBadge(t.status)} · move-out ${fmtDate(t.move_out_date)} · target ready <b>${fmtDate(t.target_ready_date)}</b> · est ${usd(cost.est)} / actual ${usd(cost.actual)}`,
       content: html`
+        ${when(occupiedUntil, () => html`<div class="callout"><b>This unit is still occupied until ${fmtDate(occupiedUntil!)}.</b> Line up vendors and expected costs now; tasks can be marked done once the resident has moved out.</div>`)}
         ${card('Pipeline', tbl(
           [{ label: '#' }, { label: 'Stage' }, { label: 'Status' }, { label: 'Assigned' }, { label: 'Est', num: true }, { label: 'Actual', num: true }, { label: '', w: '320px' }],
           tasks.map((task) => ({
@@ -778,14 +824,15 @@ export function routes(r: Router): void {
             ],
           })),
         ), { flush: true })}
+        <p class="small muted">Actual costs here track the turn against its estimate; they do not post to the books. The expense is recorded once, when the vendor’s bill is entered in ${can(ctx, 'ap:manage') ? html`<a href="/ap/new">Payables</a>` : 'Payables'}.</p>
         ${when(t.status === 'ready', () => html`<div class="callout" style="border-color:var(--ok)">Unit made ready ${fmtDate(t.completed_date)} — it is back in available inventory.</div>`)}`,
     });
   });
 
   r.post('/turns/tasks/:id', requirePerm('turns:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const task = q1<any>('SELECT * FROM turn_tasks WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!task) return notFound();
+    const task = q1<any>('SELECT tt.*, t.property_id FROM turn_tasks tt JOIN turns t ON t.id=tt.turn_id WHERE tt.id=? AND tt.org_id=?', rq.params.id!, ctx.orgId);
+    if (!task || !canAccessProperty(ctx, task.property_id)) return notFound();
     try {
       advanceTurnTask(ctx, task.id, {
         status: String(rq.body.status || task.status),
@@ -1050,62 +1097,196 @@ export function routes(r: Router): void {
     return redirect('/inventory', 'Item added.');
   });
 
-  // ---------- vendors (COI focus; full management in M16) ----------
+  // ---------- vendors: directory, create, edit, portal access ----------
   r.get('/vendors', requirePerm('vendors:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const showInactive = rq.query.get('show') === 'all';
     const vendors = q<any>(
       `SELECT vd.*, (SELECT COUNT(*) FROM work_orders w WHERE w.vendor_id=vd.id AND w.status NOT IN ('completed','canceled')) AS open_wos
-       FROM vendors vd WHERE vd.org_id=? ORDER BY vd.name`,
+       FROM vendors vd WHERE vd.org_id=?${showInactive ? '' : ' AND vd.active=1'} ORDER BY vd.name`,
       ctx.orgId,
     );
+    const inactive = val<number>('SELECT COUNT(*) FROM vendors WHERE org_id=? AND active=0', ctx.orgId) || 0;
+    const canManage = can(ctx, 'vendors:manage');
     return shell(rq, {
       title: 'Vendors',
       active: '/vendors',
       subtitle: 'Insurance certificates gate dispatch — an expired COI blocks assignment. Purchasing runs through Procure-to-Pay.',
-      content: card(null, tbl(
-        [{ label: 'Vendor' }, { label: 'Category' }, { label: 'Contact' }, { label: 'COI expires' }, { label: 'W-9' }, { label: 'Open WOs', num: true }],
-        vendors.map((x) => {
-          const expired = x.coi_expiry && x.coi_expiry < ctx.businessDate;
-          const expiring = !expired && x.coi_expiry && diffDays(x.coi_expiry, ctx.businessDate) <= 30;
-          return {
-            href: `/vendors/${x.id}`,
-            cells: [
-              html`<b>${x.name}</b>`, statusBadge(undefined, x.category),
-              html`<span class="small">${x.email || x.phone || '—'}</span>`,
-              x.coi_expiry ? html`<span class="${expired ? 'neg' : ''}">${fmtDate(x.coi_expiry)} ${expired ? statusBadge('bad', 'EXPIRED') : expiring ? statusBadge('warn', 'expiring') : ''}</span>` : statusBadge('bad', 'missing'),
-              x.w9_on_file ? statusBadge('ok', 'on file') : statusBadge('warn', 'missing'),
-              x.open_wos,
-            ],
-          };
-        }),
-        { empty: 'No vendors yet.' },
-      ), { flush: true }),
+      actions: when(canManage, () => html`<a class="btn" href="/vendors/new">Add vendor</a>`),
+      content: html`
+        ${card(null, vendors.length ? tbl(
+          [{ label: 'Vendor' }, { label: 'Category' }, { label: 'Contact' }, { label: 'COI expires' }, { label: 'W-9' }, { label: 'Open WOs', num: true }],
+          vendors.map((x) => {
+            const expired = x.coi_expiry && x.coi_expiry < ctx.businessDate;
+            const expiring = !expired && x.coi_expiry && diffDays(x.coi_expiry, ctx.businessDate) <= 30;
+            return {
+              href: `/vendors/${x.id}`,
+              cells: [
+                html`<b>${x.name}</b>${x.active ? '' : html` ${statusBadge(undefined, 'inactive')}`}`, statusBadge(undefined, String(x.category).replaceAll('_', ' ')),
+                html`<span class="small">${[x.contact_name, x.email || x.phone].filter(Boolean).join(' · ') || '—'}</span>`,
+                x.coi_expiry ? html`<span class="${expired ? 'neg' : ''}">${fmtDate(x.coi_expiry)} ${expired ? statusBadge('bad', 'EXPIRED') : expiring ? statusBadge('warn', 'expiring') : ''}</span>` : statusBadge('bad', 'missing'),
+                x.w9_on_file ? statusBadge('ok', 'on file') : statusBadge('warn', 'missing'),
+                x.open_wos,
+              ],
+            };
+          }),
+        ) : emptyState(
+          'No vendors yet',
+          'Add the plumbers, electricians and other contractors you call, so work orders, purchase orders and bills have someone to go to.',
+          canManage ? html`<a class="btn" href="/vendors/new">Add vendor</a>` : undefined,
+        ), { flush: vendors.length > 0 })}
+        ${when(inactive > 0, () => html`<p class="small muted">${showInactive
+          ? html`Showing inactive vendors too. <a href="/vendors">Hide inactive</a>`
+          : html`${inactive} inactive vendor${inactive === 1 ? ' is' : 's are'} hidden. <a href="/vendors?show=all">Show all</a>`}</p>`)}`,
     });
+  });
+
+  /** One form for create and edit. `x` carries either the stored row or the
+   * values just submitted (so a validation error never costs the typing). */
+  const vendorForm = (rq: Rq, x: any, opts: { action: string; submit: string; cancel: string; errs?: string[]; isNew?: boolean }): ReturnType<typeof html> => {
+    const cats = VENDOR_CATEGORIES.includes(x.category) || !x.category ? VENDOR_CATEGORIES : [...VENDOR_CATEGORIES, String(x.category)];
+    return html`
+      ${when(opts.errs?.length, () => html`<div class="callout bad" role="alert"><b>Nothing was saved.</b><ul style="margin:6px 0 0 18px">${opts.errs!.map((e) => html`<li>${e}</li>`)}</ul></div>`)}
+      <form method="post" action="${opts.action}">
+        ${card('Business', html`<div class="grid cols-2">
+          ${field('Business name', input('name', { value: x.name || '', required: true, autofocus: !!opts.isNew }))}
+          ${field('Category', select('category', cats.map((c): [string, string] => [c, c.replaceAll('_', ' ')]), x.category || 'general'))}
+          ${field('Contact person', input('contact_name', { value: x.contact_name || '' }), 'Who to ask for.')}
+          ${field('Email', input('email', { type: 'email', value: x.email || '' }), 'Needed to give this vendor a portal sign-in.')}
+          ${field('Phone', input('phone', { type: 'tel', value: x.phone || '' }))}
+          ${field('Mailing address', input('address', { value: x.address || '' }), 'Where checks and the year-end 1099 go.')}
+          ${field('Payment terms', input('terms', { value: x.terms || '', placeholder: 'e.g. net 30, or 2/10 net 30' }), 'Optional. "2/10 net 30" records a 2% discount for paying within 10 days.')}
+        </div>`)}
+        ${card('Insurance and tax', html`<div class="grid cols-2">
+          ${field('Insurance certificate expires', input('coi_expiry', { type: 'date', value: x.coi_expiry || '' }), 'Leave blank if you do not have a certificate yet. An expired certificate blocks assigning work.')}
+          ${field('Taxpayer ID — last 4 digits', input('tin_last4', { value: x.tin_last4 || '', placeholder: '1234' }), 'From the W-9. Only the last four digits are stored.')}
+        </div>
+        ${checkbox('w9_on_file', 'W-9 on file', !!Number(x.w9_on_file))}
+        ${checkbox('is_1099', 'Include in the year-end 1099 summary (not a corporation)', x.is_1099 === undefined ? true : !!Number(x.is_1099))}
+        ${opts.isNew ? '' : checkbox('active', 'Active — can be assigned work and purchase orders', !!Number(x.active))}`)}
+        <div class="btn-row"><button class="btn">${opts.submit}</button> <a class="btn btn-ghost" href="${opts.cancel}">Cancel</a></div>
+      </form>`;
+  };
+
+  /** Read and validate the vendor form. Returns the column values, or the
+   * plain-language reasons nothing can be saved. */
+  const readVendorForm = (ctx: Ctx, b: Record<string, any>, existing?: any): { vals: Record<string, unknown>; errs: string[] } => {
+    const errs: string[] = [];
+    const str = (k: string): string => String(b[k] ?? '').trim();
+    const name = str('name');
+    if (!name) errs.push('Enter the vendor’s business name.');
+    else if (name.length > 120) errs.push('The business name is too long (120 characters at most).');
+    else {
+      const dup = q1<{ id: string }>('SELECT id FROM vendors WHERE org_id=? AND lower(name)=lower(?) AND id!=?', ctx.orgId, name, existing?.id || '');
+      if (dup) errs.push(`You already have a vendor named ${name}.`);
+    }
+    let category = str('category') || 'general';
+    if (!VENDOR_CATEGORIES.includes(category) && category !== existing?.category) category = 'general';
+    let email: string | null = str('email').toLowerCase() || null;
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errs.push('That email address does not look right.'); email = null; }
+    const tin = str('tin_last4');
+    if (tin && !/^\d{4}$/.test(tin)) errs.push('Enter exactly the last four digits of the taxpayer ID, or leave it blank.');
+    const coi = str('coi_expiry');
+    if (coi && !/^\d{4}-\d{2}-\d{2}$/.test(coi)) errs.push('The insurance expiry date is not a valid date.');
+    // A portal sign-in is tied to the vendor's email: changing it must not
+    // collide with someone else's login, and clearing it would orphan theirs.
+    const portal = existing ? vendorPortalUser(ctx, existing.id) : undefined;
+    if (portal && !email) errs.push('This vendor has a portal sign-in, so it needs an email address. Turn off portal access first if you want to remove the email.');
+    if (portal && email && email !== String(portal.email).toLowerCase()
+      && q1('SELECT id FROM users WHERE lower(email)=? AND id!=?', email, portal.id)) {
+      errs.push('That email already signs in to another account — use a different one for this vendor.');
+    }
+    return {
+      errs,
+      vals: {
+        name, category, contact_name: str('contact_name') || null, email, phone: str('phone') || null,
+        address: str('address') || null, terms: str('terms') || null, coi_expiry: coi || null,
+        tin_last4: tin || null, w9_on_file: b.w9_on_file ? 1 : 0, is_1099: b.is_1099 ? 1 : 0,
+        active: existing ? (b.active ? 1 : 0) : 1,
+      },
+    };
+  };
+
+  // registered before /vendors/:id so "new" is not read as an id
+  r.get('/vendors/new', requirePerm('vendors:manage'), (rq) =>
+    shell(rq, {
+      title: 'Add vendor', active: '/vendors', crumbs: [['Vendors', '/vendors']],
+      content: vendorForm(rq, { is_1099: 1, active: 1 }, { action: '/vendors/new', submit: 'Add vendor', cancel: '/vendors', isNew: true }),
+    }));
+
+  r.post('/vendors/new', requirePerm('vendors:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const { vals, errs } = readVendorForm(ctx, rq.body || {});
+    if (errs.length) {
+      return shell(rq, {
+        title: 'Add vendor', active: '/vendors', crumbs: [['Vendors', '/vendors']],
+        content: vendorForm(rq, vals, { action: '/vendors/new', submit: 'Add vendor', cancel: '/vendors', errs, isNew: true }),
+      });
+    }
+    const vid = id('ven');
+    insert('vendors', {
+      id: vid, org_id: ctx.orgId, ...vals, banking: null,
+      diversity_tags: '[]', approved_property_ids: '[]', created_at: nowIso(),
+    });
+    audit(ctx, 'vendor', vid, 'create', null, vals);
+    return redirect(`/vendors/${vid}`, `${vals.name} added.`);
   });
 
   r.get('/vendors/:id', requirePerm('vendors:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const x = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!x) return notFound('Vendor not found');
-    const wos = q<any>(`SELECT w.*, u.unit_number FROM work_orders w LEFT JOIN units u ON u.id=w.unit_id WHERE w.vendor_id=? ORDER BY w.created_date DESC LIMIT 20`, x.id);
+    const wos = q<any>(`SELECT w.*, u.unit_number FROM work_orders w LEFT JOIN units u ON u.id=w.unit_id WHERE w.vendor_id=? AND w.org_id=? ORDER BY w.created_date DESC LIMIT 20`, x.id, ctx.orgId);
     const expired = x.coi_expiry && x.coi_expiry < ctx.businessDate;
+    const canManage = ctx.perms.has('vendors:manage');
+    const portal = vendorPortalUser(ctx, x.id);
+    const live = isLiveOrg(ctx);
     return shell(rq, {
       title: x.name,
       active: '/vendors',
       crumbs: [['Vendors', '/vendors']],
-      actions: when(ctx.perms.has('vendors:manage'), () => html`<form method="post" action="/vendors/${x.id}/renew-coi" class="toolbar" style="margin:0">
-        ${input('coi_expiry', { type: 'date', value: addDays(ctx.businessDate, 365) })}
-        <button class="btn btn-ghost btn-sm">Record new COI</button>
-      </form>`),
+      subtitle: x.active ? undefined : html`${statusBadge(undefined, 'inactive')} Not offered for new work orders or purchase orders.`,
+      actions: when(canManage, () => html`<div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
+        <a class="btn btn-sm" href="/vendors/${x.id}/edit">Edit vendor</a>
+        <form method="post" action="/vendors/${x.id}/renew-coi" class="toolbar" style="margin:0">
+          ${input('coi_expiry', { type: 'date', value: addDays(ctx.businessDate, 365), placeholder: 'New certificate expiry date' })}
+          <button class="btn btn-ghost btn-sm">Record new COI</button>
+        </form>
+      </div>`),
       content: html`
         ${when(expired, () => html`<div class="callout bad"><b>Insurance certificate expired ${fmtDate(x.coi_expiry)}.</b> This vendor cannot be assigned work until a current COI is recorded.</div>`)}
         <div class="grid cols-2">
+          <div>
           ${card('Profile', dl([
-            ['Category', x.category], ['Phone', x.phone || '—'], ['Email', x.email || '—'],
+            ['Category', String(x.category).replaceAll('_', ' ')],
+            ['Contact person', x.contact_name || '—'],
+            ['Phone', x.phone || '—'], ['Email', x.email || '—'],
+            ['Mailing address', x.address || '—'],
+            ['Payment terms', x.terms || '—'],
             ['COI expiry', x.coi_expiry ? fmtDate(x.coi_expiry) : 'missing'],
-            ['W-9', x.w9_on_file ? `On file (TIN ···${x.tin_last4})` : 'Missing'],
+            ['W-9', x.w9_on_file ? `On file${x.tin_last4 ? ` (TIN ···${x.tin_last4})` : ' — taxpayer ID not recorded'}` : 'Missing'],
             ['1099 eligible', x.is_1099 ? 'Yes' : 'No'],
           ]))}
+          ${card('Vendor portal', html`
+            <p class="small muted" style="margin-top:0">A portal sign-in lets this vendor see the work orders assigned to them, mark jobs complete with a photo, acknowledge purchase orders and submit invoices against them.</p>
+            ${portal && portal.active
+              ? html`<p><b>Sign-in is on</b> for ${portal.email}. ${portal.last_login_at ? `Last signed in ${fmtDate(String(portal.last_login_at).slice(0, 10))}.` : 'They have not signed in yet.'}</p>
+                ${when(canManage, () => html`<div class="btn-row">
+                  <form method="post" action="/vendors/${x.id}/portal-reset" data-confirm="${live ? 'Reset this vendor’s portal password? A new one-time password is shown to you once, and they are signed out everywhere.' : 'Reset this vendor’s portal password to demo1234?'}"><button class="btn btn-ghost btn-sm">Reset portal password</button></form>
+                  <form method="post" action="/vendors/${x.id}/portal-off" data-confirm="Turn off portal access for ${x.name}? They are signed out and can no longer sign in."><button class="btn btn-ghost btn-sm">Turn off portal access</button></form>
+                </div>`)}`
+              : !x.active
+                ? html`<p class="muted small">This vendor is inactive. Make them active again to give them a portal sign-in.</p>`
+                : !x.email
+                  ? html`<p class="muted small">Add an email address to this vendor to give them a portal sign-in. ${when(canManage, () => html`<a href="/vendors/${x.id}/edit">Edit vendor</a>`)}</p>`
+                  : canManage
+                    ? html`<p>${portal ? 'Portal access is turned off.' : 'No portal sign-in yet.'}</p>
+                      <form method="post" action="/vendors/${x.id}/portal-invite"><button class="btn btn-sm">${portal ? 'Turn portal access back on' : 'Create portal sign-in'}</button></form>
+                      <p class="small muted">${live
+                        ? `Creates a sign-in for ${x.email} and shows you a one-time password once. Email delivery is not connected yet, so you pass the password on yourself.`
+                        : `Creates a demo sign-in for ${x.email}.`}</p>`
+                    : html`<p class="muted small">No portal sign-in yet.</p>`}`)}
+          </div>
           ${card('History', historyPanel(ctx.orgId, 'vendor', x.id))}
         </div>
         ${card('Assigned work', tbl(
@@ -1116,6 +1297,50 @@ export function routes(r: Router): void {
     });
   });
 
+  r.get('/vendors/:id/edit', requirePerm('vendors:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const x = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!x) return notFound('Vendor not found');
+    return shell(rq, {
+      title: `Edit ${x.name}`, active: '/vendors', crumbs: [['Vendors', '/vendors'], [x.name, `/vendors/${x.id}`]],
+      content: vendorForm(rq, x, { action: `/vendors/${x.id}/edit`, submit: 'Save changes', cancel: `/vendors/${x.id}` }),
+    });
+  });
+
+  r.post('/vendors/:id/edit', requirePerm('vendors:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const x = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!x) return notFound('Vendor not found');
+    const { vals, errs } = readVendorForm(ctx, rq.body || {}, x);
+    if (errs.length) {
+      return shell(rq, {
+        title: `Edit ${x.name}`, active: '/vendors', crumbs: [['Vendors', '/vendors'], [x.name, `/vendors/${x.id}`]],
+        content: vendorForm(rq, { ...x, ...vals }, { action: `/vendors/${x.id}/edit`, submit: 'Save changes', cancel: `/vendors/${x.id}`, errs }),
+      });
+    }
+    const before: Record<string, unknown> = {};
+    const after: Record<string, unknown> = {};
+    for (const [k, nv] of Object.entries(vals)) {
+      if ((x[k] ?? null) !== (nv ?? null)) { before[k] = x[k] ?? null; after[k] = nv ?? null; }
+    }
+    if (!Object.keys(after).length) return redirect(`/vendors/${x.id}`, 'Nothing changed.');
+    update('vendors', x.id, vals);
+    // the portal sign-in follows the vendor: same email, and off when inactive
+    const portal = vendorPortalUser(ctx, x.id);
+    if (portal) {
+      if (vals.email && String(vals.email) !== String(portal.email).toLowerCase()) {
+        run('UPDATE users SET email=? WHERE id=? AND org_id=?', vals.email, portal.id, ctx.orgId);
+      }
+      if (!vals.active && portal.active) {
+        run('UPDATE users SET active=0 WHERE id=? AND org_id=?', portal.id, ctx.orgId);
+        run('DELETE FROM sessions WHERE user_id=?', portal.id);
+        audit(ctx, 'vendor', x.id, 'portal_off', null, { reason: 'vendor made inactive' });
+      }
+    }
+    audit(ctx, 'vendor', x.id, 'update', before, after);
+    return redirect(`/vendors/${x.id}`, !vals.active && portal?.active ? 'Saved. This vendor is inactive, so their portal sign-in was turned off.' : 'Saved.');
+  });
+
   r.post('/vendors/:id/renew-coi', requirePerm('vendors:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const x = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
@@ -1124,6 +1349,70 @@ export function routes(r: Router): void {
     update('vendors', x.id, { coi_expiry: newDate });
     audit(ctx, 'vendor', x.id, 'coi_renewed', { coi_expiry: x.coi_expiry }, { coi_expiry: newDate });
     return redirect(`/vendors/${x.id}`, 'COI recorded.');
+  });
+
+  // ---------- vendor portal access ----------
+  // A vendor login is never an assignable staff role (VENDOR is deliberately
+  // off the staff form): it is created here, bound to exactly one vendor
+  // record, and can only ever reach that vendor's own work and purchase orders.
+  r.post('/vendors/:id/portal-invite', requirePerm('vendors:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const x = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!x) return notFound('Vendor not found');
+    const back = `/vendors/${x.id}`;
+    if (!x.active) return redirect(back, 'This vendor is inactive — make them active before giving them a portal sign-in.', 'err');
+    const email = String(x.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return redirect(back, 'Add a valid email address to this vendor first — it is what they sign in with.', 'err');
+    const live = isLiveOrg(ctx);
+    const pw = live ? tempPassword() : 'demo1234';
+    const portal = vendorPortalUser(ctx, x.id);
+    if (portal?.active) return redirect(back, 'This vendor already has a portal sign-in. Use "Reset portal password" if they cannot get in.', 'err');
+    const clash = q1<{ id: string }>('SELECT id FROM users WHERE lower(email)=? AND id!=?', email, portal?.id || '');
+    if (clash) return redirect(back, 'That email already signs in to another account — give this vendor a different email address first.', 'err');
+    let uid: string;
+    if (portal) {
+      uid = portal.id;
+      run('UPDATE users SET active=1, email=?, password_hash=? WHERE id=? AND org_id=?', email, hashPassword(pw), uid, ctx.orgId);
+      run('DELETE FROM sessions WHERE user_id=?', uid);
+    } else {
+      uid = id('usr');
+      insert('users', {
+        id: uid, org_id: ctx.orgId, email, name: `${x.name} (portal)`, phone: x.phone || null,
+        kind: 'vendor', vendor_id: x.id, password_hash: hashPassword(pw), active: 1, created_at: nowIso(),
+      });
+    }
+    audit(ctx, 'vendor', x.id, portal ? 'portal_on' : 'portal_invite', null, { email, userId: uid });
+    return redirect(back, live
+      ? `Portal sign-in created for ${email}. One-time password (shown only now): ${pw} — nothing was emailed, so give the vendor this password and the sign-in page yourself.`
+      : `Portal sign-in created for ${email} (password demo1234).`);
+  });
+
+  r.post('/vendors/:id/portal-reset', requirePerm('vendors:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const x = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!x) return notFound('Vendor not found');
+    const portal = vendorPortalUser(ctx, x.id);
+    if (!portal?.active) return redirect(`/vendors/${x.id}`, 'This vendor has no active portal sign-in — create one first.', 'err');
+    const live = isLiveOrg(ctx);
+    const pw = live ? tempPassword() : 'demo1234';
+    run('UPDATE users SET password_hash=? WHERE id=? AND org_id=?', hashPassword(pw), portal.id, ctx.orgId);
+    run('DELETE FROM sessions WHERE user_id=?', portal.id);
+    audit(ctx, 'vendor', x.id, 'portal_password_reset', null, { userId: portal.id });
+    return redirect(`/vendors/${x.id}`, live
+      ? `Portal password reset. One-time password (shown only now): ${pw}`
+      : 'Portal password reset to demo1234.');
+  });
+
+  r.post('/vendors/:id/portal-off', requirePerm('vendors:manage'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const x = q1<any>('SELECT * FROM vendors WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!x) return notFound('Vendor not found');
+    const portal = vendorPortalUser(ctx, x.id);
+    if (!portal?.active) return redirect(`/vendors/${x.id}`, 'Portal access is already off for this vendor.', 'err');
+    run('UPDATE users SET active=0 WHERE id=? AND org_id=?', portal.id, ctx.orgId);
+    run('DELETE FROM sessions WHERE user_id=?', portal.id);
+    audit(ctx, 'vendor', x.id, 'portal_off', null, { userId: portal.id });
+    return redirect(`/vendors/${x.id}`, 'Portal access turned off — this vendor can no longer sign in.');
   });
 
   // ---------- facilities analytics ----------

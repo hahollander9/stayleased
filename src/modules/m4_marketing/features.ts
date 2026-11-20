@@ -432,7 +432,7 @@ export const MK_PAGES: MkPage[] = [
       { t: 'Custom report builder', b: 'Pick the dataset, choose columns, filter, group, and save. The one weird report your Thursday meeting needs, built once.' },
       { t: 'Scheduled delivery', b: 'Any report on a cadence — weekly delinquency to you, monthly financial package to each owner — generated on the business calendar and delivered to your team.' },
       { t: 'Dashboards on top', b: 'KPI dashboards for the daily glance — occupancy, collections, leasing funnel, maintenance load — with the full report one click deeper.' },
-      { t: 'Export anything', b: 'Every report exports clean. Your data is yours, including on the way out.' },
+      { t: 'Export anything', b: 'Every report exports clean, and the whole account downloads as plain spreadsheet files at any time. The data stays the operator’s, including on the way out.' },
       { t: 'Ask instead of hunting', b: 'Ask StayLeased answers “how’s collections this month?” conversationally from the same governed data — for the questions that don’t deserve a report.' },
     ],
     mock: {
@@ -1129,7 +1129,7 @@ function ctaRow(large = false): Raw {
     <a class="mk-btn mk-btn-solid${lg}" href="/#walkthrough">Book a live demo</a>
     ${signupOpen
       ? html`<a class="mk-btn mk-btn-line${lg}" href="/signup">Create your company</a>`
-      : html`<a class="mk-btn mk-btn-line${lg}" href="/login">Explore the live demo</a>`}
+      : html`<a class="mk-btn mk-btn-line${lg}" href="/login?demo=1">Explore the live demo</a>`}
   </div>`;
 }
 
@@ -1185,7 +1185,7 @@ ${mkHeader()}
 
 <section class="mk-band mk-band-alt">
   <div class="mk-wrap mk-reveal">
-    <h2 class="mk-h2">What you get</h2>
+    <h2 class="mk-h2">What is included</h2>
     <p class="mk-lead">Every claim below is a working screen in the product — open the demo and check.</p>
     <div class="mk-grid3">
       ${p.features.map((f) => html`<div class="mk-card"><h3>${f.t}</h3><p>${f.b}</p></div>`)}

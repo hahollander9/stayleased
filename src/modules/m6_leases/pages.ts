@@ -17,6 +17,7 @@ import {
 } from './service.ts';
 import { registerLeaseTab, registerLeaseAction } from '../people/pages.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
+import { isLiveOrg, deliveryNote } from '../../lib/sim/messaging.ts';
 
 registerNav('Residents', { href: '/renewals', label: 'Renewals', perm: 'renewals:view' });
 registerNav('Admin', { href: '/admin/lease-templates', label: 'Lease templates', perm: 'admin:settings' });
@@ -30,6 +31,10 @@ registerDashboardExtras((ctx, propertyId) => {
   ) || 0;
   return { kpis: [{ label: 'Expiring ≤90d', value: in90, href: '/renewals', tone: in90 > 20 ? 'warn' : undefined }], panels: null };
 });
+
+function renewalStartsLater(ctx: Ctx, lease: { renewal_of_lease_id?: string | null; start_date: string }): boolean {
+  return !!lease.renewal_of_lease_id && lease.start_date > ctx.businessDate;
+}
 
 export function routes(r: Router): void {
   // ---------- generate lease from an approved application ----------
@@ -69,11 +74,22 @@ export function routes(r: Router): void {
       ...adults,
       { name: ctx.userName, email: ctx.userEmail, role: 'countersigner' },
     ], base);
-    return redirect(`/leases/${lease.id}?tab=esign`, `Packet sent to ${adults.length} signer${adults.length === 1 ? '' : 's'} — you countersign last.`);
+    const n = `${adults.length} signer${adults.length === 1 ? '' : 's'}`;
+    return redirect(`/leases/${lease.id}?tab=esign`, isLiveOrg(ctx)
+      ? `Packet ready for ${n}. The signing links were not emailed — they are saved in the Outbox, because email delivery is not connected yet. You countersign last.`
+      : `Packet sent to ${n} — you countersign last.`);
   });
 
   r.post('/leases/:id/activate', requirePerm('leases:manage'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const pending = q1<any>('SELECT property_id, renewal_of_lease_id, start_date FROM leases WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!pending || !canAccessProperty(ctx, pending.property_id)) return notFound('Lease not found');
+    // A renewal takes over from the current term on its start date. Activating
+    // it early retired the lease the household is still living under and put
+    // the new term's first month on the ledger as due today.
+    if (renewalStartsLater(ctx, pending)) {
+      return redirect(`/leases/${rq.params.id}`, `A renewal becomes active on its start date (${fmtDate(pending.start_date)}). Nothing to do until then — it happens automatically.`, 'err');
+    }
     try {
       activateLease(ctx, rq.params.id!);
     } catch (e) {
@@ -244,7 +260,9 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect('/renewals', (e as Error).message, 'err');
     }
-    return redirect('/renewals', 'Offer sent — the resident sees it in their portal and email.');
+    return redirect('/renewals', isLiveOrg(ctx)
+      ? 'Offer created. It shows in the resident’s portal; the email was not sent — it is saved in the Outbox, because email delivery is not connected yet.'
+      : 'Offer sent — the resident sees it in their portal and email.');
   });
 
   r.post('/renewals/batch', requirePerm('renewals:manage'), (rq) => {
@@ -265,7 +283,7 @@ export function routes(r: Router): void {
       createRenewalOffer(ctx, t.id);
       sent++;
     }
-    return redirect('/renewals', `${sent} offers sent.${held ? ` ${held} held (delinquency escalation — see the workbench).` : ''}`);
+    return redirect('/renewals', `${sent} offers ${isLiveOrg(ctx) ? 'created — the emails are saved in the Outbox, not sent' : 'sent'}.${held ? ` ${held} held (delinquency escalation — see the workbench).` : ''}`);
   });
 
   // ---------- lease template designer ----------
@@ -349,8 +367,10 @@ registerLeaseTab((ctx, lease) => {
               })),
             )}`)}
           ${card('Tamper-evident event trail', html`<ul class="timeline">${events.map((e) => html`<li><div><b>${e.action}</b> <span class="muted small">· ${e.who}</span></div><div class="t-when">${e.at?.slice(0, 19).replace('T', ' ')} · <code class="small">${String(e.hash || '').slice(0, 18)}…</code></div></li>`)}</ul>`)}`)}
-        ${when(lease.status === 'fully_executed', () => card('Activation', html`
-          <p class="small">Move-in ${fmtDate(lease.start_date)} — the scheduler activates automatically on that business day, or activate now:</p>
+        ${when(lease.status === 'fully_executed', () => card('Activation', renewalStartsLater(ctx, lease)
+          ? html`<p class="small">This renewal becomes active automatically on ${fmtDate(lease.start_date)}, when the current term ends. Until then the household stays on its current lease and nothing is billed for the new term.</p>`
+          : html`
+          <p class="small">${lease.renewal_of_lease_id ? 'Starts' : 'Move-in'} ${fmtDate(lease.start_date)} — the lease becomes active automatically on that day, or activate it now:</p>
           <form method="post" action="/leases/${lease.id}/activate"><button class="btn">Activate lease now</button></form>`))}`;
     },
   };
@@ -383,7 +403,9 @@ export function portalRoutes(r: Router): void {
     } catch (e) {
       return redirect('/portal', (e as Error).message, 'err');
     }
-    return redirect('/portal', '🎉 Renewal accepted! Check your email — your renewal packet is ready to sign.');
+    return redirect('/portal', isLiveOrg(pc.ctx)
+      ? 'Renewal accepted. The leasing office will be in touch with your renewal packet to sign.'
+      : '🎉 Renewal accepted! Check your email — your renewal packet is ready to sign.');
   });
 
   r.post('/portal/renewal/:offerId/counter', requireResident, (rq) => {

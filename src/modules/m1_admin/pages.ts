@@ -15,7 +15,7 @@ import { audit } from '../../lib/audit.ts';
 import { getSetting, getSettingMerged, layerSetting, narrowOverride, setSetting, SETTING_DEFAULTS } from '../../lib/settings.ts';
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
-import { receiveInbound } from '../../lib/sim/messaging.ts';
+import { receiveInbound, isLiveOrg, deliveryLabel, RECORDED } from '../../lib/sim/messaging.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
 import { SPECS, GROUPS, renderSetting, isInstantSetting, describeSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
@@ -37,7 +37,9 @@ registerNav('Admin', { href: '/admin/audit', label: 'Audit log', perm: 'admin:au
 registerNav('Admin', { href: '/admin/jobs', label: 'Scheduled jobs', perm: 'admin:jobs' });
 registerNav('Admin', { href: '/admin/api', label: 'Integrations', perm: 'admin:api' });
 registerNav('Developer', { href: '/dev/sim', label: 'Simulator console', perm: 'dev:console', demoOnly: true });
-registerNav('Developer', { href: '/dev/messages', label: 'Outbox', perm: 'dev:console' });
+// The Outbox is where every "saved, not delivered" message points, so the
+// people who send messages must be able to open it — not only developers.
+registerNav('Admin', { href: '/dev/messages', label: 'Outbox', perm: 'comms:view' });
 
 registerSearch((ctx, query) => {
   if (!ctx.perms.has('admin:staff')) return [];
@@ -166,7 +168,7 @@ export function routes(r: Router): void {
       crumbs: [['Staff & roles', '/admin/staff']],
       actions: html`
         <form method="post" action="/admin/impersonate/${u.id}" data-confirm="Impersonate ${u.name}? This is audited."><button class="btn btn-ghost">Login as ${u.name.split(' ')[0]}</button></form>
-        <form method="post" action="/admin/staff/${u.id}/reset-password" data-confirm="Reset password to demo1234?"><button class="btn btn-ghost">Reset password</button></form>`,
+        <form method="post" action="/admin/staff/${u.id}/reset-password" data-confirm="${ctx.orgKind === 'live' ? 'Reset this password? A new one-time password is shown to you once, and this person is signed out everywhere.' : 'Reset password to demo1234?'}"><button class="btn btn-ghost">Reset password</button></form>`,
       content: html`${staffForm(rq, u, grants)}
         ${card('History', historyPanel(ctx.orgId, 'user', u.id))}`,
     });
@@ -838,13 +840,20 @@ export function routes(r: Router): void {
   // The outbox is a RECORD, not a simulator: live orgs need to read what the
   // platform generated for their residents (portal invites carry the one-time
   // passwords) until the live email/SMS rails ship. Only /dev/sim stays demo-only.
-  r.get('/dev/messages', requirePerm('dev:console'), (rq) => {
+  r.get('/dev/messages', requirePerm('comms:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const channel = rq.query.get('channel') || '';
     const template = rq.query.get('template') || '';
     const qtext = rq.query.get('q') || '';
     const params: unknown[] = [ctx.orgId];
     let where = 'org_id=?';
+    // Opened up from developers to anyone who sends messages, so it has to
+    // respect what they may see: staff scoped to some buildings get those
+    // buildings' messages, and nothing that belongs to no building.
+    if (!ctx.allProperties) {
+      if (!ctx.propertyIds.length) where += ' AND 1=0';
+      else { where += ` AND property_id IN (${ctx.propertyIds.map(() => '?').join(',')})`; params.push(...ctx.propertyIds); }
+    }
     if (channel) { where += ' AND channel=?'; params.push(channel); }
     if (template) { where += ' AND template_key=?'; params.push(template); }
     if (qtext) { where += ' AND (subject LIKE ? OR to_addr LIKE ? OR body LIKE ?)'; params.push(`%${qtext}%`, `%${qtext}%`, `%${qtext}%`); }
@@ -855,7 +864,7 @@ export function routes(r: Router): void {
       title: 'Outbox',
       active: '/dev/messages',
       subtitle: ctx.orgKind === 'live'
-        ? `Every message the platform generates — portal invites and one-time passwords included. External email/SMS delivery is rolling out; until it's enabled, this is the delivery record. ${total} message${total === 1 ? '' : 's'}.`
+        ? `Every message the platform writes — portal invites and one-time passwords included. Email and text delivery are not connected yet, so nothing here has reached anyone: open a message to read it and pass it on yourself. ${total} message${total === 1 ? '' : 's'}.`
         : `Outbox simulator — nothing actually sends. ${total} message${total === 1 ? '' : 's'} captured.`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
@@ -864,7 +873,7 @@ export function routes(r: Router): void {
           ${field('Search', input('q', { value: qtext, placeholder: 'subject, address or body' }))}
         </form>
         ${card(null, html`${tbl(
-          [{ label: '' }, { label: 'When' }, { label: 'To' }, { label: 'Subject / body' }, { label: 'Template' }],
+          [{ label: '' }, { label: 'When' }, { label: 'To' }, { label: 'Subject / body' }, { label: 'Delivery' }, { label: 'Template' }],
           rows.map((m) => ({
             href: `/dev/messages/${m.id}`,
             cells: [
@@ -872,6 +881,7 @@ export function routes(r: Router): void {
               html`<span class="small nowrap">${m.created_at.slice(5, 16).replace('T', ' ')}</span>`,
               html`${m.to_name ? html`<b>${m.to_name}</b> ` : ''}<span class="muted small">${m.to_addr}</span>`,
               html`<span class="small">${m.subject || m.body.replace(/<[^>]+>/g, ' ').slice(0, 90)}</span>`,
+              statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status)),
               m.template_key ? html`<span class="mono small">${m.template_key}</span>` : '—',
             ],
           })),
@@ -880,20 +890,22 @@ export function routes(r: Router): void {
     });
   });
 
-  r.get('/dev/messages/:id', requirePerm('dev:console'), (rq) => {
+  r.get('/dev/messages/:id', requirePerm('comms:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound('Message not found');
+    if (!ctx.allProperties && !(m.property_id && ctx.propertyIds.includes(m.property_id))) return notFound('Message not found');
     return shell(rq, {
       title: m.subject || `${m.channel.toUpperCase()} message`,
       active: '/dev/messages',
-      crumbs: [['Message console', '/dev/messages']],
+      crumbs: [['Outbox', '/dev/messages']],
       content: html`
+        ${m.status === RECORDED ? html`<div class="callout warn"><b>Saved — not delivered.</b> Email and text delivery are not connected yet, so this message has not reached ${m.to_name || m.to_addr}. Copy it and send it yourself if they need it.</div>` : null}
         ${card('Details', dl([
           ['Direction', m.direction], ['Channel', m.channel],
           [m.direction === 'in' ? 'From' : 'To', `${m.to_name || ''} <${m.to_addr}>`],
-          ['Status', statusBadge(m.status)], ['Template', m.template_key || '—'],
-          ['Sent', fmtTs(m.created_at)], ['Entity', m.entity ? `${m.entity}/${m.entity_id}` : '—'],
+          ['Delivery', statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status))], ['Template', m.template_key || '—'],
+          [m.status === RECORDED ? 'Saved' : m.direction === 'in' ? 'Received' : 'Sent', fmtTs(m.created_at)], ['Entity', m.entity ? `${m.entity}/${m.entity_id}` : '—'],
         ]))}
         ${card('Rendered message', m.channel === 'email'
           ? m.direction === 'in'
@@ -903,7 +915,7 @@ export function routes(r: Router): void {
             ? html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff;white-space:pre-wrap">${m.body}</div>`
             : html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff">${safeHtml(m.body)}</div>`
           : html`<div style="max-width:340px;background:var(--info-soft);border-radius:14px;padding:10px 14px;font-size:14px">${m.body}</div>`)}
-        ${m.direction === 'out' && m.person_id ? card('Simulate inbound reply', html`
+        ${m.direction === 'out' && m.person_id && !isLiveOrg(ctx) ? card('Simulate inbound reply', html`
           <form method="post" action="/dev/messages/${m.id}/reply">
             ${field('Reply body', textarea('body', { required: true, placeholder: 'Type the simulated reply from this person…' }))}
             <button class="btn">Receive reply</button>
@@ -915,6 +927,9 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound();
+    // devOnly gates on deployment mode; a live org on a demo-mode deployment
+    // must still never get an invented inbound message.
+    if (isLiveOrg(ctx)) return redirect(`/dev/messages/${m.id}`, 'Simulated replies are for the demo only — inbound email and text are not connected.', 'err');
     receiveInbound(ctx, {
       channel: m.channel, from: m.to_addr, fromName: m.to_name || undefined,
       subject: m.subject ? `Re: ${m.subject}` : undefined, body: String(rq.body.body || ''),

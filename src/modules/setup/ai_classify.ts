@@ -53,6 +53,14 @@ interface Signature {
 /** Report titles these systems print at the top of their exports. Ordered:
  * the first match wins, so the more specific variants come first. */
 const SIGNATURES: Signature[] = [
+  // ---- StayLeased's own blank templates, by the name they download under.
+  // The product's own file must never depend on a column-vocabulary tie-break
+  // (or on the model being switched on) to be recognised.
+  { title: /stayleased-rent-roll-template/i, kind: 'rent_roll', report: 'Rent Roll' },
+  { title: /stayleased-balances-template/i, kind: 'balances', report: 'Open Balances list' },
+  { title: /stayleased-residents-template/i, kind: 'residents', report: 'Resident Directory' },
+  { title: /stayleased-vendors-template/i, kind: 'vendors', report: 'Vendor List' },
+
   // ---- rent rolls: the file that builds a portfolio ----
   { title: /rent\s*roll\s*(with|w\/)\s*lease\s*charges/i, kind: 'rent_roll', report: 'Rent Roll with Lease Charges' },
   { title: /\brent\s*roll\b/i, kind: 'rent_roll', report: 'Rent Roll' },
@@ -121,11 +129,18 @@ const VOCAB: Vocab[] = [
     [/(tenant|resident|occupant|household)/i, 2], [/^unit/i, 2],
     [/e.?mail/i, 1], [/(phone|mobile|cell)/i, 1],
     [/(trade|category|specialty|service\s*type)/i, -3], [/(^rent$|market\s*rent)/i, -1],
+    // a directory lists people, not what they owe
+    [/(balance|amount\s*due|owed|past\s*due)/i, -2],
   ] },
   { kind: 'balances', report: 'Open balances', signals: [
     [/^unit/i, 2], [/(balance|amount\s*due|owed|past\s*due)/i, 2],
     [/(aging|0\s*-\s*30|31\s*-\s*60|61\s*-\s*90|90\+)/i, 2],
     [/(lease\s*(from|to)|move.?in)/i, -1],
+    // "Unit, Tenant, Balance" used to tie three ways (rent roll 4, directory 4,
+    // balances 4) and read as nothing. Who owes it argues for a balances list;
+    // a rent or deposit column argues it is a rent roll after all.
+    [/(tenant|resident|occupant|name)/i, 1],
+    [/(^rent$|monthly\s*rent|market\s*rent|lease\s*rent|deposit)/i, -2],
   ] },
   { kind: 'deposits', report: 'Deposit report', signals: [
     // the shortfall column is what makes a deposit report a deposit report —

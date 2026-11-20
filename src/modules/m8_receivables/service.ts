@@ -25,7 +25,18 @@ export interface ChargeInput {
   leaseChargeId?: string | null;
   source?: string;
   memo?: string;
+  /** a credit (negative amount) that belongs to one charge — a fee waiver —
+   * is applied to that charge first, before the property's usual order */
+  applyToChargeId?: string | null;
 }
+
+/** A credit is a negative charge. What it has paid down is carried the same
+ * way a payment's is — as payment_applications — on a zero-cash record of
+ * method 'credit' that points back at the credit charge. Zero cash, so it
+ * changes no balance and no receipt total; it only says WHICH charges the
+ * credit closed, which is the question every "is this charge still open"
+ * query in the product asks. */
+export const CREDIT_CARRIER_SQL = `method='credit' AND amount_cents=0`;
 
 export function createCharge(ctx: Ctx, input: ChargeInput): string {
   const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', input.leaseId, ctx.orgId);
@@ -63,6 +74,7 @@ export function createCharge(ctx: Ctx, input: ChargeInput): string {
   });
   emit(ctx, 'charge.created', 'charge', chargeId, {
     leaseId: lease.id, propertyId: lease.property_id, kind: input.kind, amountCents: input.amountCents, label: input.label,
+    applyToChargeId: input.applyToChargeId || null,
   });
   return chargeId;
 }
@@ -70,9 +82,26 @@ export function createCharge(ctx: Ctx, input: ChargeInput): string {
 export function voidCharge(ctx: Ctx, chargeId: string, reason: string): void {
   const c = q1<any>('SELECT * FROM charges WHERE id=? AND org_id=?', chargeId, ctx.orgId);
   if (!c || c.status !== 'active') throw new Error('charge not found or not active');
-  const applied = val<number>('SELECT COALESCE(SUM(amount_cents),0) FROM payment_applications WHERE charge_id=?', chargeId) || 0;
+  // money a resident actually paid pins a charge; a credit that was applied to
+  // it does not — voiding releases the credit to the next open charge
+  const applied = val<number>(
+    `SELECT COALESCE(SUM(pa.amount_cents),0) FROM payment_applications pa JOIN payments p ON p.id=pa.payment_id
+     WHERE pa.charge_id=? AND NOT (p.method='credit' AND p.amount_cents=0)`,
+    chargeId,
+  ) || 0;
   if (applied > 0) throw new Error('cannot void a charge with payments applied — adjust instead');
   tx(() => {
+    run(
+      `DELETE FROM payment_applications WHERE charge_id=? AND payment_id IN (SELECT id FROM payments WHERE org_id=? AND ${CREDIT_CARRIER_SQL})`,
+      c.id, ctx.orgId,
+    );
+    if (c.amount_cents < 0) {
+      // voiding a credit: whatever it had closed is open again
+      run(
+        `DELETE FROM payment_applications WHERE payment_id IN (SELECT id FROM payments WHERE org_id=? AND ${CREDIT_CARRIER_SQL} AND reference=?)`,
+        ctx.orgId, c.id,
+      );
+    }
     const creditAccount = CHARGE_CREDIT[c.kind] || CHARGE_CREDIT['other']!;
     postJE(ctx, {
       propertyId: c.property_id, date: ctx.businessDate, basis: 'accrual',
@@ -112,7 +141,7 @@ export function leaseLedger(ctx: Ctx, leaseId: string): LedgerRow[] {
     ctx.orgId, leaseId,
   );
   const payments = q<any>(
-    `SELECT id, received_date AS date, method, reference, amount_cents, status, autopay, created_at FROM payments WHERE org_id=? AND lease_id=? AND status NOT IN ('voided','failed') ORDER BY received_date, created_at`,
+    `SELECT id, received_date AS date, method, reference, amount_cents, status, autopay, created_at FROM payments WHERE org_id=? AND lease_id=? AND status NOT IN ('voided','failed') AND NOT (${CREDIT_CARRIER_SQL}) ORDER BY received_date, created_at`,
     ctx.orgId, leaseId,
   );
   const refunds = q<any>(
@@ -127,7 +156,7 @@ export function leaseLedger(ctx: Ctx, leaseId: string): LedgerRow[] {
     })),
     ...payments.map((p) => ({
       date: p.date, kind: 'payment' as const,
-      label: `Payment — ${p.method.toUpperCase()}${p.autopay ? ' autopay' : ''}${p.reference ? ` #${p.reference}` : ''}${p.status === 'nsf' ? ' (NSF — reversed)' : p.status === 'chargeback' ? ' (chargeback)' : p.status === 'pending' ? ' (pending)' : ''}`,
+      label: `Payment — ${p.method.toUpperCase().replaceAll('_', ' ')}${p.autopay ? ' autopay' : ''}${p.reference ? ` #${p.reference}` : ''}${p.status === 'nsf' ? ' (NSF — reversed)' : p.status === 'chargeback' ? ' (chargeback)' : p.status === 'pending' ? ' (pending)' : ''}`,
       charge_cents: 0, credit_cents: p.status === 'nsf' || p.status === 'chargeback' ? 0 : p.amount_cents,
       ref_id: p.id, status: p.status, created_at: p.created_at,
     })),

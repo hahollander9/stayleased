@@ -1,4 +1,5 @@
 import { q1, val, run, insert } from '../../lib/db.ts';
+import { recordNotice } from '../m6_leases/service.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, addDays, fmtDate } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
@@ -169,7 +170,7 @@ registerOp({
   params: [
     { key: 'lease', type: 'lease', label: 'Household', required: true },
     { key: 'amount', type: 'money', label: 'Amount', required: true },
-    { key: 'method', type: 'enum', label: 'Method', required: true, values: ['check', 'money_order', 'cash_equivalent', 'ach', 'card', 'lockbox'] },
+    { key: 'method', type: 'enum', label: 'Method', required: true, values: ['check', 'money_order', 'cash_equivalent', 'bank_transfer', 'lockbox'] },
     { key: 'reference', type: 'text', label: 'Reference', hint: 'cheque number or confirmation' },
     { key: 'date', type: 'date', label: 'Received', hint: 'defaults to the business date' },
   ],
@@ -241,11 +242,9 @@ registerOp({
   },
   apply(ctx, a) {
     const l = leaseRow(ctx, str(a.lease))!;
-    run(
-      `UPDATE leases SET status='notice', notice_date=?, move_out_date=? WHERE id=? AND org_id=?`,
-      ctx.businessDate, str(a.move_out), l.id, ctx.orgId,
-    );
-    audit(ctx, 'lease', l.id, 'notice', null, { moveOut: str(a.move_out), via: 'ask' });
+    // the same function the lease page calls: it also puts the unit on notice
+    // and starts the turn, which a bare status update never did
+    recordNotice(ctx, l.id, str(a.move_out), { source: 'ask' });
     return `${l.household_name} is on notice for ${fmtDate(str(a.move_out))}.`;
   },
 });
@@ -502,11 +501,16 @@ registerOp({
   describe: 'Move the simulated business date forward, running every scheduled job for each day passed. Choose this for "advance the date", "move to <date>", "run the clock forward".',
   perm: 'admin:jobs',
   risk: 'admin',
+  demoOnly: true,
   params: [{ key: 'to', type: 'date', label: 'New business date', required: true }],
   preview(ctx, a) {
     const to = str(a.to);
     const blockers: string[] = [];
-    if (!to) blockers.push('A target date is required.');
+    // A live organization's date is the real calendar. Advancing it would post
+    // rent and late fees early onto real books; advanceBusinessDate refuses
+    // too, this just says so before anyone is asked to confirm.
+    if (ctx.orgKind === 'live') blockers.push('A live organization runs on the real calendar. The business date moves on its own each day and cannot be advanced by hand.');
+    else if (!to) blockers.push('A target date is required.');
     else if (to <= ctx.businessDate) blockers.push(`${fmtDate(to)} is not after the current business date, ${fmtDate(ctx.businessDate)}.`);
     const days = to && to > ctx.businessDate
       ? Math.round((Date.parse(to) - Date.parse(ctx.businessDate)) / 86400000) : 0;

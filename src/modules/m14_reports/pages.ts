@@ -14,6 +14,7 @@ import {
 } from './engine.ts';
 import { DATASETS, dataset, runCustom, configFromQuery, type BuilderConfig } from './builder.ts';
 import { deliverSavedReport } from './schedule.ts';
+import { isLiveOrg } from '../../lib/sim/messaging.ts';
 import { WIDGETS, widget, userLayout, saveLayout, resetLayout } from './dashboards.ts';
 import './defs_ops.ts';
 import './defs_leasing.ts';
@@ -99,6 +100,28 @@ function paramPanel(rq: Rq, ctx: Ctx, def: ReportDef, params: Record<string, str
     ${when(rq.query.get('group'), () => html`<input type="hidden" name="group" value="${rq.query.get('group')}" />`)}
     <button class="btn btn-sm">Run</button>
   </form>`;
+}
+
+/** The parameter line printed on a PDF: names, never internal ids. */
+export function paramSummary(ctx: Ctx, def: ReportDef, params: Record<string, string>): string {
+  return def.params.map((p) => {
+    let v = params[p.key] ?? '';
+    let label = p.label || p.key;
+    if (p.kind === 'property') {
+      label = p.label || 'Property';
+      v = v === 'all' || !v ? 'All properties' : (q1<any>('SELECT name FROM properties WHERE id=? AND org_id=?', v, ctx.orgId)?.name ?? 'Property');
+    } else if (p.kind === 'select') {
+      v = p.options?.find((o) => o[0] === v)?.[1] ?? v;
+    } else if (p.kind === 'basis') {
+      label = 'Basis';
+      v = v === 'cash' ? 'Cash' : 'Accrual';
+    } else if (p.kind === 'date' || p.kind === 'from' || p.kind === 'to') {
+      label = p.label || (p.kind === 'date' ? 'As of' : p.kind === 'from' ? 'From' : 'To');
+      v = v ? fmtDate(v) : v;
+    } else if (p.kind === 'month') label = p.label || 'Month';
+    else if (p.kind === 'year') label = p.label || 'Year';
+    return `${label}: ${v}`;
+  }).join(' · ');
 }
 
 export function routes(r: Router): void {
@@ -202,7 +225,9 @@ export function routes(r: Router): void {
             ${field('Schedule', select('schedule', [['', 'Not scheduled'], ['daily', 'Daily'], ['weekly', 'Weekly (Mondays)'], ['monthly', 'Monthly (1st)']]))}
             <button class="btn">Save report</button>
           </div>
-          <p class="small muted">Scheduled reports run on the day scheduler, export CSV, and land in the owner's Message Console as an attachment.</p>
+          <p class="small muted">${isLiveOrg(ctx)
+            ? 'Scheduled reports run overnight and the CSV is filed on the saved report and in the Outbox. Email delivery is not connected yet, so nothing arrives in an inbox — open the saved report to download it.'
+            : "Scheduled reports run on the day scheduler, export CSV, and land in the owner's Message Console as an attachment."}</p>
         </form>`)}`,
     });
   });
@@ -211,11 +236,12 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     const cfg = j<BuilderConfig>(String(rq.body.config || '{}'), { dataset: 'residents', cols: [], filters: [] });
     if (!dataset(cfg.dataset)) return redirect('/reports/builder', 'Unknown dataset', 'err');
+    if (!cfg.cols?.some((k) => dataset(cfg.dataset)!.cols.some((c) => c.key === k))) return redirect(`/reports/builder?dataset=${encodeURIComponent(cfg.dataset)}`, 'Pick at least one column before saving.', 'err');
     const schedule = String(rq.body.schedule || '') || null;
     if (schedule && !can(ctx, 'reports:schedule')) return redirect('/reports/builder', 'You can save but not schedule reports (reports:schedule).', 'err');
     const sid = id('svr');
     insert('saved_reports', {
-      id: sid, org_id: ctx.orgId, owner_user_id: ctx.userId, name: String(rq.body.name || 'Untitled report').slice(0, 80),
+      id: sid, org_id: ctx.orgId, owner_user_id: ctx.userId, name: String(rq.body.name || '').trim().slice(0, 80) || 'Untitled report',
       kind: 'custom', dataset: cfg.dataset, config: js(cfg), shared: rq.body.shared === '1' ? 1 : 0,
       schedule, last_run_date: null, created_at: nowIso(),
     });
@@ -224,30 +250,59 @@ export function routes(r: Router): void {
   });
 
   // ---------- saved reports ----------
-  r.get('/reports/saved/:id', requirePerm('reports:view'), (rq) => {
+  r.get('/reports/saved/:id', requirePerm('reports:view'), async (rq) => {
     const ctx = rq.ctx as Ctx;
     const saved = q1<any>('SELECT * FROM saved_reports WHERE id=? AND org_id=?', rq.params.id, ctx.orgId);
     if (!saved || (!saved.shared && saved.owner_user_id !== ctx.userId && !can(ctx, 'admin:settings'))) return notFound('Report not found');
     const owner = q1<any>('SELECT name FROM users WHERE id=?', saved.owner_user_id);
     let rendered: RenderedReport;
     let editHref = '';
+    let paramLine = `Custom report · dataset: ${saved.dataset}`;
     if (saved.kind === 'custom') {
       const cfg = j<BuilderConfig>(saved.config, { dataset: saved.dataset, cols: [], filters: [] });
-      rendered = processResult(runCustom(ctx, cfg), { sort: rq.query.get('sort') || cfg.sort || undefined, dir: rq.query.get('dir') || cfg.dir });
       const sp = new URLSearchParams();
       sp.set('dataset', cfg.dataset);
       cfg.cols.forEach((c) => sp.append('col', c));
       cfg.filters.forEach((f, i) => { sp.set(`f${i}_col`, f.col); sp.set(`f${i}_op`, f.op); sp.set(`f${i}_val`, f.value); });
       if (cfg.group) sp.set('group', cfg.group);
       editHref = `/reports/builder?${sp}`;
+      try {
+        rendered = processResult(runCustom(ctx, cfg), { sort: rq.query.get('sort') || cfg.sort || undefined, dir: rq.query.get('dir') || cfg.dir });
+      } catch {
+        // a saved report with no usable columns: send its owner back to fix it rather than a crash page
+        return redirect(editHref, 'This saved report has no columns to show. Pick at least one column and save it again.', 'err');
+      }
     } else {
       const def = reportDef(saved.dataset);
       if (!def) return notFound('The underlying report no longer exists');
+      if (def.perm && !can(ctx, def.perm)) return notFound('Report not found');
       const params = resolveParams(ctx, def, new URLSearchParams(j<Record<string, string>>(saved.config, {})));
       rendered = processResult(def.run(ctx, params), { sort: rq.query.get('sort') || undefined, dir: rq.query.get('dir') || undefined, group: def.defaultGroup });
+      paramLine = paramSummary(ctx, def, params);
       editHref = `/reports/${def.key}?${new URLSearchParams(j<Record<string, string>>(saved.config, {}))}`;
     }
     const isOwner = saved.owner_user_id === ctx.userId;
+    // CSV / PDF of exactly what is on screen (custom builder reports have no other export).
+    const format = rq.query.get('format');
+    const fileBase = `${String(saved.name).replaceAll(/[^a-z0-9]+/gi, '-').replace(/^-+|-+$/g, '').toLowerCase() || 'report'}-${ctx.businessDate}`;
+    if (format === 'csv') {
+      return fileRes(new TextEncoder().encode(reportCsv(rendered)), 'text/csv', { filename: `${fileBase}.csv` });
+    }
+    if (format === 'pdf') {
+      const orgName = q1<any>('SELECT name FROM orgs WHERE id=?', ctx.orgId)?.name || 'StayLeased';
+      const bytes = await reportPdf(saved.name, orgName, paramLine, rendered);
+      return fileRes(bytes, 'application/pdf', { filename: `${fileBase}.pdf`, inline: true });
+    }
+    const exportLink = (fmt: string): string => {
+      const sp = new URLSearchParams(rq.query);
+      sp.set('format', fmt);
+      return `${rq.path}?${sp.toString()}`;
+    };
+    const files = q<any>(
+      `SELECT id, name, created_at FROM files WHERE org_id=? AND entity='saved_report' AND entity_id=? ORDER BY created_at DESC LIMIT 6`,
+      ctx.orgId, saved.id,
+    );
+    const live = isLiveOrg(ctx);
     return shell(rq, {
       title: saved.name,
       active: '/reports',
@@ -255,18 +310,42 @@ export function routes(r: Router): void {
       subtitle: html`${saved.kind === 'custom' ? `Custom · dataset: ${saved.dataset}` : `Saved view of ${reportDef(saved.dataset)?.name}`} · by ${owner?.name || '—'} · ${saved.shared ? 'shared' : 'private'}
         ${saved.schedule ? html` · <span class="badge info">${saved.schedule}</span> ${saved.last_run_date ? `last ran ${fmtDate(saved.last_run_date)}` : 'not yet run'}` : ''}`,
       actions: html`
+        <a class="btn btn-ghost" href="${exportLink('csv')}">CSV</a>
+        <a class="btn btn-ghost" href="${exportLink('pdf')}" target="_blank">PDF</a>
         <a class="btn btn-ghost" href="${editHref}">Open in ${saved.kind === 'custom' ? 'builder' : 'report'}</a>
         ${when(isOwner || can(ctx, 'reports:schedule'), () => html`
-          <form method="post" action="/reports/saved/${saved.id}/deliver" style="display:inline"><button class="btn btn-ghost">Run & deliver now</button></form>
+          <form method="post" action="/reports/saved/${saved.id}/deliver" style="display:inline"><button class="btn btn-ghost">${live ? 'Run & file now' : 'Run & deliver now'}</button></form>
           <form method="post" action="/reports/saved/${saved.id}/schedule" style="display:inline" class="toolbar">
-            ${select('schedule', [['', 'Not scheduled'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']], saved.schedule || '')}
+            ${select('schedule', [['', 'Not scheduled'], ['daily', 'Daily'], ['weekly', 'Weekly'], ['monthly', 'Monthly']], saved.schedule || '', { ariaLabel: 'Schedule' })}
             <button class="btn btn-sm">Set</button>
           </form>`)}
         ${when(isOwner, () => html`<form method="post" action="/reports/saved/${saved.id}/delete" style="display:inline">
           <button class="btn btn-ghost" data-confirm="Delete this saved report?">Delete</button>
         </form>`)}`,
-      content: reportTable(rq, rendered, { sort: rq.query.get('sort') || undefined, dir: rq.query.get('dir') || undefined }),
+      content: html`
+        ${when(isOwner && can(ctx, 'reports:build'), () => card('Name and sharing', html`
+          <form method="post" action="/reports/saved/${saved.id}/update" class="toolbar">
+            ${field('Name', input('name', { required: true, value: saved.name }))}
+            ${field('Visibility', select('shared', [['0', 'Private to me'], ['1', 'Shared with the org']], saved.shared ? '1' : '0'))}
+            <button class="btn btn-sm">Save</button>
+          </form>`))}
+        ${when(live && (saved.schedule || files.length), () => html`<p class="small muted">Email delivery is not connected yet. Each scheduled run files its CSV here and in the Outbox; nothing arrives in an inbox.</p>`)}
+        ${when(files.length, () => card('Filed runs', html`<ul class="small">${files.map((f) => html`<li><a href="/f/${f.id}">${f.name}</a> <span class="muted">· ${fmtDate(String(f.created_at).slice(0, 10))}</span></li>`)}</ul>`))}
+        ${reportTable(rq, rendered, { sort: rq.query.get('sort') || undefined, dir: rq.query.get('dir') || undefined })}`,
     });
+  });
+
+  // Rename / share a saved report (owner only, like delete).
+  r.post('/reports/saved/:id/update', requirePerm('reports:build'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const saved = q1<any>('SELECT * FROM saved_reports WHERE id=? AND org_id=?', rq.params.id, ctx.orgId);
+    if (!saved || saved.owner_user_id !== ctx.userId) return notFound('Report not found');
+    const name = String(rq.body.name || '').trim().slice(0, 80);
+    if (!name) return redirect(`/reports/saved/${saved.id}`, 'Give the report a name.', 'err');
+    const shared = rq.body.shared === '1' ? 1 : 0;
+    run('UPDATE saved_reports SET name=?, shared=? WHERE id=? AND org_id=?', name, shared, saved.id, ctx.orgId);
+    audit(ctx, 'saved_report', saved.id, 'update', { name: saved.name, shared: saved.shared }, { name, shared });
+    return redirect(`/reports/saved/${saved.id}`, shared ? 'Saved — everyone in your company with Reports access can open it.' : 'Saved — only you can open it.');
   });
 
   r.post('/reports/saved/:id/schedule', requirePerm('reports:build'), (rq) => {
@@ -275,9 +354,11 @@ export function routes(r: Router): void {
     if (!saved) return notFound('Report not found');
     const schedule = String(rq.body.schedule || '') || null;
     if (schedule && !can(ctx, 'reports:schedule')) return redirect(`/reports/saved/${saved.id}`, 'Scheduling needs reports:schedule.', 'err');
-    run('UPDATE saved_reports SET schedule=? WHERE id=?', schedule, saved.id);
+    run('UPDATE saved_reports SET schedule=? WHERE id=? AND org_id=?', schedule, saved.id, ctx.orgId);
     audit(ctx, 'saved_report', saved.id, 'schedule', null, { schedule });
-    return redirect(`/reports/saved/${saved.id}`, schedule ? `Scheduled ${schedule}.` : 'Schedule removed.');
+    return redirect(`/reports/saved/${saved.id}`, !schedule ? 'Schedule removed.' : isLiveOrg(ctx)
+      ? `Scheduled ${schedule}. Each run is filed on this page and in the Outbox — email delivery is not connected yet.`
+      : `Scheduled ${schedule}.`);
   });
 
   r.post('/reports/saved/:id/deliver', requirePerm('reports:view'), (rq) => {
@@ -285,14 +366,17 @@ export function routes(r: Router): void {
     const saved = q1<any>('SELECT * FROM saved_reports WHERE id=? AND org_id=?', rq.params.id, ctx.orgId);
     if (!saved) return notFound('Report not found');
     const fileId = deliverSavedReport(ctx, saved, ctx.businessDate);
-    return redirect(`/reports/saved/${saved.id}`, `Delivered — the CSV is in the owner's Message Console (file /f/${fileId.slice(-6)}…).`);
+    return redirect(`/reports/saved/${saved.id}`, isLiveOrg(ctx)
+      ? 'Report run and filed below and in the Outbox. Email delivery is not connected yet, so nothing was emailed.'
+      : `Delivered — the CSV is in the owner's Message Console (file /f/${fileId.slice(-6)}…).`);
   });
 
   r.post('/reports/saved/:id/delete', requirePerm('reports:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const saved = q1<any>('SELECT * FROM saved_reports WHERE id=? AND org_id=?', rq.params.id, ctx.orgId);
     if (!saved || saved.owner_user_id !== ctx.userId) return notFound('Report not found');
-    run('DELETE FROM saved_reports WHERE id=?', saved.id);
+    run('DELETE FROM saved_reports WHERE id=? AND org_id=?', saved.id, ctx.orgId);
+    audit(ctx, 'saved_report', saved.id, 'delete', { name: saved.name }, null);
     return redirect('/reports', 'Saved report deleted.');
   });
 
@@ -368,7 +452,7 @@ export function routes(r: Router): void {
     const rendered = processResult(res, { sort: sort || undefined, dir: dir || undefined, group: group || undefined });
 
     const format = rq.query.get('format');
-    const paramLine = def.params.map((p) => `${p.label || p.key}: ${params[p.key]}`).join(' · ');
+    const paramLine = paramSummary(ctx, def, params);
     if (format === 'csv') {
       return fileRes(new TextEncoder().encode(reportCsv(rendered)), 'text/csv', { filename: `${def.key}-${ctx.businessDate}.csv` });
     }
@@ -417,7 +501,7 @@ export function routes(r: Router): void {
     const sid = id('svr');
     insert('saved_reports', {
       id: sid, org_id: ctx.orgId, owner_user_id: ctx.userId,
-      name: `${def.name} (my view)`, kind: 'canned', dataset: def.key,
+      name: `${def.name} (my view)`.slice(0, 80), kind: 'canned', dataset: def.key,
       config: String(rq.body.params || '{}'), shared: 0, schedule: null, last_run_date: null, created_at: nowIso(),
     });
     audit(ctx, 'saved_report', sid, 'create', null, { report: def.key });

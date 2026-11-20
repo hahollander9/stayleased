@@ -79,6 +79,9 @@ registerReport({
         { key: 'amount', label: 'Balance', kind: 'money', total: true },
       ],
       rows,
+      // Section subtotals only: assets + liabilities + equity is not a number
+      // anyone can use (it double-counts the sheet). The note carries the tie-out.
+      totals: {},
       note: `As of ${p.date} (${p.basis}). Assets ${fmtM(bs.totals.assets)} = Liabilities ${fmtM(bs.totals.liabilities)} + Equity ${fmtM(bs.totals.equity)} — ${bs.balanced ? 'BALANCED ✓' : 'OUT OF BALANCE ✗'}.`,
     };
   },

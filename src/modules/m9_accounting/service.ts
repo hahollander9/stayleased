@@ -257,5 +257,28 @@ function depositsHeldTotal(ctx: Ctx): number {
     `SELECT COALESCE(SUM(amount_cents),0) FROM deposit_activity WHERE org_id=? AND kind IN ('interest','apply','refund')`,
     ctx.orgId,
   ) || 0;
-  return accrued + activity;
+  // Deposits that arrived already held — brought in by an import, or typed in
+  // with "the deposit is already in the bank". Those are a lease row plus a
+  // 1020/2100 entry, with no deposit charge to sum (billing the household
+  // again for money already collected would be wrong). depositHeld() in
+  // m8_receivables has counted them per lease all along; this total did not,
+  // so after any import with deposits the check read "GL 2100 vs subledger 0",
+  // failed, and blocked every month-end close. Same rule as depositHeld(): the
+  // lease's deposit counts when it carries no active deposit charge.
+  //
+  // An imported lease that has not started yet (the rent roll's future
+  // residents) is the exception: its deposit figure is what will be charged
+  // at move-in, no 1020/2100 entry was posted for it, and counting it put the
+  // subledger above the GL by exactly that amount until move-in. A lease
+  // marked deposit_on_hand has its entry posted in any status, so it always
+  // counts.
+  const carriedIn = val<number>(
+    `SELECT COALESCE(SUM(l.deposit_cents),0) FROM leases l
+      WHERE l.org_id=? AND (l.deposit_on_hand=1
+             OR (l.import_batch_id IS NOT NULL AND l.status NOT IN ('draft','out_for_signature','partially_signed','fully_executed')))
+        AND NOT EXISTS (SELECT 1 FROM charges c
+                       WHERE c.org_id=l.org_id AND c.lease_id=l.id AND c.kind='deposit' AND c.status='active')`,
+    ctx.orgId,
+  ) || 0;
+  return accrued + carriedIn + activity;
 }

@@ -82,7 +82,9 @@ test('client walk 1: signup → rent-roll upload → applied with portal invites
   const flash = await body(page);
   assert.match(flash, /3 leases/);
   assert.match(flash, /4 residents/);
-  assert.match(flash, /3 portal invites sent/, 'every primary with an email got portal access');
+  // a live company: the logins exist, and the flash no longer claims an email went out (2026-11-19)
+  assert.match(flash, /3 portal logins created/, 'every primary with an email got portal access');
+  assert.doesNotMatch(flash, /invites sent/, 'and nothing is described as sent');
 
   // the applied import stays visible: uploads on the hub + a read-only record.
   // /setup/import is a redirect into the one hub now (2026-08-19) — following

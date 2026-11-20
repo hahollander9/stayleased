@@ -10,7 +10,7 @@ import { notify } from '../../lib/templates.ts';
 import { audit } from '../../lib/audit.ts';
 import { postJE } from '../m9_accounting/service.ts';
 import { CHARGE_CREDIT } from '../m9_accounting/coa.ts';
-import { createCharge, leaseBalance } from './service.ts';
+import { createCharge, leaseBalance, CREDIT_CARRIER_SQL } from './service.ts';
 import { authorizeCard, achWillBounce, settleDaysFor, processorFeeCents } from '../../lib/sim/payments.ts';
 
 /** M8.2–8.7: payment lifecycle, late fees, autopay, payment plans, deposit
@@ -73,13 +73,18 @@ export function openCharges(ctx: Ctx, leaseId: string): OpenCharge[] {
   ).filter((c) => c.amount_cents - c.applied > 0);
 }
 
-/** allocate an amount across open charges per the property application order */
-function allocate(ctx: Ctx, leaseId: string, propertyId: string, amountCents: number): { chargeId: string; kind: string; amount: number }[] {
+/** open charges in the order the property applies money to them */
+function rankedOpen(ctx: Ctx, leaseId: string, propertyId: string): OpenCharge[] {
   const order = getSetting<string[]>(ctx, 'payment_application_order', propertyId);
-  const open = openCharges(ctx, leaseId);
-  const ranked = open
+  return openCharges(ctx, leaseId)
     .map((c) => ({ c, rank: order.indexOf(categoryOf(c.kind)) === -1 ? order.length : order.indexOf(categoryOf(c.kind)) }))
-    .sort((a, b) => a.rank - b.rank || (a.c.due_date < b.c.due_date ? -1 : 1));
+    .sort((a, b) => a.rank - b.rank || (a.c.due_date < b.c.due_date ? -1 : 1))
+    .map((x) => x.c);
+}
+
+/** allocate an amount across open charges per the property application order */
+function allocate(ctx: Ctx, leaseId: string, propertyId: string, amountCents: number, excludeKinds: string[] = []): { chargeId: string; kind: string; amount: number }[] {
+  const ranked = rankedOpen(ctx, leaseId, propertyId).filter((c) => !excludeKinds.includes(c.kind)).map((c) => ({ c }));
   const out: { chargeId: string; kind: string; amount: number }[] = [];
   let left = amountCents;
   for (const { c } of ranked) {
@@ -93,12 +98,99 @@ function allocate(ctx: Ctx, leaseId: string, propertyId: string, amountCents: nu
   return out;
 }
 
+// ---------- credits (concessions, waivers, write-offs) ----------
+
+interface OpenCredit {
+  id: string;
+  label: string;
+  date: string;
+  property_id: string;
+  remaining: number;
+}
+
+/** Credits (negative charges) that have not yet been set against a charge. */
+export function unappliedCredits(ctx: Ctx, leaseId: string): OpenCredit[] {
+  return q<OpenCredit>(
+    `SELECT c.id, c.label, c.date, c.property_id,
+       -c.amount_cents - COALESCE((
+          SELECT SUM(pa.amount_cents) FROM payment_applications pa JOIN payments p ON p.id=pa.payment_id
+          WHERE p.org_id=c.org_id AND p.lease_id=c.lease_id AND p.${CREDIT_CARRIER_SQL.replace(' AND ', ' AND p.')} AND p.reference=c.id
+        ),0) AS remaining
+     FROM charges c WHERE c.org_id=? AND c.lease_id=? AND c.status='active' AND c.amount_cents<0
+     ORDER BY c.date, c.created_at`,
+    ctx.orgId, leaseId,
+  ).filter((c) => c.remaining > 0);
+}
+
+/** Set every unapplied credit on the lease against its open charges, in the
+ * property's application order. Without this a $100 concession lowered the
+ * balance and left the rent charge "open by $100" forever: the household paid
+ * in full, the balance read $0.00, and the late-fee run still found unpaid
+ * rent and billed a fee on it.
+ *
+ * No journal entry: the credit's own charge already moved the money on the
+ * accrual books (DR income / CR receivable) and no cash changed hands, so the
+ * cash books have nothing to record. Deposit charges are never a target —
+ * a concession does not put money in escrow. Idempotent. */
+export function applyLeaseCredits(ctx: Ctx, leaseId: string, prefer?: { creditId: string; chargeId: string } | null): number {
+  const credits = unappliedCredits(ctx, leaseId);
+  if (!credits.length) return 0;
+  const lease = q1<{ property_id: string }>('SELECT property_id FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  if (!lease) return 0;
+  let total = 0;
+  tx(() => {
+    for (const cr of credits) {
+      let left = cr.remaining;
+      const targets = rankedOpen(ctx, leaseId, lease.property_id).filter((c) => c.kind !== 'deposit');
+      if (prefer && prefer.creditId === cr.id) {
+        targets.sort((a, b) => (a.id === prefer.chargeId ? 0 : 1) - (b.id === prefer.chargeId ? 0 : 1));
+      }
+      let carrier: string | null = null;
+      for (const c of targets) {
+        if (left <= 0) break;
+        const take = Math.min(left, c.amount_cents - c.applied);
+        if (take <= 0) continue;
+        if (!carrier) {
+          carrier = q1<{ id: string }>(
+            `SELECT id FROM payments WHERE org_id=? AND lease_id=? AND ${CREDIT_CARRIER_SQL} AND reference=?`,
+            ctx.orgId, leaseId, cr.id,
+          )?.id || null;
+        }
+        if (!carrier) {
+          carrier = id('pay');
+          insert('payments', {
+            id: carrier, org_id: ctx.orgId, property_id: cr.property_id, lease_id: leaseId,
+            method: 'credit', reference: cr.id, amount_cents: 0, fee_cents: 0, status: 'settled',
+            received_date: cr.date, settle_date: cr.date, autopay: 0,
+            memo: `credit applied: ${cr.label}`.slice(0, 200), created_by: ctx.userId, created_at: nowIso(),
+          });
+        }
+        insert('payment_applications', { id: id('pap'), org_id: ctx.orgId, payment_id: carrier, charge_id: c.id, amount_cents: take, created_at: nowIso() });
+        left -= take;
+        total += take;
+      }
+    }
+  });
+  return total;
+}
+
 // ---------- record payment ----------
+
+/** Card and bank-draft payments run on a simulated processor. In a live
+ * organization that simulator must never write: it would invent a processor
+ * reference, a convenience fee and a settlement into the operating account
+ * for money nobody moved. Fenced here, where the payment is written, so every
+ * caller (the staff form, the portal, autopay, plan installments, Ask) is
+ * covered — not only the screens that happen to hide the option. */
+export const SIMULATED_METHODS = new Set(['ach', 'card']);
+export function processorConnected(ctx: Ctx): boolean {
+  return orgKind(ctx.orgId) !== 'live';
+}
 
 export interface PaymentInput {
   leaseId: string;
   amountCents: number;
-  method: 'ach' | 'card' | 'check' | 'money_order' | 'cash_equivalent' | 'lockbox' | 'credit';
+  method: 'ach' | 'card' | 'check' | 'money_order' | 'cash_equivalent' | 'lockbox' | 'bank_transfer' | 'credit';
   methodTokenId?: string | null;
   reference?: string | null;
   receivedDate: string;
@@ -109,6 +201,10 @@ export interface PaymentInput {
    * application at move-out) or 2200 (application holding deposit applied at
    * lease activation). Default 2100. */
   creditFunding?: '2100' | '2200' | '4110';
+  /** charge kinds this payment must never land on. The move-out deposit
+   * application passes ['deposit']: held deposit money pays what the
+   * household owes, never the household's own unpaid deposit. */
+  excludeKinds?: string[];
   suppressReceipt?: boolean;
 }
 
@@ -118,6 +214,9 @@ export function recordPayment(ctx: Ctx, input: PaymentInput): string {
   const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', input.leaseId, ctx.orgId);
   if (!lease) throw new PaymentRejected('lease not found');
   if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) throw new PaymentRejected('invalid amount');
+  if (SIMULATED_METHODS.has(input.method) && !processorConnected(ctx)) {
+    throw new PaymentRejected('Card and bank-draft payments are not connected for this account, so nothing was charged. Record money already received as a check, money order, certified funds or bank transfer.');
+  }
 
   // policy: partial payments
   // merged, not replaced: a property override stores only what DIFFERS, so
@@ -167,8 +266,12 @@ export function recordPayment(ctx: Ctx, input: PaymentInput): string {
       autopay: input.autopay ? 1 : 0, memo: input.memo || null, created_by: ctx.userId, created_at: nowIso(),
     });
 
+    // credits first: a concession or waiver already on the account closes the
+    // charges it covers, so this payment lands on what is genuinely still owed
+    if (!isCredit) applyLeaseCredits(ctx, lease.id);
+
     // apply to charges
-    const apps = allocate(ctx, lease.id, lease.property_id, input.amountCents);
+    const apps = allocate(ctx, lease.id, lease.property_id, input.amountCents, input.excludeKinds || []);
     for (const a of apps) {
       insert('payment_applications', { id: id('pap'), org_id: ctx.orgId, payment_id: paymentId, charge_id: a.chargeId, amount_cents: a.amount, created_at: nowIso() });
     }
@@ -211,6 +314,8 @@ export function recordPayment(ctx: Ctx, input: PaymentInput): string {
   emit(ctx, 'payment.received', 'payment', paymentId, {
     leaseId: lease.id, propertyId: lease.property_id, amountCents: input.amountCents, method: input.method, autopay: !!input.autopay,
   });
+  // a payment plan is kept by paying — however the money arrives
+  if (!isCredit) reconcilePaymentPlans(ctx, lease.id);
 
   if (!input.suppressReceipt && !isCredit) {
     const contact = primaryContact(ctx, lease.id);
@@ -294,44 +399,92 @@ function settlePayment(ctx: Ctx, p: any, date: string): void {
   emit(ctx, 'payment.settled', 'payment', p.id, { leaseId: p.lease_id, amountCents: p.amount_cents });
 }
 
+/** The two reversing entries behind every undone payment — a bank return, a
+ * chargeback, or a void. A payment still in clearing comes back out of
+ * clearing; one that already settled comes back out of the bank account it
+ * was deposited to (operating, and escrow for any deposit portion), because
+ * that is where the bank takes it from. Call inside a transaction, BEFORE the
+ * status changes. */
+function postPaymentReversal(ctx: Ctx, p: any, date: string, label: string, sourceKind: string): void {
+  const apps = q<any>(
+    `SELECT pa.amount_cents, c.kind FROM payment_applications pa JOIN charges c ON c.id=pa.charge_id WHERE pa.payment_id=?`,
+    p.id,
+  );
+  const applied = apps.reduce((s: number, a: any) => s + a.amount_cents, 0);
+  const unapplied = p.amount_cents - applied;
+  const gross = p.amount_cents + p.fee_cents;
+  const creditSide: { account: string; debit?: number; credit?: number; memo?: string }[] = [];
+  if (p.status === 'settled') {
+    const depositPortion = apps.filter((a: any) => a.kind === 'deposit').reduce((s: number, a: any) => s + a.amount_cents, 0);
+    if (gross - depositPortion > 0) creditSide.push({ account: '1010', credit: gross - depositPortion, memo: 'returned from operating' });
+    if (depositPortion > 0) creditSide.push({ account: '1020', credit: depositPortion, memo: 'returned from deposit escrow' });
+  } else {
+    creditSide.push({ account: '1050', credit: gross });
+  }
+
+  // accrual reversal: DR AR (+ fee income) / CR clearing or bank
+  const accrualLines: { account: string; debit?: number; credit?: number; memo?: string }[] = [
+    { account: '1100', debit: p.amount_cents, memo: `${label} reversal` },
+  ];
+  if (p.fee_cents > 0) accrualLines.push({ account: '4080', debit: p.fee_cents, memo: 'fee reversal' });
+  postJE(ctx, {
+    propertyId: p.property_id, date, basis: 'accrual', memo: `${label.toUpperCase()} ${usd(p.amount_cents)}`,
+    sourceKind, sourceId: p.id, lines: [...accrualLines, ...creditSide],
+  });
+
+  // cash reversal: DR income (per application) + prepaid + fee / CR clearing or bank
+  const cashLines: { account: string; debit?: number; credit?: number; memo?: string }[] = [];
+  const byAccount = new Map<string, number>();
+  for (const a of apps) {
+    const acct = CHARGE_CREDIT[a.kind] || CHARGE_CREDIT['other']!;
+    byAccount.set(acct, (byAccount.get(acct) || 0) + a.amount_cents);
+  }
+  for (const [acct, amt] of byAccount) cashLines.push({ account: acct, debit: amt });
+  if (unapplied > 0) cashLines.push({ account: '2150', debit: unapplied });
+  if (p.fee_cents > 0) cashLines.push({ account: '4080', debit: p.fee_cents });
+  postJE(ctx, {
+    propertyId: p.property_id, date, basis: 'cash', memo: `${label.toUpperCase()} ${usd(p.amount_cents)}`,
+    sourceKind, sourceId: p.id, lines: [...cashLines, ...creditSide],
+  });
+}
+
+/** installments this payment had covered are open again */
+function releasePlanInstallments(ctx: Ctx, p: any): void {
+  const plans = q<{ plan_id: string }>(`SELECT DISTINCT plan_id FROM payment_plan_installments WHERE org_id=? AND payment_id=?`, ctx.orgId, p.id);
+  if (!plans.length) return;
+  run(`UPDATE payment_plan_installments SET status='scheduled', payment_id=NULL WHERE org_id=? AND payment_id=?`, ctx.orgId, p.id);
+  for (const pl of plans) run(`UPDATE payment_plans SET status='active' WHERE id=? AND org_id=? AND status='completed'`, pl.plan_id, ctx.orgId);
+}
+
+/** Void a payment that was entered by mistake — wrong household, wrong
+ * amount, keyed twice. The balance is reinstated and both books are reversed,
+ * and that is all: no returned-payment fee and no notice to the resident,
+ * because the resident did nothing. A bank return is `reversePayment`. */
+export function voidPayment(ctx: Ctx, paymentId: string, date: string, reason: string): void {
+  const p = q1<any>('SELECT * FROM payments WHERE id=? AND org_id=?', paymentId, ctx.orgId);
+  if (!p) throw new Error('payment not found');
+  if (p.method === 'credit') throw new Error('a deposit or credit application cannot be voided here');
+  if (!['pending', 'settled'].includes(p.status)) throw new Error(`this payment is already ${String(p.status).replaceAll('_', ' ')}`);
+  if (!reason.trim()) throw new Error('say why the payment is being voided');
+  tx(() => {
+    // journal source 'nsf' is the books' kind for "a receipt undone": the AR
+    // control invariant (m9 runInvariants) nets receipts by that kind, so a
+    // void filed under any other would read as a subledger break
+    postPaymentReversal(ctx, p, date, 'void', 'nsf');
+    run(`UPDATE payments SET status='voided', nsf_date=? WHERE id=?`, date, p.id);
+    releasePlanInstallments(ctx, p);
+  });
+  audit(ctx, 'payment', p.id, 'void', { status: p.status }, { status: 'voided', reason: reason.trim(), amount: p.amount_cents });
+  emit(ctx, 'payment.voided', 'payment', p.id, { leaseId: p.lease_id, amountCents: p.amount_cents, reason: reason.trim() });
+  reconcilePaymentPlans(ctx, p.lease_id);
+}
+
 /** NSF / chargeback: reinstate balance + fee + notification (M8.3) */
 export function reversePayment(ctx: Ctx, p: any, date: string, kind: 'nsf' | 'chargeback'): void {
   tx(() => {
+    postPaymentReversal(ctx, p, date, kind, 'nsf');
     run(`UPDATE payments SET status=?, nsf_date=? WHERE id=?`, kind, date, p.id);
-    const apps = q<any>(
-      `SELECT pa.amount_cents, c.kind FROM payment_applications pa JOIN charges c ON c.id=pa.charge_id WHERE pa.payment_id=?`,
-      p.id,
-    );
-    const applied = apps.reduce((s: number, a: any) => s + a.amount_cents, 0);
-    const unapplied = p.amount_cents - applied;
-    const gross = p.amount_cents + p.fee_cents;
-
-    // accrual reversal: DR AR / CR clearing
-    const accrualLines = [
-      { account: '1100', debit: p.amount_cents, memo: `${kind} reversal` },
-      { account: '1050', credit: gross },
-    ] as { account: string; debit?: number; credit?: number; memo?: string }[];
-    if (p.fee_cents > 0) accrualLines.splice(1, 0, { account: '4080', debit: p.fee_cents, memo: 'fee reversal' });
-    postJE(ctx, {
-      propertyId: p.property_id, date, basis: 'accrual', memo: `${kind.toUpperCase()} ${usd(p.amount_cents)}`,
-      sourceKind: 'nsf', sourceId: p.id, lines: accrualLines,
-    });
-
-    // cash reversal: DR income (per application) + prepaid + fee / CR clearing
-    const cashLines: { account: string; debit?: number; credit?: number; memo?: string }[] = [];
-    const byAccount = new Map<string, number>();
-    for (const a of apps) {
-      const acct = CHARGE_CREDIT[a.kind] || CHARGE_CREDIT['other']!;
-      byAccount.set(acct, (byAccount.get(acct) || 0) + a.amount_cents);
-    }
-    for (const [acct, amt] of byAccount) cashLines.push({ account: acct, debit: amt });
-    if (unapplied > 0) cashLines.push({ account: '2150', debit: unapplied });
-    if (p.fee_cents > 0) cashLines.push({ account: '4080', debit: p.fee_cents });
-    cashLines.push({ account: '1050', credit: gross });
-    postJE(ctx, {
-      propertyId: p.property_id, date, basis: 'cash', memo: `${kind.toUpperCase()} ${usd(p.amount_cents)}`,
-      sourceKind: 'nsf', sourceId: p.id, lines: cashLines,
-    });
+    releasePlanInstallments(ctx, p);
 
     // NSF fee charge
     const nsfFee = getSetting<number>(ctx, 'nsf_fee_cents', p.property_id);
@@ -343,6 +496,7 @@ export function reversePayment(ctx: Ctx, p: any, date: string, kind: 'nsf' | 'ch
     }
   });
   emit(ctx, `payment.${kind}`, 'payment', p.id, { leaseId: p.lease_id, amountCents: p.amount_cents });
+  reconcilePaymentPlans(ctx, p.lease_id);
 
   const contact = primaryContact(ctx, p.lease_id);
   const nsfFee = getSetting<number>(ctx, 'nsf_fee_cents', p.property_id);
@@ -411,8 +565,15 @@ export function lateFeeCandidates(ctx: Ctx, date: string, propertyId?: string | 
     const overdue = unpaid.filter((c: any) => date > addDays(c.due_date, policy.graceDays));
     if (!overdue.length) continue;
     const graceEnd = addDays(overdue[0]!.due_date, policy.graceDays);
-    const unpaidRent = overdue.reduce((s: number, c: any) => s + Math.max(0, c.amount_cents - c.applied), 0);
-    if (unpaidRent < (policy.minBalanceCents || 0)) continue;
+    // A household that owes nothing is not late, whatever the per-charge
+    // arithmetic says: money can sit on the account without being pinned to
+    // this month's rent (a prepayment, a credit posted before this fix), and a
+    // fee on a $0.00 balance is a fee on nobody's debt. The fee is also never
+    // figured on more than is actually owed.
+    const balance = leaseBalance(ctx, l.id);
+    if (balance <= 0) continue;
+    const unpaidRent = Math.min(balance, overdue.reduce((s: number, c: any) => s + Math.max(0, c.amount_cents - c.applied), 0));
+    if (unpaidRent <= 0 || unpaidRent < (policy.minBalanceCents || 0)) continue;
     const existing = q<any>(
       `SELECT id, date FROM charges WHERE org_id=? AND lease_id=? AND kind='late_fee' AND month_key=? AND status='active' AND amount_cents>0 ORDER BY date`,
       ctx.orgId, l.id, mk,
@@ -438,6 +599,11 @@ export function lateFeeCandidates(ctx: Ctx, date: string, propertyId?: string | 
   return out;
 }
 
+/** whether the nightly job may assess late fees for this organization */
+export function lateFeesAutomatic(ctx: Ctx): boolean {
+  return getSetting<boolean>(ctx, 'late_fees_enabled') !== false;
+}
+
 export function assessLateFees(ctx: Ctx, date: string, propertyId?: string | null): string {
   const candidates = lateFeeCandidates(ctx, date, propertyId);
   for (const c of candidates) {
@@ -461,15 +627,33 @@ export function assessLateFees(ctx: Ctx, date: string, propertyId?: string | nul
   return candidates.length ? `${candidates.length} late fees assessed` : 'no late fees due';
 }
 
+export function feeWaived(ctx: Ctx, chargeId: string): boolean {
+  return !!q1('SELECT id FROM fee_waivers WHERE org_id=? AND charge_id=?', ctx.orgId, chargeId);
+}
+
+/** Waive a late or returned-payment fee, once. The waiver is a credit for the
+ * fee's amount, linked to the fee in fee_waivers (one row per fee, enforced
+ * by the table) — so a second click, a second tab or Ask cannot credit the
+ * same fee twice — and it is applied to that fee, not to whatever else is
+ * open. */
 export function waiveLateFee(ctx: Ctx, chargeId: string, reason: string): void {
   const c = q1<any>(`SELECT * FROM charges WHERE id=? AND org_id=? AND kind IN ('late_fee','nsf_fee')`, chargeId, ctx.orgId);
   if (!c || c.status !== 'active' || c.amount_cents <= 0) throw new Error('fee not found or not waivable');
-  createCharge(ctx, {
-    leaseId: c.lease_id, kind: c.kind, label: `Waiver: ${c.label} (${reason})`,
-    amountCents: -c.amount_cents, date: ctx.businessDate, source: 'oneoff',
+  const why = reason.trim();
+  if (!why) throw new Error('a waiver needs a reason');
+  if (feeWaived(ctx, chargeId)) throw new Error('this fee was already waived');
+  tx(() => {
+    const waiverId = createCharge(ctx, {
+      leaseId: c.lease_id, kind: c.kind, label: `Waiver: ${c.label} (${why})`,
+      amountCents: -c.amount_cents, date: ctx.businessDate, source: 'oneoff', applyToChargeId: c.id,
+    });
+    insert('fee_waivers', {
+      id: id('fwv'), org_id: ctx.orgId, charge_id: c.id, waiver_charge_id: waiverId,
+      reason: why, created_by: ctx.userId, created_at: nowIso(),
+    });
   });
-  audit(ctx, 'charge', chargeId, 'fee_waived', null, { reason, amount: -c.amount_cents });
-  emit(ctx, 'latefee.waived', 'charge', chargeId, { leaseId: c.lease_id, reason });
+  audit(ctx, 'charge', chargeId, 'fee_waived', null, { reason: why, amount: -c.amount_cents });
+  emit(ctx, 'latefee.waived', 'charge', chargeId, { leaseId: c.lease_id, reason: why });
 }
 
 // ---------- autopay ----------
@@ -513,8 +697,18 @@ export function createPaymentPlan(ctx: Ctx, leaseId: string, totalCents: number,
   if (!lease) throw new Error('lease not found');
   const sum = installments.reduce((s, i) => s + i.amountCents, 0);
   if (sum !== totalCents) throw new Error(`installments (${sum}) must sum to plan total (${totalCents})`);
+  if (!installments.length || installments.some((i) => !Number.isInteger(i.amountCents) || i.amountCents <= 0)) {
+    throw new Error('every installment needs an amount');
+  }
   const planId = id('pln');
   tx(() => {
+    // one plan at a time: payments are counted toward the plan in force, and
+    // two live plans would each claim the same dollars
+    const replaced = q<{ id: string }>(`SELECT id FROM payment_plans WHERE org_id=? AND lease_id=? AND status='active'`, ctx.orgId, leaseId);
+    for (const old of replaced) {
+      run(`UPDATE payment_plans SET status='canceled' WHERE id=?`, old.id);
+      audit(ctx, 'payment_plan', old.id, 'replaced', { status: 'active' }, { status: 'canceled', replacedBy: planId });
+    }
     insert('payment_plans', {
       id: planId, org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId,
       total_cents: totalCents, status: 'active', notes: notes || null, created_by: ctx.userId, created_at: nowIso(),
@@ -540,29 +734,114 @@ export function createPaymentPlan(ctx: Ctx, leaseId: string, totalCents: number,
   return planId;
 }
 
+/** Bring a lease's payment plans in line with the money actually received.
+ *
+ * Every payment recorded after the plan was made counts toward it, oldest
+ * installment first, whatever the method — a check handed over at the office
+ * keeps a plan exactly as well as a bank draft does. (The first version marked
+ * an installment paid only inside the simulated auto-charge, so a household
+ * that paid every installment early by check was marked missed, missed,
+ * defaulted.) Recomputed from scratch each time, so it also un-pays an
+ * installment whose payment was voided or returned.
+ *
+ * Returns, per plan, the money already received toward its first unpaid
+ * installment. */
+export function reconcilePaymentPlans(ctx: Ctx, leaseId: string): Map<string, number> {
+  const out = new Map<string, number>();
+  const plans = q<any>(
+    `SELECT * FROM payment_plans WHERE org_id=? AND lease_id=? AND status IN ('active','defaulted') ORDER BY created_at`,
+    ctx.orgId, leaseId,
+  );
+  if (!plans.length) return out;
+  tx(() => {
+    for (const plan of plans) {
+      const pays = q<{ id: string; amount_cents: number }>(
+        `SELECT id, amount_cents FROM payments WHERE org_id=? AND lease_id=? AND method != 'credit'
+           AND status IN ('pending','settled') AND created_at >= ? ORDER BY created_at, id`,
+        ctx.orgId, leaseId, plan.created_at,
+      );
+      const insts = q<any>(`SELECT * FROM payment_plan_installments WHERE org_id=? AND plan_id=? ORDER BY due_date, created_at, id`, ctx.orgId, plan.id);
+      let pi = 0; // payment being drawn from
+      let avail = pays[0]?.amount_cents ?? 0; // what is left of it
+      let allPaid = insts.length > 0;
+      let leftover = 0;
+      let broke = false;
+      for (const inst of insts) {
+        let need = inst.amount_cents;
+        let coveredBy: string | null = null;
+        if (!broke) {
+          // draw without committing: a short installment must not eat the money
+          let tpi = pi; let tavail = avail;
+          while (need > 0 && tpi < pays.length) {
+            const take = Math.min(need, tavail);
+            need -= take; tavail -= take;
+            if (take > 0) coveredBy = pays[tpi]!.id;
+            if (tavail === 0) { tpi++; tavail = pays[tpi]?.amount_cents ?? 0; }
+          }
+          if (need === 0) { pi = tpi; avail = tavail; }
+          else {
+            broke = true;
+            leftover = inst.amount_cents - need;
+          }
+        }
+        if (need === 0 && coveredBy) {
+          if (inst.status !== 'paid' || inst.payment_id !== coveredBy) {
+            run(`UPDATE payment_plan_installments SET status='paid', payment_id=? WHERE id=?`, coveredBy, inst.id);
+          }
+        } else {
+          allPaid = false;
+          if (inst.status === 'paid') run(`UPDATE payment_plan_installments SET status='scheduled', payment_id=NULL WHERE id=?`, inst.id);
+        }
+      }
+      out.set(plan.id, leftover);
+      if (allPaid) {
+        run(`UPDATE payment_plans SET status='completed' WHERE id=?`, plan.id);
+        audit(ctx, 'payment_plan', plan.id, 'completed', { status: plan.status }, { status: 'completed' });
+      }
+    }
+  });
+  return out;
+}
+
 export function runPaymentPlans(ctx: Ctx, date: string): string {
-  const due = q<any>(
-    `SELECT i.*, pp.lease_id, pp.id AS plan_id FROM payment_plan_installments i
+  // payments first: an installment already covered is paid, not "due"
+  const leaseIds = q<{ lease_id: string }>(
+    `SELECT DISTINCT pp.lease_id FROM payment_plan_installments i
      JOIN payment_plans pp ON pp.id=i.plan_id AND pp.status='active'
      WHERE i.org_id=? AND i.status='scheduled' AND i.due_date<=?`,
     ctx.orgId, date,
   );
+  const partial = new Map<string, number>();
+  for (const l of leaseIds) for (const [k, v2] of reconcilePaymentPlans(ctx, l.lease_id)) partial.set(k, v2);
+
+  const due = q<any>(
+    `SELECT i.*, pp.lease_id, pp.id AS plan_id FROM payment_plan_installments i
+     JOIN payment_plans pp ON pp.id=i.plan_id AND pp.status='active'
+     WHERE i.org_id=? AND i.status='scheduled' AND i.due_date<=? ORDER BY i.due_date`,
+    ctx.orgId, date,
+  );
+  // charging a saved method is the simulated processor; a live organization
+  // has none, so its installments are kept by the payments staff record
+  const canCharge = processorConnected(ctx);
   let charged = 0;
   let missed = 0;
   for (const inst of due) {
     // use the lease's autopay method if present
-    const method = q1<any>(
+    const method = canCharge ? q1<any>(
       `SELECT method_token_id FROM autopay_enrollments WHERE lease_id=? AND active=1
        UNION SELECT id AS method_token_id FROM payment_method_tokens WHERE lease_id=? AND is_default=1 LIMIT 1`,
       inst.lease_id, inst.lease_id,
-    );
+    ) : null;
     if (method?.method_token_id) {
       try {
+        // only what is still owed on this installment
+        const owed = inst.amount_cents - Math.min(partial.get(inst.plan_id) || 0, inst.amount_cents - 1);
+        partial.delete(inst.plan_id);
         const pid = recordPayment(ctx, {
-          leaseId: inst.lease_id, amountCents: inst.amount_cents, method: 'ach',
+          leaseId: inst.lease_id, amountCents: owed, method: 'ach',
           methodTokenId: method.method_token_id, receivedDate: date, memo: 'payment plan installment',
         });
-        run("UPDATE payment_plan_installments SET status='paid', payment_id=? WHERE id=?", pid, inst.id);
+        run("UPDATE payment_plan_installments SET status='paid', payment_id=? WHERE id=? AND status='scheduled'", pid, inst.id);
         charged++;
         continue;
       } catch {
@@ -582,7 +861,7 @@ export function runPaymentPlans(ctx: Ctx, date: string): string {
      AND NOT EXISTS (SELECT 1 FROM payment_plan_installments i WHERE i.plan_id=payment_plans.id AND i.status IN ('scheduled','missed'))`,
     ctx.orgId,
   );
-  return `${charged} installments charged, ${missed} missed`;
+  return canCharge ? `${charged} installments charged, ${missed} missed` : `${missed} installments missed`;
 }
 
 // ---------- deposits: interest + disposition (M8.6) ----------
@@ -602,17 +881,136 @@ export function depositHeld(ctx: Ctx, leaseId: string): number {
   // the record ($140,081.02 on the 606-unit import read as "$0.00 held across
   // 0 households" here while the GL carried it). Reversal-safe: removing the
   // upload removes the lease, and this term with it.
-  const migrated = accrued === 0 ? (val<number>(
-    `SELECT COALESCE(deposit_cents,0) FROM leases WHERE id=? AND org_id=? AND import_batch_id IS NOT NULL`,
+  // A lease entered by hand with "the deposit is already in the bank" is the
+  // same fact, stated on the lease itself (deposit_on_hand) — it does not
+  // depend on the 'manual-entry' batch marker being present.
+  //
+  // An imported lease that has not started yet (a future resident) is not
+  // that: nothing was collected and the import posts no 1020/2100 entry for
+  // it, so its contract deposit is not money held. It counts once move-in
+  // bills the deposit charge. A lease marked deposit_on_hand has its entry in
+  // any status. The term applies only while the lease has NO active deposit
+  // charge at all — a billed deposit that was written down to zero because it
+  // was never paid must not fall back to the contract amount.
+  const hasDepositCharge = !!q1(
+    `SELECT 1 AS x FROM charges WHERE org_id=? AND lease_id=? AND kind='deposit' AND status='active' LIMIT 1`,
+    ctx.orgId, leaseId,
+  );
+  const migrated = !hasDepositCharge ? (val<number>(
+    `SELECT COALESCE(deposit_cents,0) FROM leases WHERE id=? AND org_id=?
+       AND (deposit_on_hand=1 OR (import_batch_id IS NOT NULL AND status NOT IN ('draft','out_for_signature','partially_signed','fully_executed')))`,
     leaseId, ctx.orgId,
   ) || 0) : 0;
-  return accrued + migrated + activity;
+  // a refund the disposition has set aside is no longer available to apply,
+  // though the money stays in escrow (and on the 2100 liability) until the
+  // check is actually written — see finalizeDeposit / issueDepositRefund
+  return accrued + migrated + activity - pendingDepositRefund(ctx, leaseId);
+}
+
+/** deposit money owed back to the household whose check is not yet written */
+export function pendingDepositRefund(ctx: Ctx, leaseId: string): number {
+  return val<number>(
+    `SELECT COALESCE(SUM(amount_cents),0) FROM refunds WHERE org_id=? AND lease_id=? AND kind='deposit' AND status='pending'`,
+    ctx.orgId, leaseId,
+  ) || 0;
+}
+
+/** deposit billed to the household that no payment (pending or settled) covers */
+export function uncollectedDeposit(ctx: Ctx, leaseId: string): number {
+  return openCharges(ctx, leaseId).filter((c) => c.kind === 'deposit').reduce((s, c) => s + (c.amount_cents - c.applied), 0);
+}
+
+/** Bring a billed deposit down to what was actually collected. Billing a
+ * deposit credits the 2100 liability at once (accrual), but escrow cash only
+ * arrives when the household pays it. At move-out the unpaid part is not money
+ * held: left alone, the disposition "applied" it, swept that amount out of an
+ * escrow account that never received it, and showed phantom operating cash.
+ *
+ * Posts a negative deposit charge (accrual DR 2100 / CR 1100 — the cash books
+ * never saw the unpaid part, so there is nothing to post there) and sets it
+ * against the open deposit charges themselves, so the deposit reads closed and
+ * the rent stays open. Call inside a transaction. Returns cents written down. */
+function writeDownUncollectedDeposit(ctx: Ctx, lease: any, date: string): number {
+  const open = openCharges(ctx, lease.id).filter((c) => c.kind === 'deposit');
+  const uncollected = open.reduce((s, c) => s + (c.amount_cents - c.applied), 0);
+  if (uncollected <= 0) return 0;
+  const label = 'Uncollected deposit written down at move-out';
+  const chargeId = id('chg');
+  const jeId = postJE(ctx, {
+    propertyId: lease.property_id, date, basis: 'accrual',
+    memo: `${label} — ${lease.household_name}`, sourceKind: 'charge', sourceId: chargeId,
+    lines: [
+      { account: CHARGE_CREDIT['deposit'] || '2100', debit: uncollected, memo: label },
+      { account: '1100', credit: uncollected, memo: label },
+    ],
+  });
+  insert('charges', {
+    id: chargeId, org_id: ctx.orgId, property_id: lease.property_id, lease_id: lease.id,
+    kind: 'deposit', label, amount_cents: -uncollected, date, due_date: date, month_key: null,
+    lease_charge_id: null, source: 'deposit', status: 'active', je_id: jeId, created_at: nowIso(),
+  });
+  // the zero-cash record that says which charges this credit closed (see
+  // CREDIT_CARRIER_SQL) — placed here, not by applyLeaseCredits, because that
+  // never targets a deposit charge and would set the credit against rent
+  const carrier = id('pay');
+  insert('payments', {
+    id: carrier, org_id: ctx.orgId, property_id: lease.property_id, lease_id: lease.id,
+    method: 'credit', reference: chargeId, amount_cents: 0, fee_cents: 0, status: 'settled',
+    received_date: date, settle_date: date, autopay: 0,
+    memo: `credit applied: ${label}`, created_by: ctx.userId, created_at: nowIso(),
+  });
+  for (const c of open) {
+    insert('payment_applications', {
+      id: id('pap'), org_id: ctx.orgId, payment_id: carrier, charge_id: c.id,
+      amount_cents: c.amount_cents - c.applied, created_at: nowIso(),
+    });
+  }
+  audit(ctx, 'lease', lease.id, 'deposit_written_down', null, { amount: uncollected, charge: chargeId });
+  return uncollected;
 }
 
 export interface DispositionResult {
   applied: number;
+  /** owed back to the household */
   refunded: number;
   balanceDue: number;
+  /** billed deposit that was never collected, taken off the account */
+  writtenDown: number;
+  refundId: string | null;
+  /** 'pending' until the operator records the check that pays it */
+  refundStatus: 'pending' | 'issued' | null;
+}
+
+/** a deposit is settled when the household leaves — not on a running lease */
+export function dispositionAllowed(lease: { status: string; move_out_date?: string | null }): boolean {
+  return ['notice', 'ended'].includes(lease.status) || !!lease.move_out_date;
+}
+
+/** The lease module registers its notice function here (it imports this file,
+ * so this file cannot import it back). */
+let noticeHook: ((ctx: Ctx, leaseId: string, moveOutDate: string) => void) | null = null;
+export function registerNoticeHook(fn: (ctx: Ctx, leaseId: string, moveOutDate: string) => void): void { noticeHook = fn; }
+
+/** Record that a household is leaving, the same way the resident's own
+ * notice does: the lease goes on notice with its move-out date. */
+export function recordMoveOut(ctx: Ctx, leaseId: string, moveOutDate: string): void {
+  const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  if (!lease) throw new Error('lease not found');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(moveOutDate)) throw new Error('enter the move-out date');
+  if (lease.move_in_date && moveOutDate < lease.move_in_date) throw new Error('the move-out date is before the move-in date');
+  if (['active', 'month_to_month'].includes(lease.status)) {
+    // The lease module's own notice function also trues up rent already billed
+    // past the move-out date; done here by a bare UPDATE, that rent stayed on
+    // the account and the disposition then deducted it from the deposit.
+    if (noticeHook) { noticeHook(ctx, leaseId, moveOutDate); return; }
+    run(`UPDATE leases SET status='notice', notice_date=COALESCE(notice_date, ?), move_out_date=? WHERE id=? AND org_id=?`, ctx.businessDate, moveOutDate, leaseId, ctx.orgId);
+    run(`UPDATE units SET status='notice' WHERE id=? AND org_id=? AND status='occupied'`, lease.unit_id, ctx.orgId);
+    audit(ctx, 'lease', leaseId, 'notice_to_vacate', { status: lease.status }, { status: 'notice', move_out: moveOutDate, source: 'deposit disposition' });
+    emit(ctx, 'lease.notice', 'lease', leaseId, { moveOut: moveOutDate, propertyId: lease.property_id, unitId: lease.unit_id });
+  } else if (!lease.move_out_date) {
+    run(`UPDATE leases SET move_out_date=? WHERE id=? AND org_id=?`, moveOutDate, leaseId, ctx.orgId);
+    audit(ctx, 'lease', leaseId, 'move_out_date', null, { move_out: moveOutDate });
+  }
 }
 
 /** deposit-alternative claim hook (M12 registers; avoids a module cycle) */
@@ -622,27 +1020,67 @@ export function registerDepositAlternativeHook(fn: AltClaimFn): void {
   altClaimHook = fn;
 }
 
-/** Move-out disposition: apply held deposit to the final balance, refund any
- * remainder, and hand the shortfall to collections when directed. On
- * deposit-alternative leases the surety claim covers the balance up to
- * coverage first. */
-export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string; toCollections?: boolean }): DispositionResult {
-  const lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+/** Move-out disposition: apply held deposit to the final balance, set the
+ * remainder aside as a refund owed, and hand the shortfall to collections
+ * when directed. On deposit-alternative leases the surety claim covers the
+ * balance up to coverage first.
+ *
+ * The refund is a paper check the operator writes. In a live organization
+ * this records it as owed ('pending', no check number) and leaves the money
+ * in escrow and on the deposit liability — the books say it left only when
+ * `issueDepositRefund` records the real check. The demo has no checkbook, so
+ * there the refund is issued at once under a simulated reference, as before.
+ * A live organization also cannot dispose of a deposit on a lease that is
+ * still running: pass `moveOutDate` (it is saved) or put the lease on notice
+ * first. */
+export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string; toCollections?: boolean; moveOutDate?: string | null }): DispositionResult {
+  let lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
   if (!lease) throw new Error('lease not found');
+  const live = orgKind(ctx.orgId) === 'live';
+  if (opts.moveOutDate && !dispositionAllowed(lease)) {
+    recordMoveOut(ctx, leaseId, opts.moveOutDate);
+    lease = q1<any>('SELECT * FROM leases WHERE id=? AND org_id=?', leaseId, ctx.orgId);
+  }
+  if (live && !dispositionAllowed(lease)) {
+    throw new Error('This lease is still active with no move-out date. Record the move-out date first — a deposit is settled when the household leaves.');
+  }
   if (lease.deposit_alternative && altClaimHook) {
     altClaimHook(ctx, leaseId, opts.date);
   }
-  const held = depositHeld(ctx, leaseId);
-  const balance = leaseBalance(ctx, leaseId);
-  const apply = Math.max(0, Math.min(held, balance));
+  let apply = 0;
   let refunded = 0;
+  let writtenDown = 0;
+  let refundId: string | null = null;
 
   tx(() => {
+    // A refund set aside by an earlier settlement whose check was never
+    // recorded is released first, so the deposit can be settled again — a
+    // damage charge found late, or a settlement made by mistake. It has no
+    // journal entry and no deposit activity line (the money never left
+    // escrow), so removing the row is the whole reversal; whatever is still
+    // owed back after this run is set aside again below — under the same
+    // refund record, so a "record the check" form already on screen still
+    // points at something.
+    const superseded = q<any>(
+      `SELECT id, amount_cents, created_by, created_at FROM refunds WHERE org_id=? AND lease_id=? AND kind='deposit' AND status='pending' ORDER BY created_at, id`,
+      ctx.orgId, leaseId,
+    );
+    const priorOwed = superseded.reduce((t: number, r: any) => t + r.amount_cents, 0);
+    run(`DELETE FROM refunds WHERE org_id=? AND lease_id=? AND kind='deposit' AND status='pending'`, ctx.orgId, leaseId);
+    // only money actually collected is held (see writeDownUncollectedDeposit)
+    writtenDown = writeDownUncollectedDeposit(ctx, lease, opts.date);
+
+    // the position is read here, after both corrections and inside the same
+    // transaction that acts on it
+    const held = depositHeld(ctx, leaseId);
+    const balance = leaseBalance(ctx, leaseId);
+    apply = Math.max(0, Math.min(held, balance));
     if (apply > 0) {
       // deposit application is a 'credit' payment funded from 2100
       recordPayment(ctx, {
         leaseId, amountCents: apply, method: 'credit', receivedDate: opts.date,
         memo: 'security deposit applied at move-out', creditFunding: '2100', suppressReceipt: true,
+        excludeKinds: ['deposit'],
       });
       insert('deposit_activity', {
         id: id('dep'), org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId,
@@ -669,28 +1107,22 @@ export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string;
     const remaining = held - apply;
     if (remaining > 0) {
       refunded = remaining;
-      const rid = id('rfd');
+      const kept = superseded[0];
+      const rid: string = kept ? kept.id : id('rfd');
+      refundId = rid;
       insert('refunds', {
         id: rid, org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId, kind: 'deposit',
-        amount_cents: remaining, method: 'check', reference: `DEP-${rid.slice(-6).toUpperCase()}`,
-        date: opts.date, status: 'issued', created_by: ctx.userId, created_at: nowIso(),
+        amount_cents: remaining, method: 'check', reference: null,
+        date: opts.date, status: 'pending', created_by: kept ? kept.created_by : ctx.userId, created_at: kept ? kept.created_at : nowIso(),
       });
-      insert('deposit_activity', {
-        id: id('dep'), org_id: ctx.orgId, property_id: lease.property_id, lease_id: leaseId,
-        kind: 'refund', amount_cents: -remaining, date: opts.date, refund_id: rid, memo: 'refunded to resident', created_at: nowIso(),
-      });
-      for (const basis of ['accrual', 'cash'] as const) {
-        postJE(ctx, {
-          propertyId: lease.property_id, date: opts.date, basis,
-          memo: `Deposit refund ${usd(remaining)} — ${lease.household_name}`, sourceKind: 'refund', sourceId: rid,
-          lines: [
-            { account: '2100', debit: remaining },
-            { account: '1020', credit: remaining },
-          ],
-        });
-      }
-      // NOTE: refunds table also shows on the resident ledger as an offset to their credit — but
-      // deposit refunds return escrow, not ledger credit, so exclude kind='deposit' from balance.
+      // deposit refunds return escrow, not ledger credit — kind='deposit' is
+      // excluded from the resident balance
+      if (!live) issueDepositRefund(ctx, rid, { checkNumber: `DEP-${rid.slice(-6).toUpperCase()}`, date: opts.date, simulated: true });
+    }
+    // the trail shows a refund that was owed and is now a different amount, or gone
+    if (superseded.length && priorOwed !== refunded) {
+      audit(ctx, 'refund', superseded[0].id, refunded > 0 ? 'revised' : 'released',
+        { status: 'pending', amount: priorOwed }, { amount: refunded, reason: 'deposit settled again' });
     }
   });
 
@@ -698,9 +1130,46 @@ export function finalizeDeposit(ctx: Ctx, leaseId: string, opts: { date: string;
   if (balanceAfter > 0 && opts.toCollections) {
     openCollectionCase(ctx, leaseId, `move-out balance after deposit application`);
   }
-  emit(ctx, 'deposit.disposed', 'lease', leaseId, { applied: apply, refunded, balanceDue: balanceAfter });
-  audit(ctx, 'lease', leaseId, 'deposit_disposition', null, { applied: apply, refunded, balanceDue: balanceAfter });
-  return { applied: apply, refunded, balanceDue: balanceAfter };
+  const refundStatus = refundId ? (live ? 'pending' as const : 'issued' as const) : null;
+  emit(ctx, 'deposit.disposed', 'lease', leaseId, { applied: apply, refunded, balanceDue: balanceAfter, refundStatus });
+  audit(ctx, 'lease', leaseId, 'deposit_disposition', null, { applied: apply, refunded, balanceDue: balanceAfter, refundStatus, writtenDown });
+  return { applied: apply, refunded, balanceDue: balanceAfter, writtenDown, refundId, refundStatus };
+}
+
+/** Record the check that pays a deposit refund. This is the moment the money
+ * leaves: DR 2100 deposits held / CR 1020 deposit escrow on both books, the
+ * deposit activity line, and the refund marked issued with the real check
+ * number and date. */
+export function issueDepositRefund(ctx: Ctx, refundId: string, opts: { checkNumber: string; date: string; simulated?: boolean }): void {
+  const r = q1<any>(`SELECT * FROM refunds WHERE id=? AND org_id=? AND kind='deposit'`, refundId, ctx.orgId);
+  if (!r) throw new Error('refund not found');
+  if (r.status !== 'pending') throw new Error('this refund was already recorded as paid');
+  const checkNumber = opts.checkNumber.trim();
+  if (!checkNumber) throw new Error('enter the check number');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(opts.date)) throw new Error('enter the check date');
+  const lease = q1<any>('SELECT household_name FROM leases WHERE id=? AND org_id=?', r.lease_id, ctx.orgId);
+  tx(() => {
+    run(`UPDATE refunds SET status='issued', reference=?, date=? WHERE id=?`, checkNumber, opts.date, r.id);
+    insert('deposit_activity', {
+      id: id('dep'), org_id: ctx.orgId, property_id: r.property_id, lease_id: r.lease_id,
+      kind: 'refund', amount_cents: -r.amount_cents, date: opts.date, refund_id: r.id,
+      memo: opts.simulated ? 'refunded to resident' : `refunded to resident — check ${checkNumber}`, created_at: nowIso(),
+    });
+    for (const basis of ['accrual', 'cash'] as const) {
+      postJE(ctx, {
+        propertyId: r.property_id, date: opts.date, basis,
+        memo: `Deposit refund ${usd(r.amount_cents)} — ${lease?.household_name || ''}`, sourceKind: 'refund', sourceId: r.id,
+        lines: [
+          { account: '2100', debit: r.amount_cents },
+          { account: '1020', credit: r.amount_cents },
+        ],
+      });
+    }
+  });
+  if (!opts.simulated) {
+    audit(ctx, 'refund', r.id, 'issued', { status: 'pending' }, { status: 'issued', check: checkNumber, date: opts.date, amount: r.amount_cents });
+    emit(ctx, 'deposit.refunded', 'refund', r.id, { leaseId: r.lease_id, amountCents: r.amount_cents });
+  }
 }
 
 export function openCollectionCase(ctx: Ctx, leaseId: string, notes: string): string {
@@ -719,11 +1188,27 @@ export function openCollectionCase(ctx: Ctx, leaseId: string, notes: string): st
   return cid;
 }
 
-// ---------- prepaid credits auto-apply on new charges ----------
+// ---------- prepaid money and credits apply to charges as they post ----------
 
 on('charge.created', (ctx, payload) => {
   const leaseId = payload.leaseId as string;
   if (!leaseId) return;
+  const charge = q1<any>(`SELECT * FROM charges WHERE id=? AND org_id=? AND status='active'`, payload.entityId, ctx.orgId);
+  if (!charge) return;
+  if (charge.amount_cents > 0) applyPrepaidTo(ctx, leaseId, charge);
+  // a new credit closes what it covers; a new charge is met by any credit
+  // still waiting for something to apply to
+  applyLeaseCredits(
+    ctx, leaseId,
+    charge.amount_cents < 0 && payload.applyToChargeId ? { creditId: charge.id, chargeId: String(payload.applyToChargeId) } : null,
+  );
+});
+
+on('charge.voided', (ctx, payload) => {
+  if (payload.leaseId) applyLeaseCredits(ctx, payload.leaseId as string);
+});
+
+function applyPrepaidTo(ctx: Ctx, leaseId: string, charge: any): void {
   // payments with unapplied remainder
   const credits = q<any>(
     `SELECT p.id, p.property_id, p.amount_cents,
@@ -733,8 +1218,6 @@ on('charge.created', (ctx, payload) => {
     ctx.orgId, leaseId,
   );
   if (!credits.length) return;
-  const charge = q1<any>('SELECT * FROM charges WHERE id=? AND status=\'active\'', payload.entityId);
-  if (!charge || charge.amount_cents <= 0) return;
   let openAmt = charge.amount_cents - (val<number>(
     `SELECT COALESCE(SUM(a.amount_cents),0) FROM payment_applications a JOIN payments p ON p.id=a.payment_id AND p.status IN ('pending','settled') WHERE a.charge_id=?`,
     charge.id,
@@ -757,7 +1240,7 @@ on('charge.created', (ctx, payload) => {
       ],
     });
   }
-});
+}
 
 // ---------- receivables analytics (M8.7) ----------
 
@@ -807,7 +1290,9 @@ export function receivablesStats(ctx: Ctx, mk: string, propertyId?: string | nul
   ) || 0;
   const collected = collectedGross - depositReceipts;
   const paymentsCount = val<number>(
-    `SELECT COUNT(*) FROM payments WHERE org_id=? AND received_date LIKE ? AND method IN ('ach','card')${propSql}`,
+    // every real receipt, whatever the method — counting only ACH and card made
+    // a check-only portfolio with a returned check read "NSF rate 0% · 1 returned"
+    `SELECT COUNT(*) FROM payments WHERE org_id=? AND received_date LIKE ? AND method != 'credit' AND status NOT IN ('failed','voided')${propSql}`,
     ctx.orgId, mk + '%', ...propParams,
   ) || 0;
   const nsfCount = val<number>(
@@ -867,7 +1352,9 @@ registerJob({
   key: 'late_fees',
   name: 'Late fee assessment',
   describe: 'Assesses late fees per property policy (grace days, flat/percent/daily with caps) on unpaid rent.',
-  run: (ctx, date) => assessLateFees(ctx, date),
+  // the automatic run only — staff assessing from the late-fee screen call
+  // assessLateFees directly and are not gated by this switch
+  run: (ctx, date) => (lateFeesAutomatic(ctx) ? assessLateFees(ctx, date) : 'automatic late fees are off'),
 });
 
 registerJob({
@@ -880,7 +1367,7 @@ registerJob({
 registerJob({
   key: 'payment_plans',
   name: 'Payment plan installments',
-  describe: 'Charges due installments to saved methods; marks missed installments and defaults plans after 2 misses.',
+  describe: 'Marks installments paid as payments are recorded; marks missed installments and defaults a plan after 2 misses. Charging a saved method needs a connected processor.',
   run: (ctx, date) => runPaymentPlans(ctx, date),
 });
 

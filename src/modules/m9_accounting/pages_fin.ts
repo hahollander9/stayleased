@@ -1,14 +1,20 @@
 import { html, when, join, type Child } from '../../lib/html.ts';
 import { notFound, redirect, type Router } from '../../lib/http.ts';
-import { requirePerm, can, propFilter, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, can, canAccessProperty, propFilter, type Ctx } from '../../lib/auth.ts';
+import { audit } from '../../lib/audit.ts';
 import { q, q1, val, j } from '../../lib/db.ts';
 import { fmtDate, fmtMonth, monthKey, lastOfMonth, addMonths } from '../../lib/dates.ts';
 import { usd, parseUsd } from '../../lib/money.ts';
-import { shell, card, tbl, dl, statusBadge, field, select, input, registerNav, kpis, tabs, emptyState, noProperties } from '../../ui/ui.ts';
+import { shell, card, tbl, dl, statusBadge, field, select, input, moneyInput, registerNav, kpis, tabs, emptyState, noProperties } from '../../ui/ui.ts';
 import { COA } from './coa.ts';
 import { accountBalance } from './service.ts';
-import { ensureBankAccounts, importAllFeeds, createRecon, autoMatch, postAdjustment, manualMatch, excludeTxn, completeRecon, reconSummary, unreconciledAging, unmatchedTotal } from './banking.ts';
-import { closeChecklist, closePeriod, reopenPeriod, periodGrid, submitManualJe, decidePendingJe, createRecurringJe } from './close.ts';
+import {
+  ensureBankAccounts, importAllFeeds, createRecon, autoMatch, postAdjustment, excludeTxn, completeRecon, reconSummary, reconPreview,
+  unreconciledAging, unmatchedTotal, bankLabel, addStatementLine, setStatementClose, matchCandidates, matchEntries, unmatchTxn, markInOpeningBalance,
+  bankAccountFor, bankScopeSql, statementMonthOver,
+} from './banking.ts';
+import { closeChecklist, closePeriod, reopenPeriod, periodGrid, submitManualJe, decidePendingJe, createRecurringJe, pendingJeIsOwn, otherJeApprovers } from './close.ts';
+import { getSetting } from '../../lib/settings.ts';
 import { balanceSheet, incomeStatement, t12, cashFlow, toCsv, type Basis } from './statements.ts';
 import { createBudget, setBudgetLine, approveBudget, budgetVsActual, seedFromActuals, spread, type SpreadCurve } from './budgets.ts';
 import { createPacket, deletePacket, getPacket, listPackets, packetData, packetScopeName, packetCsv, packetPdf } from './packets.ts';
@@ -22,6 +28,18 @@ registerNav('Money', { href: '/periods', label: 'Month-end close', perm: 'gl:clo
 registerNav('Money', { href: '/budgets', label: 'Budgets', perm: 'budgets:view', match: ['/budgets'] });
 registerNav('Money', { href: '/statements', label: 'Statements', perm: 'gl:view', match: ['/statements'] });
 
+/** where a statement line came from, in words (the stored ref is an id) */
+function lineSource(ref: string | null | undefined): string {
+  const r = String(ref || '');
+  if (r.startsWith('manual:')) return 'typed in';
+  if (r.startsWith('file:') || r.startsWith('ofx:')) return 'from a file';
+  return r;
+}
+
+function matchLabel(kind: string | null | undefined): string {
+  return kind === 'ap_payment' ? 'vendor payment' : kind === 'settlement' ? 'deposit batch' : kind === 'multi' ? 'several entries' : 'journal entry';
+}
+
 function propsFor(ctx: Ctx): any[] {
   const pf = propFilter(ctx, 'id');
   return q<any>(`SELECT id, name FROM properties WHERE org_id=?${pf.sql} ORDER BY name`, ctx.orgId, ...pf.params);
@@ -29,46 +47,77 @@ function propsFor(ctx: Ctx): any[] {
 
 export function routes(r: Router): void {
   // ============================== BANKING ==============================
+  // Reading these pages writes nothing: accounts are created by the import,
+  // by the opening balance, or by the button below; a reconciliation is
+  // created when someone starts it.
   r.get('/banking', requirePerm('banking:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    ensureBankAccounts(ctx.orgId);
+    const live = ctx.orgKind === 'live';
+    // a property's account shows to staff who can work on that property; an
+    // account with no property only to staff with the whole portfolio
+    const scope = bankScopeSql(ctx, 'b.property_id');
     const accounts = q<any>(
       `SELECT b.*, p.name AS property,
         (SELECT COUNT(*) FROM bank_txns t WHERE t.bank_account_id=b.id AND t.status='unmatched') AS open_txns,
-        (SELECT COALESCE(SUM(amount_cents),0) FROM bank_txns t WHERE t.bank_account_id=b.id) AS balance
-       FROM bank_accounts b LEFT JOIN properties p ON p.id=b.property_id WHERE b.org_id=? AND b.active=1`,
-      ctx.orgId,
+        (SELECT COALESCE(SUM(amount_cents),0) FROM bank_txns t WHERE t.bank_account_id=b.id AND t.status!='excluded') AS balance,
+        (SELECT r.period_key FROM bank_recons r WHERE r.bank_account_id=b.id AND r.status='completed' ORDER BY r.period_key DESC LIMIT 1) AS last_period,
+        (SELECT r.statement_close_cents FROM bank_recons r WHERE r.bank_account_id=b.id AND r.status='completed' ORDER BY r.period_key DESC LIMIT 1) AS last_close
+       FROM bank_accounts b LEFT JOIN properties p ON p.id=b.property_id WHERE b.org_id=? AND b.active=1${scope.sql} ORDER BY b.created_at`,
+      ctx.orgId, ...scope.params,
     );
     const recons = q<any>(
       `SELECT r.*, b.name AS account FROM bank_recons r JOIN bank_accounts b ON b.id=r.bank_account_id
-       WHERE r.org_id=? ORDER BY r.period_key DESC, b.name LIMIT 40`, ctx.orgId,
+       WHERE r.org_id=?${scope.sql} ORDER BY r.period_key DESC, b.name LIMIT 40`, ctx.orgId, ...scope.params,
     );
     const aging = unreconciledAging(ctx);
+    const missScope = bankScopeSql(ctx, 'p.id');
+    const missing = (val<number>(
+      `SELECT COUNT(*) FROM properties p WHERE p.org_id=? AND NOT EXISTS
+         (SELECT 1 FROM bank_accounts b WHERE b.org_id=p.org_id AND b.property_id=p.id AND b.kind='operating')${missScope.sql}`, ctx.orgId, ...missScope.params,
+    ) || 0);
+    const canRec = can(ctx, 'banking:reconcile');
+    const setUp = when(missing > 0 && canRec, () => html`
+      <form method="post" action="/banking/accounts" style="display:inline"><button class="btn">Create an operating account for each property</button></form>`);
     return shell(rq, {
       title: 'Banking & reconciliation',
       active: '/banking',
-      subtitle: 'BankFeed accounts, statement matching and reconciliation history',
-      actions: html`<form method="post" action="/banking/import" style="display:inline"><button class="btn btn-ghost">Pull latest feed</button></form>`,
+      subtitle: live
+        ? 'Statement import, matching and reconciliation'
+        : 'Simulated bank feed, statement matching and reconciliation history',
+      actions: live
+        ? html`<a class="btn btn-ghost" href="/gl/setup">Bank accounts</a>`
+        : html`<form method="post" action="/banking/import" style="display:inline"><button class="btn btn-ghost">Pull latest feed</button></form>`,
       content: html`
-        ${card('Accounts', tbl(
-          [{ label: 'Account' }, { label: 'Bank' }, { label: 'Last 4' }, { label: 'Feed balance', num: true }, { label: 'Unmatched', num: true }, { label: '' }],
-          accounts.map((a) => ({
-            cells: [
-              a.name, a.bank_name, html`<span class="mono">…${a.last4}</span>`, usd(a.balance),
-              a.open_txns ? html`<span class="badge badge-warn">${a.open_txns}</span>` : '0',
-              html`<a class="btn btn-sm" href="/banking/${a.id}/reconcile">Reconcile</a> <a class="btn btn-ghost btn-sm" href="/banking/${a.id}">Transactions</a>`,
-            ],
-          })),
-        ), { flush: true })}
-        ${card('Unreconciled item aging', tbl(
+        ${when(live, () => html`<p class="small muted">No bank is connected to StayLeased. Statement lines come from a file downloaded from the bank or are typed in on the account's page; nothing here is fetched from a bank.</p>`)}
+        ${accounts.length
+          ? card('Accounts', html`${tbl(
+            live
+              ? [{ label: 'Account' }, { label: 'Bank' }, { label: 'Last reconciled' }, { label: 'Unmatched lines', num: true }, { label: '' }]
+              : [{ label: 'Account' }, { label: 'Bank' }, { label: 'Last 4' }, { label: 'Feed balance', num: true }, { label: 'Unmatched', num: true }, { label: '' }],
+            accounts.map((a) => {
+              const openBadge = a.open_txns ? html`<span class="badge badge-warn">${a.open_txns}</span>` : '0';
+              const links = html`${when(canRec, () => html`<a class="btn btn-sm" href="/banking/${a.id}/reconcile">Reconcile</a> `)}<a class="btn btn-ghost btn-sm" href="/banking/${a.id}">${live ? 'Statement lines' : 'Transactions'}</a>`;
+              return {
+                cells: live
+                  ? [a.name, bankLabel(a, true), a.last_period ? `${fmtMonth(a.last_period)} · ${usd(a.last_close)}` : 'Not yet', openBadge, links]
+                  : [a.name, a.bank_name, html`<span class="mono">…${a.last4}</span>`, usd(a.balance), openBadge, links],
+              };
+            }),
+          )}${when(missing > 0, () => html`<div style="padding:10px 14px"><span class="small muted">${missing} propert${missing === 1 ? 'y has' : 'ies have'} no operating account yet.</span> ${setUp}</div>`)}`, { flush: true })
+          : emptyState('No bank accounts yet',
+            live
+              ? 'Add the accounts your properties bank with. Each one gets its own statement lines and its own monthly reconciliation.'
+              : 'Pull the feed to create a simulated operating account for each property.',
+            html`${setUp} ${when(live, () => html`<a class="btn btn-ghost" href="/gl/setup">Add a bank account</a>`)}`)}
+        ${when(accounts.length, () => card('Unreconciled item aging', tbl(
           [{ label: 'Account' }, { label: '0-30', num: true }, { label: '31-60', num: true }, { label: '61-90', num: true }, { label: '90+', num: true }],
           aging.map((a) => ({
             cells: [a.account.name, ...(['0-30', '31-60', '61-90', '90+'] as const).map((k) =>
               a.buckets[k]!.n ? html`${a.buckets[k]!.n} · ${usd(a.buckets[k]!.amount)}` : '—')],
           })),
-        ), { flush: true })}
+        ), { flush: true }))}
         ${card('Reconciliation history', tbl(
-          [{ label: 'Month' }, { label: 'Account' }, { label: 'Statement close', num: true }, { label: 'Difference', num: true }, { label: 'Status' }, { label: 'Completed' }],
+          [{ label: 'Month' }, { label: 'Account' }, { label: 'Statement close', num: true }, { label: 'Unmatched', num: true }, { label: 'Status' }, { label: 'Completed' }],
           recons.map((rc) => ({
             href: `/banking/${rc.bank_account_id}/reconcile?month=${rc.period_key}`,
             cells: [fmtMonth(rc.period_key), rc.account, usd(rc.statement_close_cents), rc.difference_cents ? html`<b>${usd(rc.difference_cents)}</b>` : usd(0), statusBadge(rc.status), rc.completed_by ? `${rc.completed_by} · ${fmtDate((rc.completed_at || '').slice(0, 10))}` : '—'],
@@ -78,8 +127,24 @@ export function routes(r: Router): void {
     });
   });
 
+  r.post('/banking/accounts', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    // this creates an account for every property in the organization
+    if (!ctx.allProperties) return redirect('/banking', 'Creating accounts for every property needs access to all properties. Ask an administrator to do this.', 'err');
+    ensureBankAccounts(ctx.orgId);
+    audit(ctx, 'org', ctx.orgId, 'bank_accounts_created');
+    return redirect('/banking', ctx.orgKind === 'live'
+      ? 'Operating accounts created. Add each bank name and last 4 digits under Bank accounts.'
+      : 'Operating accounts created.');
+  });
+
   r.post('/banking/import', requirePerm('banking:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    // the simulated feed is for demo organizations; importFeed refuses a live
+    // one itself, this just says why nothing happened
+    if (ctx.orgKind === 'live') {
+      return redirect('/banking', 'No bank is connected. Upload a statement file or type the lines in on the account page.', 'err');
+    }
     ensureBankAccounts(ctx.orgId);
     const n = importAllFeeds(ctx.orgId, ctx.businessDate);
     return redirect('/banking', n ? `${n} new bank transactions imported` : 'Feed already up to date');
@@ -87,137 +152,374 @@ export function routes(r: Router): void {
 
   r.get('/banking/:id', requirePerm('banking:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const live = ctx.orgKind === 'live';
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
-    const txns = q<any>('SELECT * FROM bank_txns WHERE bank_account_id=? ORDER BY date DESC LIMIT 300', acct.id);
+    const txns = q<any>('SELECT * FROM bank_txns WHERE bank_account_id=? ORDER BY date DESC, imported_at DESC LIMIT 300', acct.id);
+    const canRec = can(ctx, 'banking:reconcile');
     return shell(rq, {
       title: acct.name,
       active: '/banking',
-      subtitle: `${acct.bank_name} · …${acct.last4} · feed shows ${txns.length < 300 ? txns.length : '300+'} transactions`,
-      actions: html`<a class="btn" href="/banking/${acct.id}/reconcile">Reconcile</a>`,
+      subtitle: `${bankLabel(acct, live)} · ${txns.length < 300 ? txns.length : '300+'} statement line${txns.length === 1 ? '' : 's'} on file`,
+      actions: when(canRec, () => html`<a class="btn" href="/banking/${acct.id}/reconcile">Reconcile</a>`),
       content: html`
-        ${card('Import a statement file', html`
-          <form method="post" action="/banking/${acct.id}/upload" enctype="multipart/form-data" class="toolbar">
-            ${field('CSV or OFX/QFX from the bank', html`<input type="file" name="statement" accept=".csv,.ofx,.qfx,.txt" required />`)}
-            <button class="btn">Import transactions</button>
-          </form>
-          <p class="small muted">Bank exports land here directly — date, description, and amount (or debit/credit) columns are detected automatically, re-imports never duplicate, and everything imported is matchable in the reconciliation workbench.</p>`)}
-        ${card(null, tbl(
-          [{ label: 'Date' }, { label: 'Description' }, { label: 'Ref' }, { label: 'Kind' }, { label: 'Status' }, { label: 'Amount', num: true }],
+        ${when(canRec, () => html`<div class="cols">
+          <div>${card('Import a statement file', html`
+            <form method="post" action="/banking/${acct.id}/upload" enctype="multipart/form-data" class="toolbar">
+              ${field('CSV or OFX/QFX from the bank', html`<input type="file" name="statement" accept=".csv,.ofx,.qfx,.txt" required />`)}
+              <button class="btn">Import transactions</button>
+            </form>
+            <p class="small muted">Date, description, and amount (or debit and credit) columns are found automatically. Importing the same file twice adds nothing. Lines dated in a month that is already reconciled are left out.</p>`)}</div>
+          <div>${card('Add a statement line by hand', html`
+            <form method="post" action="/banking/${acct.id}/txn">
+              <div class="grid2">
+                ${field('Date on the statement', input('date', { type: 'date', value: ctx.businessDate, required: true }))}
+                ${field('Money in or out', select('direction', [['out', 'Money out (check, payment, fee)'], ['in', 'Money in (deposit, interest)']], 'out'))}
+                ${field('Description', input('description', { required: true, placeholder: 'as printed on the statement' }))}
+                ${field('Amount', moneyInput('amount', null, { required: true }))}
+              </div>
+              <button class="btn">Add line</button>
+            </form>`)}</div>
+        </div>`)}
+        ${card('Statement lines', tbl(
+          [{ label: 'Date' }, { label: 'Description' }, { label: 'Kind' }, { label: 'Status' }, { label: 'Amount', num: true }],
           txns.map((t) => ({
-            cells: [fmtDate(t.date), t.description, html`<span class="mono small">${t.ref || ''}</span>`, t.kind, statusBadge(t.status), html`<span class="${t.amount_cents < 0 ? 'neg' : ''}">${usd(t.amount_cents)}</span>`],
+            cells: [fmtDate(t.date), html`${t.description} <span class="mono small muted">${lineSource(t.ref)}</span>`, t.kind, statusBadge(t.status, t.status === 'excluded' ? 'set aside' : undefined), html`<span class="${t.amount_cents < 0 ? 'neg' : ''}">${usd(t.amount_cents)}</span>`],
           })),
-          { empty: 'No transactions yet — import a statement file above or pull the demo feed from the banking page.' },
+          { empty: live ? 'No statement lines yet — import a file from the bank or add lines by hand above.' : 'No transactions yet — import a statement file above or pull the demo feed from the banking page.' },
         ), { flush: true })}`,
     });
+  });
+
+  r.post('/banking/:id/txn', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const acct = bankAccountFor(ctx, rq.params.id!);
+    if (!acct) return notFound();
+    const b = rq.body || {};
+    const month = String(b.month || '');
+    const back = /^\d{4}-\d{2}$/.test(month) ? `/banking/${acct.id}/reconcile?month=${month}` : `/banking/${acct.id}`;
+    try {
+      const amount = Math.abs(parseUsd(String(b.amount || '')));
+      addStatementLine(ctx, acct.id, {
+        date: String(b.date || ''), description: String(b.description || ''),
+        amountCents: String(b.direction) === 'in' ? amount : -amount,
+      });
+      return redirect(back, 'Statement line added.');
+    } catch (e) {
+      const msg = (e as Error).message;
+      return redirect(back, /^invalid amount/.test(msg) ? 'Enter the amount shown on the statement, like 1250.00.' : msg, 'err');
+    }
   });
 
   // ---------- reconciliation workbench ----------
   r.get('/banking/:id/reconcile', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const acct = q1<any>('SELECT * FROM bank_accounts WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const live = ctx.orgKind === 'live';
+    const acct = bankAccountFor(ctx, rq.params.id!);
     if (!acct) return notFound();
-    // default month: first month with unmatched txns, else last full month
+    // default month: first month with unmatched lines, else last full month
     const suggested = val<string>(
       `SELECT substr(date,1,7) FROM bank_txns WHERE bank_account_id=? AND status='unmatched' ORDER BY date LIMIT 1`, acct.id,
     ) || monthKey(addMonths(ctx.businessDate, -1));
-    const month = rq.query.get('month') || suggested;
-    const reconId = createRecon(ctx, acct.id, month);
-    const rec = q1<any>('SELECT * FROM bank_recons WHERE id=?', reconId);
+    const asked = rq.query.get('month') || '';
+    const month = /^\d{4}-(0[1-9]|1[0-2])$/.test(asked) ? asked : suggested;
+    // look, do not create: a reconciliation exists once someone starts it
+    const rec = q1<any>('SELECT * FROM bank_recons WHERE bank_account_id=? AND period_key=? AND org_id=?', acct.id, month, ctx.orgId);
+    const s = rec ? reconSummary(ctx, rec.id) : reconPreview(ctx, acct.id, month);
+    const open = !!rec && rec.status !== 'completed';
     const txns = q<any>(
       `SELECT * FROM bank_txns WHERE bank_account_id=? AND substr(date,1,7)=? ORDER BY status DESC, date`, acct.id, month,
     );
-    const summary = reconSummary(ctx, reconId);
     const diff = unmatchedTotal(ctx.orgId, acct.id, month);
     const months: [string, string][] = [];
     for (let i = 14; i >= 0; i--) {
       const mk2 = monthKey(addMonths(ctx.businessDate, -i));
       months.push([mk2, fmtMonth(mk2)]);
     }
+    if (!months.some(([k]) => k === month)) months.unshift([month, fmtMonth(month)]);
+    const ties = s.unmatchedCount === 0 && s.tieDifference === 0;
+    // a live month still running has no statement yet: it can be worked on, not completed
+    const monthOver = statementMonthOver(ctx, month);
+    const firstPeriod = val<string>('SELECT MIN(period_key) FROM bank_recons WHERE bank_account_id=?', acct.id);
+    const notCleared = [...s.inTransit, ...s.outstanding].sort((a, b) => (a.date < b.date ? -1 : 1));
+    const glName = COA.find(([c]) => c === acct.gl_account)?.[1] || 'Cash';
     return shell(rq, {
       title: `Reconcile — ${fmtMonth(month)}`,
       active: '/banking',
-      subtitle: html`${acct.name} · statement ${usd(rec.statement_open_cents)} → ${usd(rec.statement_close_cents)} · ${statusBadge(rec.status)}`,
+      subtitle: rec
+        ? html`${acct.name} · statement ending balance ${usd(s.statementClose)} · ${statusBadge(rec.status)}`
+        : html`${acct.name} · ${statusBadge('draft', 'not started')}`,
       actions: html`
-        ${when(rec.status !== 'completed', () => html`
-          <form method="post" action="/banking/${acct.id}/reconcile/${reconId}/automatch" style="display:inline"><button class="btn">Auto-match</button></form>
-          <form method="post" action="/banking/${acct.id}/reconcile/${reconId}/complete" style="display:inline"><button class="btn" ${diff === 0 ? '' : 'disabled'}>Complete at $0.00</button></form>`)}
-        <a class="btn btn-ghost" href="/banking/${acct.id}/reconcile/${reconId}/report">Report</a>`,
+        ${when(open, () => html`
+          <form method="post" action="/banking/${acct.id}/reconcile/${rec.id}/automatch" style="display:inline"><button class="btn">Auto-match</button></form>
+          <form method="post" action="/banking/${acct.id}/reconcile/${rec.id}/complete" style="display:inline"><button class="btn" ${ties && monthOver ? '' : 'disabled'}>Complete at $0.00</button></form>`)}
+        ${when(!rec && !live, () => html`
+          <form method="post" action="/banking/${acct.id}/reconcile/start" style="display:inline">
+            <input type="hidden" name="month" value="${month}"><input type="hidden" name="automatch" value="1">
+            <button class="btn">Auto-match</button>
+          </form>`)}
+        ${when(rec, () => html`<a class="btn btn-ghost" href="/banking/${acct.id}/reconcile/${rec.id}/report">Report</a>`)}`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>${field('Statement month', select('month', months, month))}</form>
-        ${kpis([
-          { label: 'Unmatched difference', value: usd(diff), tone: diff === 0 ? 'ok' : 'warn' },
-          { label: 'Matched this month', value: String(summary.matchedCount) },
-          { label: 'Book balance (EOM)', value: usd(summary.bookClose) },
-          { label: 'Outstanding checks', value: usd(summary.outstanding.reduce((s, o) => s + o.amount, 0)) },
-        ])}
-        ${card('Statement transactions', tbl(
+        ${when(!monthOver, () => html`<p class="callout warn">${fmtMonth(month)} has not ended, so its bank statement is not out yet. Lines can be entered and matched now; the month can be completed once it is over and the full statement is entered. Completing a month is final.</p>`)}
+        ${when(!rec && live, () => card(`Start reconciling ${fmtMonth(month)}`, html`
+          <form method="post" action="/banking/${acct.id}/reconcile/start" class="toolbar">
+            <input type="hidden" name="month" value="${month}">
+            ${field('Ending balance on the bank statement', input('statement_close', { required: true, placeholder: '0.00' }), `as printed for ${fmtDate(lastOfMonth(`${month}-01`))}; put a minus sign in front if the account is overdrawn`)}
+            <button class="btn">Start reconciliation</button>
+          </form>
+          <p class="small muted">Have the statement for ${fmtMonth(month)} in front of you. ${txns.length ? `${txns.length} statement line${txns.length === 1 ? ' is' : 's are'} on file for this month.` : html`No statement lines are on file for this month yet — <a href="/banking/${acct.id}">import the bank's file or add them by hand</a> first or after starting.`}</p>`))}
+        ${when(rec, () => kpis([
+          { label: 'Unmatched difference', value: usd(diff), tone: s.unmatchedCount === 0 ? 'ok' : 'warn' },
+          { label: 'Unmatched lines', value: String(s.unmatchedCount), tone: s.unmatchedCount === 0 ? 'ok' : 'warn' },
+          { label: 'Statement ending balance', value: usd(s.statementClose) },
+          { label: `Book balance, ${fmtDate(s.end)}`, value: usd(s.bookClose) },
+          { label: 'Still to explain', value: usd(s.tieDifference), tone: s.tieDifference === 0 ? 'ok' : 'warn' },
+        ]))}
+        ${when(open && live, () => html`
+          <form method="post" action="/banking/${acct.id}/reconcile/${rec.id}/statement" class="toolbar">
+            ${field('Ending balance on the bank statement', input('statement_close', { value: (s.statementClose / 100).toFixed(2), required: true }))}
+            <button class="btn btn-ghost">Update balance</button>
+          </form>`)}
+        ${when(open && s.linesGap !== null && s.linesGap !== 0, () => html`<p class="callout warn">The lines on file for ${fmtMonth(month)} do not add up to the change in the statement balance since last month — they are off by ${usd(Math.abs(s.linesGap || 0))}. A statement line is probably missing or entered twice.</p>`)}
+        ${card('Statement lines', html`${tbl(
           [{ label: 'Date' }, { label: 'Description' }, { label: 'Kind' }, { label: 'Amount', num: true }, { label: 'Status' }, { label: 'Action' }],
           txns.map((t) => ({
             cells: [
-              fmtDate(t.date), html`${t.description} <span class="mono small muted">${t.ref || ''}</span>`, t.kind,
+              fmtDate(t.date), html`${t.description} <span class="mono small muted">${lineSource(t.ref)}</span>`, t.kind,
               html`<span class="${t.amount_cents < 0 ? 'neg' : ''}">${usd(t.amount_cents)}</span>`,
-              statusBadge(t.status === 'matched' ? 'matched' : t.status, t.status === 'matched' ? `matched · ${t.matched_kind}` : undefined),
-              t.status === 'unmatched' && rec.status !== 'completed'
-                ? html`
-                  <form method="post" action="/banking/txn/${t.id}/adjust" style="display:inline"><input type="hidden" name="recon" value="${reconId}"><button class="btn btn-sm">Post adjustment JE</button></form>
-                  <form method="post" action="/banking/txn/${t.id}/exclude" style="display:inline"><input type="hidden" name="recon" value="${reconId}"><button class="btn btn-ghost btn-sm">Exclude</button></form>`
+              statusBadge(t.status === 'excluded' ? 'inactive' : t.status, t.status === 'matched' ? `matched · ${matchLabel(t.matched_kind)}` : t.status === 'excluded' ? 'set aside' : undefined),
+              !open ? ''
+                : t.status === 'unmatched'
+                  ? html`
+                    <a class="btn btn-sm" href="/banking/txn/${t.id}">Match or record</a>
+                    ${when(t.kind === 'fee' || t.kind === 'interest' || !live, () => html`<form method="post" action="/banking/txn/${t.id}/adjust" style="display:inline"><button class="btn btn-ghost btn-sm">${t.kind === 'fee' ? 'Record as bank fee' : t.kind === 'interest' ? 'Record as other income' : 'Post adjustment JE'}</button></form>`)}`
+                  : html`<form method="post" action="/banking/txn/${t.id}/unmatch" style="display:inline" data-confirm="${t.status === 'excluded' ? 'Bring this line back?' : 'Undo this match?'}"><button class="btn btn-ghost btn-sm">${t.status === 'excluded' ? 'Bring back' : 'Undo'}</button></form>`,
+            ],
+          })),
+          { empty: 'No statement lines on file for this month.' },
+        )}
+        ${when(open || (!rec && live), () => html`
+          <details style="padding:10px 14px"><summary class="small">Add a statement line by hand</summary>
+            <form method="post" action="/banking/${acct.id}/txn" class="toolbar" style="margin-top:8px">
+              <input type="hidden" name="month" value="${month}">
+              ${field('Date on the statement', input('date', { type: 'date', value: s.end, required: true }))}
+              ${field('Money in or out', select('direction', [['out', 'Money out'], ['in', 'Money in']], 'out'))}
+              ${field('Description', input('description', { required: true, placeholder: 'as printed on the statement' }))}
+              ${field('Amount', moneyInput('amount', null, { required: true }))}
+              <button class="btn btn-sm">Add line</button>
+            </form>
+          </details>`)}`, { flush: true })}
+        ${when(notCleared.length, () => card(`On the books, not on a statement yet (as of ${fmtDate(s.end)})`, html`${tbl(
+          [{ label: 'Date' }, { label: 'Entry' }, { label: 'Amount', num: true }, { label: '' }],
+          notCleared.slice(0, 60).map((o) => ({
+            cells: [
+              fmtDate(o.date), o.desc, html`<span class="${o.amount < 0 ? 'neg' : ''}">${usd(o.amount)}</span>`,
+              open && live && firstPeriod && o.date < `${firstPeriod}-01`
+                ? html`<form method="post" action="/banking/${acct.id}/entries/${o.id}/opening" style="display:inline" data-confirm="Treat this entry as already included in the bank balance before the first statement?"><input type="hidden" name="month" value="${month}"><button class="btn btn-ghost btn-sm">Already in the opening balance</button></form>`
                 : '',
             ],
           })),
-          { empty: 'No statement activity this month.' },
-        ), { flush: true })}
-        ${card('Book vs bank', dl([
-          ['GL 1010 at month end', usd(summary.bookClose)],
-          ['Less outstanding checks', usd(summary.outstanding.reduce((s, o) => s + o.amount, 0))],
-          ['Plus deposits in transit', usd(summary.inTransit.reduce((s, o) => s + o.amount, 0))],
-          ['Adjustments posted this recon', usd(summary.adjusted)],
-          ['Bank statement close', html`<b>${usd(rec.statement_close_cents)}</b>`],
-        ]))}`,
+        )}
+        <p class="small muted" style="padding:0 14px 10px">${notCleared.length > 60 ? `Showing the first 60 of ${notCleared.length}. ` : ''}Payments the bank has not paid yet and deposits it has not shown yet. They are expected to appear on a later statement; match them there.</p>`, { flush: true }))}
+        ${when(rec, () => card('Book to bank', html`${dl([
+          ['Ending balance on the statement', usd(s.statementClose)],
+          ['Plus deposits not on a statement yet', usd(s.inTransit.reduce((x, o) => x + o.amount, 0))],
+          ['Less payments not cleared yet', usd(s.outstanding.reduce((x, o) => x + o.amount, 0))],
+          ['Statement balance after those', html`<b>${usd(s.statementClose + s.unclearedTotal)}</b>`],
+          [`Book balance (${acct.gl_account} ${glName}) on ${fmtDate(s.end)}`, html`<b>${usd(s.bookClose)}</b>`],
+          ['Still to explain', html`<b>${usd(s.tieDifference)}</b>`],
+        ])}
+        <p class="small muted">The month can be completed when no statement line is unmatched and nothing is left to explain. ${when(s.adjusted !== 0, () => html`Entries recorded from statement lines in this reconciliation: ${usd(s.adjusted)}.`)}</p>`))}`,
     });
   });
 
+  r.post('/banking/:id/reconcile/start', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const acct = bankAccountFor(ctx, rq.params.id!);
+    if (!acct) return notFound();
+    const month = String(rq.body?.month || '');
+    const back = `/banking/${acct.id}/reconcile${/^\d{4}-\d{2}$/.test(month) ? `?month=${month}` : ''}`;
+    try {
+      let close: number | null = null;
+      if (ctx.orgKind === 'live') {
+        try { close = parseUsd(String(rq.body?.statement_close ?? '')); } catch { throw new Error('Enter the ending balance printed on the bank statement, like 12450.18.'); }
+      }
+      const rid = createRecon(ctx, acct.id, month, { statementCloseCents: close });
+      if (rq.body?.automatch === '1') {
+        const res = autoMatch(ctx, rid);
+        return redirect(back, `${res.matched} matched · ${res.remaining} still open`);
+      }
+      return redirect(back, `Reconciliation started for ${fmtMonth(month)}.`);
+    } catch (e) {
+      return redirect(back, (e as Error).message, 'err');
+    }
+  });
+
+  r.post('/banking/:id/reconcile/:rid/statement', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const rec = q1<any>('SELECT * FROM bank_recons WHERE id=? AND org_id=? AND bank_account_id=?', rq.params.rid!, ctx.orgId, rq.params.id!);
+    if (!rec || !bankAccountFor(ctx, rec.bank_account_id)) return notFound();
+    const back = `/banking/${rec.bank_account_id}/reconcile?month=${rec.period_key}`;
+    try {
+      let close: number;
+      try { close = parseUsd(String(rq.body?.statement_close ?? '')); } catch { throw new Error('Enter the ending balance printed on the bank statement, like 12450.18.'); }
+      setStatementClose(ctx, rec.id, close);
+      return redirect(back, 'Statement ending balance updated.');
+    } catch (e) {
+      return redirect(back, (e as Error).message, 'err');
+    }
+  });
+
   r.post('/banking/:id/reconcile/:rid/automatch', requirePerm('banking:reconcile'), (rq) => {
-    const res = autoMatch(rq.ctx as Ctx, rq.params.rid!);
-    return redirect(`/banking/${rq.params.id}/reconcile?month=${q1<any>('SELECT period_key FROM bank_recons WHERE id=?', rq.params.rid!)?.period_key}`,
-      `${res.matched} matched · ${res.remaining} still open`);
+    const ctx = rq.ctx as Ctx;
+    const rec = q1<any>('SELECT * FROM bank_recons WHERE id=? AND org_id=?', rq.params.rid!, ctx.orgId);
+    if (!rec || !bankAccountFor(ctx, rec.bank_account_id)) return notFound();
+    const back = `/banking/${rec.bank_account_id}/reconcile?month=${rec.period_key}`;
+    try {
+      const res = autoMatch(ctx, rec.id);
+      return redirect(back, `${res.matched} matched · ${res.remaining} still open`);
+    } catch (e) {
+      return redirect(back, (e as Error).message, 'err');
+    }
   });
   r.post('/banking/:id/reconcile/:rid/complete', requirePerm('banking:reconcile'), (rq) => {
-    const month = q1<any>('SELECT period_key FROM bank_recons WHERE id=?', rq.params.rid!)?.period_key;
+    const ctx = rq.ctx as Ctx;
+    const rec = q1<any>('SELECT * FROM bank_recons WHERE id=? AND org_id=?', rq.params.rid!, ctx.orgId);
+    if (!rec || !bankAccountFor(ctx, rec.bank_account_id)) return notFound();
+    const back = `/banking/${rec.bank_account_id}/reconcile?month=${rec.period_key}`;
     try {
-      completeRecon(rq.ctx as Ctx, rq.params.rid!);
-      return redirect(`/banking/${rq.params.id}/reconcile?month=${month}`, 'Reconciled to zero difference ✓');
+      completeRecon(ctx, rec.id);
+      return redirect(back, 'Reconciled to zero difference ✓');
     } catch (e) {
-      return redirect(`/banking/${rq.params.id}/reconcile?month=${month}`, (e as Error).message, 'err');
+      return redirect(back, (e as Error).message, 'err');
+    }
+  });
+
+  // ---------- one statement line: match it, record it, or set it aside ----------
+  const lineBack = (t: any): string => `/banking/${t.bank_account_id}/reconcile?month=${String(t.date).slice(0, 7)}`;
+
+  r.get('/banking/txn/:id', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    let c;
+    try { c = matchCandidates(ctx, rq.params.id!); } catch { return notFound(); }
+    const { txn: t, acct, items } = c;
+    if (!bankAccountFor(ctx, acct.id)) return notFound();
+    const props = acct.property_id ? [] : propsFor(ctx);
+    const accounts = q<any>(`SELECT code, name FROM gl_accounts WHERE org_id=? AND active=1 AND code!=? ORDER BY code`, ctx.orgId, acct.gl_account);
+    const guess = t.kind === 'fee' ? '5710' : t.amount_cents > 0 ? '' : '';
+    return shell(rq, {
+      title: 'Statement line',
+      active: '/banking',
+      crumbs: [['Banking', '/banking'], [`Reconcile — ${fmtMonth(String(t.date).slice(0, 7))}`, lineBack(t)]],
+      subtitle: html`${acct.name} · ${fmtDate(t.date)} · ${t.description} · <b>${usd(t.amount_cents)}</b> · ${statusBadge(t.status === 'excluded' ? 'inactive' : t.status, t.status === 'excluded' ? 'set aside' : undefined)}`,
+      content: t.status !== 'unmatched'
+        ? emptyState('This line is already dealt with', 'Undo it from the reconciliation page to change it.', html`<a class="btn" href="${lineBack(t)}">Back to the reconciliation</a>`)
+        : html`
+        ${card('It is already on the books — match it', items.length ? html`
+          <form method="post" action="/banking/txn/${t.id}/match">
+            ${tbl(
+              [{ label: '' }, { label: 'Date' }, { label: 'Entry' }, { label: 'Amount', num: true }],
+              items.map((i) => ({
+                cells: [
+                  html`<input type="checkbox" name="entry_ids" value="${i.id}" aria-label="Match to ${i.memo || i.sourceKind} ${usd(i.net)}" ${items.filter((x) => x.net === t.amount_cents).length === 1 && i.net === t.amount_cents ? 'checked' : ''}>`,
+                  fmtDate(i.date), i.memo || i.sourceKind.replaceAll('_', ' '),
+                  html`<span class="${i.net < 0 ? 'neg' : ''}">${i.net === t.amount_cents ? html`<b>${usd(i.net)}</b>` : usd(i.net)}</span>`,
+                ],
+              })),
+              { sort: false },
+            )}
+            <div class="toolbar"><button class="btn">Match to the ticked entries</button></div>
+            <p class="small muted">Tick one entry, or several that add up to ${usd(t.amount_cents)} — one deposit often covers several receipts. Entries shown are those the bank has not cleared yet; exact amounts are listed first.</p>
+          </form>` : emptyState('Nothing on the books is waiting to clear', 'Every entry that moved this bank account is already matched to a statement line. If this line is real, record it below.'))}
+        ${card('It is not on the books yet — record it', html`
+          <form method="post" action="/banking/txn/${t.id}/adjust">
+            <div class="grid2">
+              ${field(t.amount_cents > 0 ? 'What the money was for' : 'What the money went to', select('account', accounts.map((a): [string, string] => [a.code, `${a.code} — ${a.name}`]), guess, { required: true, blank: 'Choose an account…' }))}
+              ${field('Note', input('memo', { value: t.description, placeholder: 'what this was' }))}
+              ${when(props.length, () => field('Property', select('property_id', props.map((p): [string, string] => [p.id, p.name]), '', { required: true, blank: 'Choose…' })))}
+            </div>
+            <button class="btn">Record on the books and match</button>
+            <p class="small muted">Posts one entry dated ${fmtDate(t.date)} on both the accrual and cash books: ${t.amount_cents > 0 ? `${usd(t.amount_cents)} into ${acct.gl_account}, credited to the account chosen` : `${usd(-t.amount_cents)} out of ${acct.gl_account}, charged to the account chosen`}. Use this for bank fees, interest and anything else the books have never seen. A rent payment or a vendor payment belongs in Receivables or Payables instead, then matched above.</p>
+          </form>`)}
+        ${card('It is not a real line — set it aside', html`
+          <form method="post" action="/banking/txn/${t.id}/exclude" class="toolbar">
+            ${field('Why', input('reason', { required: true, placeholder: 'entered twice, wrong account…' }))}
+            <button class="btn btn-ghost">Set aside</button>
+          </form>
+          <p class="small muted">For a line entered twice or imported from the wrong account. A line that really is on the statement cannot be set aside: the statement's ending balance includes it, so the month would not tie.</p>`)}`,
+    });
+  });
+
+  r.post('/banking/txn/:id/match', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
+    const ids = ([] as string[]).concat((rq.body?.entry_ids as string[] | string) || []);
+    try {
+      matchEntries(ctx, t.id, ids, null);
+      return redirect(lineBack(t), 'Statement line matched.');
+    } catch (e) {
+      return redirect(`/banking/txn/${t.id}`, (e as Error).message, 'err');
     }
   });
   r.post('/banking/txn/:id/adjust', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!t) return notFound();
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
     const rec = String(rq.body?.recon || '') || null;
-    const month = rec ? q1<any>('SELECT period_key FROM bank_recons WHERE id=?', rec)?.period_key : '';
+    const propertyId = String(rq.body?.property_id || '') || null;
     try {
-      postAdjustment(ctx, t.id, rec);
-      return redirect(`/banking/${t.bank_account_id}/reconcile?month=${month}`, 'Adjustment JE posted and matched');
+      if (propertyId && !canAccessProperty(ctx, propertyId)) throw new Error('Choose a property in your portfolio.');
+      postAdjustment(ctx, t.id, rec && q1('SELECT id FROM bank_recons WHERE id=? AND org_id=?', rec, ctx.orgId) ? rec : null, {
+        account: String(rq.body?.account || '') || null, memo: String(rq.body?.memo || '') || null, propertyId,
+      });
+      return redirect(lineBack(t), 'Adjustment JE posted and matched');
     } catch (e) {
-      return redirect(`/banking/${t.bank_account_id}/reconcile?month=${month}`, (e as Error).message, 'err');
+      return redirect(rq.body?.account !== undefined ? `/banking/txn/${t.id}` : lineBack(t), (e as Error).message, 'err');
     }
   });
   r.post('/banking/txn/:id/exclude', requirePerm('banking:reconcile'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
-    if (!t) return notFound();
-    const rec = String(rq.body?.recon || '') || null;
-    const month = rec ? q1<any>('SELECT period_key FROM bank_recons WHERE id=?', rec)?.period_key : '';
-    excludeTxn(ctx, t.id, rec, 'excluded from workbench');
-    return redirect(`/banking/${t.bank_account_id}/reconcile?month=${month}`, 'Transaction excluded');
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
+    try {
+      excludeTxn(ctx, t.id, null, String(rq.body?.reason || '').trim().slice(0, 200) || 'set aside in reconciliation');
+      return redirect(lineBack(t), 'Statement line set aside.');
+    } catch (e) {
+      return redirect(lineBack(t), (e as Error).message, 'err');
+    }
+  });
+  r.post('/banking/txn/:id/unmatch', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const t = q1<any>('SELECT * FROM bank_txns WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!t || !bankAccountFor(ctx, t.bank_account_id)) return notFound();
+    try {
+      unmatchTxn(ctx, t.id);
+      return redirect(lineBack(t), t.status === 'excluded' ? 'Statement line brought back.' : 'Match undone.');
+    } catch (e) {
+      return redirect(lineBack(t), (e as Error).message, 'err');
+    }
+  });
+  r.post('/banking/:id/entries/:eid/opening', requirePerm('banking:reconcile'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const acct = bankAccountFor(ctx, rq.params.id!);
+    if (!acct) return notFound();
+    const month = String(rq.body?.month || '');
+    const back = `/banking/${acct.id}/reconcile${/^\d{4}-\d{2}$/.test(month) ? `?month=${month}` : ''}`;
+    try {
+      markInOpeningBalance(ctx, acct.id, rq.params.eid!);
+      return redirect(back, 'Entry treated as part of the opening bank balance.');
+    } catch (e) {
+      return redirect(back, (e as Error).message, 'err');
+    }
   });
 
   r.get('/banking/:id/reconcile/:rid/report', requirePerm('banking:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
     const s = reconSummary(ctx, rq.params.rid!);
-    if (!s.rec) return notFound();
+    if (!s.rec || !bankAccountFor(ctx, s.rec.bank_account_id)) return notFound();
+    const done = s.rec.status === 'completed';
     return shell(rq, {
       title: `Reconciliation report — ${fmtMonth(s.rec.period_key)}`,
       active: '/banking',
@@ -225,16 +527,22 @@ export function routes(r: Router): void {
       content: html`
         ${card('Summary', dl([
           ['Statement opening balance', usd(s.rec.statement_open_cents)],
-          ['Statement closing balance', usd(s.rec.statement_close_cents)],
-          ['Book balance (GL 1010) at month end', usd(s.bookClose)],
-          ['Outstanding checks', usd(s.outstanding.reduce((x, o) => x + o.amount, 0))],
-          ['Deposits in transit', usd(s.inTransit.reduce((x, o) => x + o.amount, 0))],
-          ['Adjustment JEs posted', usd(s.adjusted)],
-          ['Unexplained difference', html`<b>${usd(s.rec.status === 'completed' ? 0 : s.rec.difference_cents)}</b>`],
+          ['Statement closing balance', usd(s.statementClose)],
+          ['Plus deposits not on a statement yet', usd(s.inTransit.reduce((x, o) => x + o.amount, 0))],
+          ['Less payments not cleared yet', usd(s.outstanding.reduce((x, o) => x + o.amount, 0))],
+          [`Book balance (GL ${s.acct.gl_account}) at ${fmtDate(s.end)}`, usd(s.bookClose)],
+          ['Entries recorded from statement lines', usd(s.adjusted)],
+          ['Unmatched statement lines', String(s.unmatchedCount)],
+          ['Unexplained difference', html`<b>${usd(s.tieDifference)}</b>`],
         ]))}
-        ${when(s.outstanding.length, () => card('Outstanding checks at month end', tbl(
-          [{ label: 'Item' }, { label: 'Issued' }, { label: 'Amount', num: true }],
+        ${when(done && s.tieDifference !== 0, () => html`<p class="small muted">This month was completed at a zero difference. Entries dated in ${fmtMonth(s.rec.period_key)} have been posted or changed since, which is why a difference shows now.</p>`)}
+        ${when(s.outstanding.length, () => card('Payments not cleared at the end of the period', tbl(
+          [{ label: 'Item' }, { label: 'Date' }, { label: 'Amount', num: true }],
           s.outstanding.map((o) => ({ cells: [o.desc, fmtDate(o.date), usd(o.amount)] })),
+        ), { flush: true }))}
+        ${when(s.inTransit.length, () => card('Deposits not on a statement at the end of the period', tbl(
+          [{ label: 'Item' }, { label: 'Date' }, { label: 'Amount', num: true }],
+          s.inTransit.map((o) => ({ cells: [o.desc, fmtDate(o.date), usd(o.amount)] })),
         ), { flush: true }))}`,
     });
   });
@@ -319,6 +627,9 @@ export function routes(r: Router): void {
     const props = propsFor(ctx);
     const acctOpts = COA.map(([c, n]): [string, string] => [c, `${c} — ${n}`]);
     const pending = q<any>(`SELECT * FROM pending_jes WHERE org_id=? AND status='pending' ORDER BY created_at DESC`, ctx.orgId);
+    const canApprove = can(ctx, 'gl:close_period');
+    const others = pending.length && canApprove ? otherJeApprovers(ctx) : [];
+    const threshold = getSetting<number>(ctx, 'je_approval_threshold_cents', ctx.currentPropertyId);
     const lineRow = (i: number): Child => html`
       <tr>
         <td>${select(`acct_${i}`, acctOpts, '', { blank: '—' })}</td>
@@ -329,7 +640,7 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Manual journal entry',
       active: '/gl',
-      subtitle: 'Large entries route to a controller for approval',
+      subtitle: `Entries of ${usd(threshold)} or more wait for a second person to approve before they post`,
       content: html`
         <form method="post" action="/gl/new">
           ${card('Entry', html`
@@ -343,20 +654,26 @@ export function routes(r: Router): void {
             <tbody>${join([0, 1, 2, 3, 4, 5].map(lineRow), '')}</tbody></table>`)}
           <button class="btn">Post entry</button>
         </form>
-        ${when(pending.length && can(ctx, 'gl:close_period'), () => card('Awaiting approval', tbl(
+        ${when(pending.length, () => card('Awaiting approval', html`${tbl(
           [{ label: 'Date' }, { label: 'Property' }, { label: 'Memo' }, { label: 'Requested by' }, { label: 'Amount', num: true }, { label: '' }],
           pending.map((p) => {
-            const total = j<any[]>(p.lines, []).reduce((s, l) => s + (l.debit || 0), 0);
+            const total = j<any[]>(p.lines, []).reduce((s2, l) => s2 + (l.debit || 0), 0);
+            const own = pendingJeIsOwn(ctx, p);
+            const reject = html`<form method="post" action="/gl/pending/${p.id}/decide" style="display:inline"><button class="btn btn-ghost btn-sm">${own ? 'Withdraw' : 'Reject'}</button></form>`;
             return {
               cells: [
                 fmtDate(p.date), q1<any>('SELECT name FROM properties WHERE id=?', p.property_id)?.name || '—', p.memo, p.requested_by, usd(total),
-                html`
-                  <form method="post" action="/gl/pending/${p.id}/decide" style="display:inline"><input type="hidden" name="approve" value="1"><button class="btn btn-sm">Approve &amp; post</button></form>
-                  <form method="post" action="/gl/pending/${p.id}/decide" style="display:inline"><button class="btn btn-ghost btn-sm">Reject</button></form>`,
+                !canApprove ? html`<span class="muted small">waiting for an approver</span>`
+                  : own && others.length
+                    ? html`<span class="muted small">needs ${others.slice(0, 2).join(' or ')}${others.length > 2 ? ' or another approver' : ''}</span> ${reject}`
+                    : html`
+                  <form method="post" action="/gl/pending/${p.id}/decide" style="display:inline"><input type="hidden" name="approve" value="1"><button class="btn btn-sm">${own ? 'Confirm & post' : html`Approve &amp; post`}</button></form>
+                  ${reject}`,
               ],
             };
           }),
-        ), { flush: true }))}
+        )}
+        ${when(canApprove && !others.length && pending.some((p) => pendingJeIsOwn(ctx, p)), () => html`<p class="small muted" style="padding:0 14px 10px">Nobody else in this organization can approve journal entries, so you confirm your own. That is recorded on the entry as approved without a second person.</p>`)}`, { flush: true }))}
         ${card('Recurring entries', html`
           ${tbl(
             [{ label: 'Name' }, { label: 'Property' }, { label: 'Day' }, { label: 'Last posted' }, { label: 'Amount', num: true }],
@@ -385,18 +702,30 @@ export function routes(r: Router): void {
         propertyId: String(b.property_id), date: String(b.date), memo: String(b.memo),
         basis: String(b.basis || 'both') as 'accrual' | 'cash' | 'both', lines,
       });
-      return redirect('/gl/new', res.status === 'posted' ? 'Journal entry posted to both books' : 'Entry over the approval threshold — routed to a controller');
+      return redirect('/gl/new', res.status === 'posted'
+        ? (String(b.basis || 'both') === 'both' ? 'Journal entry posted to both books' : `Journal entry posted to the ${String(b.basis)} books`)
+        : 'This entry is at or above the approval amount, so it has not posted yet. It is waiting under Awaiting approval.');
     } catch (e) {
       return redirect('/gl/new', (e as Error).message, 'err');
     }
   });
 
-  r.post('/gl/pending/:id/decide', requirePerm('gl:close_period'), (rq) => {
+  // gl:post, not gl:close_period: the person who entered an entry may always
+  // withdraw it; approving is checked inside (it needs gl:close_period and,
+  // when anyone else can approve, a different person)
+  r.post('/gl/pending/:id/decide', requirePerm('gl:post'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const approve = rq.body?.approve === '1';
     try {
-      const jeId = decidePendingJe(rq.ctx as Ctx, rq.params.id!, rq.body?.approve === '1', String(rq.body?.reason || 'rejected'));
-      return redirect('/gl/new', jeId ? 'Approved and posted' : 'Rejected');
+      const p = q1<any>('SELECT * FROM pending_jes WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+      if (!p) return notFound();
+      if (!can(ctx, 'gl:close_period') && !(pendingJeIsOwn(ctx, p) && !approve)) {
+        throw new Error('Approving journal entries needs the period-close permission.');
+      }
+      const jeId = decidePendingJe(ctx, p.id, approve, String(rq.body?.reason || 'rejected'));
+      return redirect(String(rq.body?.back) === 'approvals' ? '/approvals' : '/gl/new', jeId ? 'Approved and posted' : 'Rejected');
     } catch (e) {
-      return redirect('/gl/new', (e as Error).message, 'err');
+      return redirect(String(rq.body?.back) === 'approvals' ? '/approvals' : '/gl/new', (e as Error).message, 'err');
     }
   });
 
