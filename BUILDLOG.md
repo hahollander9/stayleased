@@ -2431,3 +2431,89 @@ regressions, each claim verified a second time. Fifteen held up; all are fixed h
 Tests: `tests/hardening.test.ts` now 21. Gates: `tsc --noEmit` clean · unit 605/605 · scoped
 seeded e2e (smoke, accounting, reports, finfeatures, homescreen, applications, modes, marketing
 batch). DECISIONS #127 appended against the current tail.
+
+## 2026-11-19 — Calm UI, and every feature driven as a real company
+
+Two pieces of work in one build, both from the same instruction: make it the best it can be, and
+make every feature actually work rather than look as if it does.
+
+### The interface
+
+Four critiques from real screenshots (Standard app, Advanced app, marketing, design tokens) and
+two benchmarks agreed on one sentence: competent, but it read as a "dark AI dashboard" rather than
+calm books-and-buildings software. Nothing was ranked, the plain-language menu stopped one click
+in, labels were small uppercase grey, numbers glowed, and nearly every table row wore a pill.
+The benchmark studies could not load competitor pages from this environment (search summaries
+only), so no competitor's colours or type are claimed as evidence; the direction rests on the
+first-hand critiques.
+
+- **Calm layer** (`src/ui/theme.css`): sentence case, uppercase only on table headers; a 12.5px
+  reading floor; KPI numbers in Inter, left-aligned, no glow, coloured only when something is
+  wrong; neutral states as words rather than pills; one soft shadow; brand-coloured focus,
+  selection, caret and file buttons; visible control borders (#128).
+- **One colour world**: ~70 blue/indigo literals from the pre-emerald palette replaced; dark mode
+  moved to a green-neutral base; `--faint` and control borders raised to readable contrast; body
+  and cards flattened; the page-load animation removed. Charts lead with emerald, not blue.
+- **Ranked, in plain words**: Standard pages take their heading from the menu item that opened
+  them ("Who owes me", not "Receivables"). Home leads with a one-line status and "Needs your OK",
+  which was the last card. The approval queue leads its page; the explainer and totals fold
+  beneath it. Buttons say "OK, send it" / "No".
+- **Phone**: every `tbl()` table renders as labelled rows under 640px, with actions full width —
+  Approve and the amount were off-screen behind a sideways scroll.
+- **Entry and marketing**: sign-in and sign-up share the app's surface; a demo button lands on the
+  role picker; the invite-only page has a way forward. The homepage headline steps down and a
+  readable 2x capture of the home screen sits in the first viewport; Pricing is in the nav; the
+  scroll-linked progress bar and the section numbers are gone. Copy pins changed in the same
+  commit: "Three levels, set by you" → "…set by the operator"; "What you get" → "What is
+  included" (both broke the no-"you"-in-headlines rule).
+
+Not done from the design plan, deliberately: the move to a left-rail navigation (it rewrites the
+chrome and every navigation test, and deserves its own build), folding the calm layer back into
+the base rules it overrides, and a shared token file for app and marketing.
+
+### Every feature, as a live company
+
+Seven agents each signed up as a real (kind='live') company and drove their area through the
+actual screens, confirming each result in the database. Of 166 features: 81 worked, 50 were
+broken, 27 faked their outcome, 8 were honestly gated. All 77 reported problems were confirmed on
+a second read. They are fixed here, or — where the truth is "this needs a provider we have not
+connected" — gated and labelled (#129).
+
+- **Delivery honesty**: a live org's outbound messages are stored `recorded`, never `sent`, and
+  never flipped to `opened` by the simulator. The Outbox says "Saved — not delivered", is open to
+  anyone who can send messages, and every flash that used to say "sent" says what happened.
+- **Receivables**: one-off charges; void and returned-payment actions; late fees that respect the
+  balance and a waiver that cannot be applied twice; plan instalments satisfied by real payments;
+  dispositions that wait for move-out; statement and itemized-deposit PDFs. Card and ACH are
+  refused where they write in a live org.
+- **Leasing**: a lease can be created by hand, bills from the right date, and carries its deposit
+  on the books; notice and move-out can be recorded; residents and households can be edited; a
+  screening result is entered by staff, never invented; the signed lease opens in the portal.
+- **Accounting**: opening balances cannot post twice; no invented bank names or simulated feed in
+  a live org; reconciliation from statement lines entered by hand or uploaded; migrated deposits
+  satisfy the integrity check; split invoices post inter-property entries; owner distributions;
+  manual entries over the threshold always wait for a second person; GET handlers do not write.
+- **Operations**: vendors can be created, edited and invited; POs invoiced by staff and
+  downloaded; turn tasks wait for move-out and no longer post a cost the vendor bill posts again;
+  utilities take hand-entered readings and provider invoices; labor uses a rate the operator set.
+- **AI**: leasing replies state a policy only when the operator recorded one; the collections and
+  renewals watches the page described now exist (`ai_collections_watch`, `ai_renewals_watch`) and
+  draft into the approval queue; a renewal message creates the offer it refers to; Ask refuses an
+  instruction when no live model is connected instead of answering with a report.
+- **Also**: `GET /admin/export` — every org-owned record as one CSV per table, secrets excluded,
+  audited — which makes "export anything, any time" true (#130). A generated property address is
+  made unique instead of refused. A new live org starts with no month-to-month premium and
+  automatic late fees off (#131).
+
+Still needing an outside provider, and now labelled rather than faked: outbound email and text,
+resident card/ACH, tenant screening, bank feeds, check printing / ACH origination, and paging an
+on-call technician.
+
+Known and not changed: an existing live org (Station U&O) keeps the old fee defaults until someone
+turns them off in Settings — the new defaults apply at creation; turn-cost entries posted before
+this build remain in account 2200; the remittance PDF still names the demo company.
+
+Tests: `fx_main` (4), `fx_comms` (13), `fx_recv` (13), `fx_lease` (13), `fx_acct` (17),
+`fx_ops` (12), `fx_ai` (9), `fx_integ` (19). Gates: `tsc --noEmit` clean · unit 736/736 · full
+seeded e2e and an independent review of the money code (results in the PR). DECISIONS #128–#131
+appended against the current tail.

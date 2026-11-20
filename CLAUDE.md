@@ -179,6 +179,12 @@ never qualify (DECISIONS #57).
   auth, API key in query string, Stripe event ordering, `clientIp` hop, staff-started
   applications reaching simulated screening in live orgs. Ledger reads go through
   `ledgerScope()` — "no property named" means the reader's own buildings (#127).
+- 2026-11-19 build (BUILDLOG): the calm UI layer (#128), delivery honesty for live orgs —
+  outbound messages are `recorded`, never `sent`/`opened`, use `deliveryNote(ctx)` in flashes
+  (#129) — `GET /admin/export` (#130), fee defaults off for new live orgs (#131), manual lease
+  creation, vendor create/edit/portal, manual bank reconciliation, manual utilities and comps,
+  AI watch jobs. `tests/fx_*.test.ts` drive live-org fixtures. Owed: left-rail navigation,
+  folding the calm layer into the base rules, shared app/marketing tokens.
 - Next engineering, in order: (1) live-org recovery after deploy — delete the corrupted
   Station U&O property (typed-confirm), re-import rent roll + directory, tie the strip to
   Yardi's summary (110 units · $149,365 rent · $1,260 extras · $99,367 deposits ·

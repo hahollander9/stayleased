@@ -130,6 +130,14 @@ test('the suggestions name this org’s own properties, and the actions only fil
   }
 
   const acts = page.locator('#aichat-does .aichat-chip');
+  // Acting on an instruction needs the live model. Without one the page used to
+  // advertise actions it then answered with a report; it now offers them only
+  // when they will work (2026-11-19), so this half runs only with a key set.
+  if (!process.env.ANTHROPIC_API_KEY) {
+    assert.equal(await acts.count(), 0, 'no action is offered that the server cannot carry out');
+    await page.close();
+    return;
+  }
   assert.ok(await acts.count() > 0, 'and the things it can DO are shown, not just the things it can answer');
   const beforeCount = (await bubbles(page)).length;
   await acts.first().click();
