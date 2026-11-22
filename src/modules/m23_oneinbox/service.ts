@@ -8,7 +8,8 @@ import { audit } from '../../lib/audit.ts';
 import { inboundDomain, registerInboundFallback, type InboundEmail } from '../m3_crm/ils_email.ts';
 import {
   matchSender, classify, unwrapForward, subjectKey,
-  type Contact, type ContactKind, type MailIn, type MatchStatus, type Category, type Urgency, type RosterRow,
+  SIGN_PLACEHOLDER,
+  type Contact, type ContactKind, type MailIn, type MatchStatus, type Category, type Urgency, type RosterRow, type Signer,
 } from './engine.ts';
 
 /** One Inbox storage. Unlike the weekly action report (m22, which stores
@@ -38,6 +39,7 @@ export interface MessageRow {
   match_reason: string;
   filed_by: string | null;
   status: 'open' | 'done';
+  done_by: string | null;
   done_at: string | null;
   is_sample: number;
   replied_at: string | null;
@@ -113,7 +115,7 @@ export function replaceRoster(ctx: Ctx, rows: RosterRow[], opts: { sample?: bool
       });
       oldIds.delete(k);
     }
-    // messages filed to someone no longer on the list go back to "needs filing"
+    // messages filed to someone no longer on the list go back to "Who is this?"
     for (const goneId of oldIds.values()) {
       run(`UPDATE oi_messages SET contact_id=NULL, match_status='unsorted', match_reason='The person this was filed to is no longer on the contact list.' WHERE org_id=? AND contact_id=?`, ctx.orgId, goneId);
     }
@@ -188,6 +190,8 @@ export function message(orgId: string, messageId: string): MessageRow | null {
   return q1<MessageRow>('SELECT * FROM oi_messages WHERE id=? AND org_id=?', messageId, orgId) || null;
 }
 
+const SWEPT = 'Same sender as an email';
+
 /** A person says who this email is from. Optionally remember the sender's
  * address on that contact, so the next email from it files itself. */
 export function fileTo(ctx: Ctx, messageId: string, contactId: string, remember: boolean): boolean {
@@ -198,14 +202,14 @@ export function fileTo(ctx: Ctx, messageId: string, contactId: string, remember:
     // knowing the sender can change what the email is (an agency's "quick
     // question" is agency mail); urgency is about the words and stays put
     const { category } = classify({ fromEmail: m.from_email, fromName: m.from_name, to: m.mailbox ? [m.mailbox] : [], subject: m.subject, text: m.body }, c.kind);
-    update('oi_messages', m.id, { contact_id: c.id, match_status: 'matched', match_reason: `Filed by ${ctx.userName}.`, filed_by: ctx.userId, candidates: '[]', category });
+    update('oi_messages', m.id, { contact_id: c.id, match_status: 'matched', match_reason: `Chosen by ${ctx.userName}.`, filed_by: ctx.userId, candidates: '[]', category });
     if (remember && m.from_email && !c.emails.includes(m.from_email)) {
       update('oi_contacts', c.id, { emails: js([...c.emails, m.from_email]) });
       // everything else still waiting from that address now has an owner
       run(
         `UPDATE oi_messages SET contact_id=?, match_status='matched', match_reason=?, candidates='[]'
          WHERE org_id=? AND from_email=? AND match_status != 'matched'`,
-        c.id, `Same sender as an email ${ctx.userName} filed.`, ctx.orgId, m.from_email,
+        c.id, `${SWEPT} ${ctx.userName} chose a person for.`, ctx.orgId, m.from_email,
       );
     }
     audit(ctx, 'one_inbox', m.id, 'filed', null, { contact: c.id, remember });
@@ -213,11 +217,25 @@ export function fileTo(ctx: Ctx, messageId: string, contactId: string, remember:
   return true;
 }
 
-export function unfile(ctx: Ctx, messageId: string): boolean {
+/** Take a person off an email. `forget` is the Undo of a filing that taught
+ * the system a new address: the address comes back off that person, and the
+ * other emails that were swept up with it go back to "Who is this?" too. */
+export function unfile(ctx: Ctx, messageId: string, opts: { forget?: boolean } = {}): boolean {
   const m = message(ctx.orgId, messageId);
   if (!m) return false;
-  update('oi_messages', m.id, { contact_id: null, match_status: 'unsorted', match_reason: `Unfiled by ${ctx.userName}.`, filed_by: null });
-  audit(ctx, 'one_inbox', m.id, 'unfiled', { contact: m.contact_id }, null);
+  tx(() => {
+    update('oi_messages', m.id, { contact_id: null, match_status: 'unsorted', match_reason: `Marked as the wrong person by ${ctx.userName}.`, filed_by: null });
+    const c = opts.forget && m.contact_id ? contact(ctx.orgId, m.contact_id) : null;
+    if (c && m.from_email && c.emails.includes(m.from_email)) {
+      update('oi_contacts', c.id, { emails: js(c.emails.filter((e) => e !== m.from_email)) });
+      run(
+        `UPDATE oi_messages SET contact_id=NULL, match_status='unsorted', match_reason='The sender is not on the contact list and the email does not say who they are.'
+         WHERE org_id=? AND contact_id=? AND from_email=? AND filed_by IS NULL AND match_reason LIKE ?`,
+        ctx.orgId, c.id, m.from_email, `${SWEPT}%`,
+      );
+    }
+    audit(ctx, 'one_inbox', m.id, 'unfiled', { contact: m.contact_id }, null);
+  });
   return true;
 }
 
@@ -225,7 +243,7 @@ export function setDone(ctx: Ctx, messageId: string, done: boolean): boolean {
   const m = message(ctx.orgId, messageId);
   if (!m) return false;
   update('oi_messages', m.id, done
-    ? { status: 'done', done_by: ctx.userId, done_at: nowIso() }
+    ? { status: 'done', done_by: ctx.userId, done_at: orgNow(ctx).toISOString() }
     : { status: 'open', done_by: null, done_at: null });
   return true;
 }
@@ -237,6 +255,175 @@ export function addContact(ctx: Ctx, row: RosterRow): string {
     property: row.property, unit: row.unit, kind: row.kind, source: 'manual', is_sample: 0, created_at: nowIso(),
   });
   return cid;
+}
+
+const cleanRow = (row: RosterRow): RosterRow => ({
+  name: row.name.trim().slice(0, 120),
+  emails: [...new Set(row.emails.map((e) => e.trim().toLowerCase()).filter(Boolean))].slice(0, 12),
+  phones: [...new Set(row.phones.filter(Boolean))].slice(0, 6),
+  property: row.property.trim().slice(0, 120),
+  unit: row.unit.trim().slice(0, 40),
+  kind: row.kind,
+});
+
+/** Correct a person on the list. Returns false when they are not this
+ * organization's. */
+export function updateContact(ctx: Ctx, contactId: string, row: RosterRow): boolean {
+  const c = contact(ctx.orgId, contactId);
+  const r = cleanRow(row);
+  if (!c || !r.name) return false;
+  update('oi_contacts', c.id, { name: r.name, emails: js(r.emails), phones: js(r.phones), property: r.property, unit: r.unit, kind: r.kind });
+  audit(ctx, 'one_inbox', c.id, 'contact_updated', { name: c.name, property: c.property, unit: c.unit }, { name: r.name, property: r.property, unit: r.unit });
+  return true;
+}
+
+/** Take a person off the list. Their emails are kept and go back to "Who is
+ * this?", the same as when a re-upload drops them. */
+export function removeContact(ctx: Ctx, contactId: string): { name: string; unfiled: number } | null {
+  const c = contact(ctx.orgId, contactId);
+  if (!c) return null;
+  return tx(() => {
+    const unfiled = run(
+      `UPDATE oi_messages SET contact_id=NULL, match_status='unsorted', filed_by=NULL, match_reason='The person this was filed to is no longer on the contact list.' WHERE org_id=? AND contact_id=?`,
+      ctx.orgId, c.id).changes;
+    run('DELETE FROM oi_contacts WHERE id=? AND org_id=?', c.id, ctx.orgId);
+    audit(ctx, 'one_inbox', c.id, 'contact_removed', { name: c.name, property: c.property, unit: c.unit }, null);
+    return { name: c.name, unfiled: Number(unfiled) };
+  });
+}
+
+/** Open emails per person, for the People page. */
+export function openByContact(orgId: string): Map<string, number> {
+  return new Map(q<{ contact_id: string; n: number }>(
+    `SELECT contact_id, COUNT(*) AS n FROM oi_messages WHERE org_id=? AND status='open' AND contact_id IS NOT NULL GROUP BY contact_id`, orgId,
+  ).map((r) => [r.contact_id, r.n]));
+}
+
+// ---------- the list: one WHERE and one ORDER BY ----------
+
+/** `all` is what a search uses when no tab was picked: open and done together. */
+export type View = 'open' | 'urgent' | 'needs_filing' | 'done' | 'all';
+export const CATEGORIES: Category[] = ['repair', 'payment', 'agency', 'owner', 'leasing', 'other'];
+
+export interface ListFilter {
+  view: View;
+  /** free text: name, unit, building, subject, address or words in the email */
+  q: string;
+  /** a building name, as written on the contact list */
+  property: string;
+  category: Category | '';
+  /** one person on the list (their id) */
+  person: string;
+}
+
+export const PAGE_SIZE = 100;
+
+export interface ListRow extends MessageRow {
+  c_name: string | null;
+  c_property: string | null;
+  c_unit: string | null;
+  done_by_name: string | null;
+}
+
+const FROM = `FROM oi_messages m LEFT JOIN oi_contacts c ON c.id=m.contact_id AND c.org_id=m.org_id`;
+
+/** The list, "next email" and "3 of 10" all read through this, so the email
+ * the screen advances to is always the one the list shows next. Every query
+ * starts from the organization. */
+function listWhere(orgId: string, f: ListFilter): { where: string; params: (string | number)[]; order: string } {
+  let where = 'm.org_id=?';
+  const params: (string | number)[] = [orgId];
+  if (f.view === 'needs_filing') where += ` AND m.status='open' AND m.match_status != 'matched'`;
+  else if (f.view === 'urgent') where += ` AND m.status='open' AND m.urgency='urgent'`;
+  else if (f.view === 'done') where += ` AND m.status='done'`;
+  else if (f.view === 'open') where += ` AND m.status='open'`;
+  const text = f.q.trim().toLowerCase();
+  if (text) {
+    const like = `%${text.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
+    const cols = ['m.subject', 'm.body', 'm.from_email', 'm.from_name', 'c.name', 'c.unit', 'c.property'];
+    where += ` AND (${cols.map((col) => `LOWER(COALESCE(${col}, '')) LIKE ? ESCAPE '\\'`).join(' OR ')})`;
+    for (let i = 0; i < cols.length; i++) params.push(like);
+  }
+  if (f.property) { where += ' AND c.property=?'; params.push(f.property); }
+  if (f.category) { where += ' AND m.category=?'; params.push(f.category); }
+  if (f.person) { where += ' AND m.contact_id=?'; params.push(f.person); }
+  // urgent first while there is work to do; finished mail by when it was finished
+  const order = f.view === 'done'
+    ? 'COALESCE(m.done_at, m.received_at) DESC, m.id DESC'
+    : `(m.status='open' AND m.urgency='urgent') DESC, m.received_at DESC, m.id DESC`;
+  return { where, params, order };
+}
+
+export function listMessages(orgId: string, f: ListFilter, page = 1): { rows: ListRow[]; total: number; page: number; pages: number } {
+  const { where, params, order } = listWhere(orgId, f);
+  const total = val<number>(`SELECT COUNT(*) ${FROM} WHERE ${where}`, ...params) || 0;
+  const pages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const at = Math.min(Math.max(1, Math.floor(page) || 1), pages);
+  const rows = q<ListRow>(
+    `SELECT m.*, c.name AS c_name, c.property AS c_property, c.unit AS c_unit,
+            (SELECT u.name FROM users u WHERE u.id=m.done_by AND u.org_id=m.org_id) AS done_by_name
+     ${FROM} WHERE ${where} ORDER BY ${order} LIMIT ? OFFSET ?`,
+    ...params, PAGE_SIZE, (at - 1) * PAGE_SIZE);
+  return { rows, total, page: at, pages };
+}
+
+/** Where an email sits in a view: its position, and the ones either side. */
+export function neighbors(orgId: string, f: ListFilter, messageId: string): { index: number; total: number; prev: string | null; next: string | null } {
+  const { where, params, order } = listWhere(orgId, f);
+  const ids = q<{ id: string }>(`SELECT m.id ${FROM} WHERE ${where} ORDER BY ${order} LIMIT 5000`, ...params).map((r) => r.id);
+  const i = ids.indexOf(messageId);
+  return { index: i, total: ids.length, prev: i > 0 ? ids[i - 1]! : null, next: i >= 0 && i < ids.length - 1 ? ids[i + 1]! : null };
+}
+
+/** The email to show once this one leaves the view: the next one down, or the
+ * one above when it was the last. Ask BEFORE changing the email. */
+export function nextInView(orgId: string, f: ListFilter, messageId: string): string | null {
+  const n = neighbors(orgId, f, messageId);
+  return n.next || n.prev;
+}
+
+/** Building names on the contact list, for the list filter. */
+export function properties(orgId: string): string[] {
+  return q<{ property: string }>(`SELECT DISTINCT property FROM oi_contacts WHERE org_id=? AND property != '' ORDER BY property`, orgId).map((r) => r.property);
+}
+
+// ---------- clocks ----------
+
+/** "Now" for this organization. A live organization is on the real calendar.
+ * A demo organization has its own business date, so its sample mail is dated
+ * on that day (at the present time of day) and reads as "20 min ago" instead
+ * of months in the future. */
+export function orgNow(ctx: { businessDate?: string }): Date {
+  const real = new Date();
+  const d = ctx.businessDate;
+  if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d) || d === real.toISOString().slice(0, 10)) return real;
+  const at = new Date(`${d}T${real.toISOString().slice(11)}`);
+  return Number.isNaN(at.getTime()) ? real : at;
+}
+
+/** Whole business days (Monday to Friday) that have passed since `since`,
+ * not counting the day it happened. Friday evening to Monday morning is one:
+ * a quiet weekend is not a broken forwarding rule. */
+export function businessDaysSince(since: string | Date, now: Date = new Date()): number {
+  const from = new Date(since);
+  if (Number.isNaN(from.getTime()) || from >= now) return 0;
+  const day = new Date(Date.UTC(from.getUTCFullYear(), from.getUTCMonth(), from.getUTCDate()));
+  const end = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate());
+  let n = 0;
+  for (let i = 0; i < 400; i++) {
+    day.setUTCDate(day.getUTCDate() + 1);
+    if (day.getTime() > end) break;
+    const dow = day.getUTCDay();
+    if (dow !== 0 && dow !== 6) n++;
+  }
+  return n;
+}
+
+/** Who signs a suggested reply: the person at the keyboard, and the
+ * organization they answer for. */
+export function signerFor(ctx: Ctx): Signer {
+  const org = (q1<{ name: string }>('SELECT name FROM orgs WHERE id=?', ctx.orgId)?.name || '').trim();
+  return { name: (ctx.userName || '').trim(), org };
 }
 
 // ---------- counts + deletion ----------
@@ -302,6 +489,16 @@ export function replyDelivery(orgId: string, m: MessageRow): { status: string; e
   return r ? { status: r.status, error: r.delivery_error } : null;
 }
 
+/** The reply itself, as it sits in the Outbox, to show under the email it
+ * answers. Null once the Outbox record is gone. */
+export function sentReply(orgId: string, m: MessageRow): { subject: string; body: string; to: string; at: string; by: string | null } | null {
+  if (!m.reply_message_id) return null;
+  const r = q1<{ subject: string | null; body: string; to_addr: string; created_at: string; by_name: string | null }>(
+    `SELECT o.subject, o.body, o.to_addr, o.created_at, (SELECT u.name FROM users u WHERE u.id=o.sent_by AND u.org_id=o.org_id) AS by_name
+     FROM outbox_messages o WHERE o.id=? AND o.org_id=?`, m.reply_message_id, orgId);
+  return r ? { subject: r.subject || '', body: r.body, to: r.to_addr, at: r.created_at, by: r.by_name } : null;
+}
+
 /** Send a reply to the person who wrote. The text is the operator's own —
  * the suggestion is only a starting point — and it is escaped into simple
  * paragraphs, so nothing typed here can carry markup into someone's inbox. */
@@ -313,6 +510,8 @@ export function sendReply(ctx: Ctx, messageId: string, input: { subject: string;
   const text = String(input.text || '').replace(/\r\n/g, '\n').trim();
   if (text.length < 2) return { ok: false, error: 'Write the reply first.' };
   if (text.length > 20000) return { ok: false, error: 'That reply is too long to send.' };
+  // an older draft was signed with a placeholder; it must not reach a resident
+  if (text.includes(SIGN_PLACEHOLDER)) return { ok: false, error: `Replace ${SIGN_PLACEHOLDER} with your name before sending.` };
   const subject = String(input.subject || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 200) || `Re: ${m.subject || 'your message'}`;
   const body = text.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
   const outboxId = sendEmail(ctx, {

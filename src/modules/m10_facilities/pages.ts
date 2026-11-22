@@ -1,4 +1,5 @@
 import { html, raw, when, join } from '../../lib/html.ts';
+import { uiMode } from '../../lib/uimode.ts';
 import { redirect, notFound, badRequest, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, propFilter, canAccessProperty, can, hashPassword, tempPassword, type Ctx } from '../../lib/auth.ts';
 import { isLiveOrg } from '../../lib/sim/messaging.ts';
@@ -1111,11 +1112,15 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Vendors',
       active: '/vendors',
-      subtitle: 'Insurance certificates gate dispatch — an expired COI blocks assignment. Purchasing runs through Procure-to-Pay.',
+      subtitle: uiMode(ctx) === 'standard'
+        ? 'The contractors you call. A vendor whose insurance certificate has expired cannot be given work until it is renewed.'
+        : 'Insurance certificates gate dispatch — an expired COI blocks assignment. Purchasing runs through Procure-to-Pay.',
       actions: when(canManage, () => html`<a class="btn" href="/vendors/new">Add vendor</a>`),
       content: html`
         ${card(null, vendors.length ? tbl(
-          [{ label: 'Vendor' }, { label: 'Category' }, { label: 'Contact' }, { label: 'COI expires' }, { label: 'W-9' }, { label: 'Open WOs', num: true }],
+          [{ label: 'Vendor' }, { label: 'Category' }, { label: 'Phone and email' },
+            { label: html`<span title="Certificate of insurance (COI)">Insurance certificate expires</span>` }, { label: html`<span title="IRS form W-9, needed for the year-end 1099">W-9 tax form</span>` },
+            { label: html`<span title="Work orders not yet completed">Open repairs</span>`, num: true }],
           vendors.map((x) => {
             const expired = x.coi_expiry && x.coi_expiry < ctx.businessDate;
             const expiring = !expired && x.coi_expiry && diffDays(x.coi_expiry, ctx.businessDate) <= 30;
@@ -1123,7 +1128,10 @@ export function routes(r: Router): void {
               href: `/vendors/${x.id}`,
               cells: [
                 html`<b>${x.name}</b>${x.active ? '' : html` ${statusBadge(undefined, 'inactive')}`}`, statusBadge(undefined, String(x.category).replaceAll('_', ' ')),
-                html`<span class="small">${[x.contact_name, x.email || x.phone].filter(Boolean).join(' · ') || '—'}</span>`,
+                // the phone number is what people open this list for; it used to be one click further in
+                x.contact_name || x.phone || x.email
+                  ? html`<span class="small">${x.contact_name ? html`${x.contact_name}<br />` : ''}${x.phone ? html`<a href="tel:${String(x.phone).replace(/[^0-9+]/g, '')}">${x.phone}</a>` : ''}${x.phone && x.email ? ' · ' : ''}${x.email ? html`<a href="mailto:${x.email}">${x.email}</a>` : ''}</span>`
+                  : '—',
                 x.coi_expiry ? html`<span class="${expired ? 'neg' : ''}">${fmtDate(x.coi_expiry)} ${expired ? statusBadge('bad', 'EXPIRED') : expiring ? statusBadge('warn', 'expiring') : ''}</span>` : statusBadge('bad', 'missing'),
                 x.w9_on_file ? statusBadge('ok', 'on file') : statusBadge('warn', 'missing'),
                 x.open_wos,

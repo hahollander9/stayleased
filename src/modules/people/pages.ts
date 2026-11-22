@@ -324,6 +324,9 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Residents',
       active: '/residents',
+      // A resident is added by entering their lease; the button says so, so
+      // nobody hunts for an "add resident" form that does not exist.
+      actions: when(can(ctx, 'leases:manage'), () => html`<a class="btn" href="/leases/new">Add a resident (new lease)</a>`),
       subtitle: `${rows.length} adult${rows.length === 1 ? '' : 's'} across ${households.length} household${households.length === 1 ? '' : 's'}`
         + (owingCount ? ` · ${usd(owedTotal)} owed by ${owingCount} household${owingCount === 1 ? '' : 's'}` : ' · nothing owed')
         + (creditTotal < 0 ? ` · ${usd(-creditTotal)} held in credit` : ''),
@@ -796,7 +799,7 @@ export function routes(r: Router): void {
       active: '/leases',
       crumbs: [['Leases', '/leases'], [l.prop_name, `/properties/${l.prop_id}`]],
       subtitle: html`${statusBadge(l.status)} · ${fmtDate(l.start_date)} → ${fmtDate(l.end_date)} · ${usd(l.rent_cents)}/mo`,
-      actions: html`${leaseActions.map((fn) => fn(ctx, l))}`,
+      actions: html`${leaseActions.map((fn) => fn(ctx, l, { panel: rq.query.get('panel') || undefined }))}`,
       content: html`${tabs(tabItems)}${body}`,
     });
   });
@@ -808,7 +811,9 @@ const leaseExtraTabs: LeaseTab[] = [];
 export function registerLeaseTab(fn: LeaseTab): void {
   leaseExtraTabs.push(fn);
 }
-type LeaseAction = (ctx: Ctx, lease: any) => any;
+/** `opts.panel` names an action panel to render already open — a link such as
+ * /leases/:id?panel=payment lands on the lease with "Record payment" ready. */
+type LeaseAction = (ctx: Ctx, lease: any, opts?: { panel?: string }) => any;
 const leaseActions: LeaseAction[] = [];
 export function registerLeaseAction(fn: LeaseAction): void {
   leaseActions.push(fn);

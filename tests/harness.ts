@@ -30,6 +30,15 @@ export function fixtureTwoOrgs(): TwoOrgs {
   if (existing) {
     const orgA = existing.id;
     const orgB = q1<{ id: string }>('SELECT id FROM orgs WHERE slug=?', 'iso-b')!.id;
+    // The API keys only exist in the memory of the process that made the
+    // fixture. Whichever suite runs first creates it, so any later one mints
+    // its own key rather than depending on file order.
+    for (const [g, org] of [['__keyA', orgA], ['__keyB', orgB]] as const) {
+      if ((globalThis as any)[g]) continue;
+      const key = 'ok_' + token(24);
+      insert('api_keys', { id: id('key'), org_id: org, name: 'test', prefix: key.slice(0, 10), key_hash: createHash('sha256').update(key).digest('hex'), active: 1, created_at: nowIso() });
+      (globalThis as any)[g] = key;
+    }
     return {
       orgA, orgB,
       propA: q1<{ id: string }>('SELECT id FROM properties WHERE org_id=?', orgA)!.id,

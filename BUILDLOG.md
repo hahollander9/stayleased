@@ -2614,3 +2614,56 @@ meaning of code that was written when nothing left the building.
   `tests/fxm_leases.test.ts` (6), `tests/fxm_inbox.test.ts` (8). 809 unit tests passing.
 - `src/ui/parts/*.css` are appended to `theme.css` when served, so a feature's styles can be
   worked on without colliding in the base sheet.
+
+## 2026-11-22 — Findable, One Inbox as a daily tool, and one palette
+
+Asked for: "it may be a little hard to find things… more idiot proof but not over-simplified",
+"polish One Inbox completely", and "the best colour palette for the whole site". Three audits
+(each looked at the running product at 1440 and 390, light and dark), then three builders on
+disjoint files.
+
+**Findability** — the audit ran eleven everyday tasks as a new office manager. Search returned
+nothing for "payment", "late", "notice", "import", "email", "bills", "sent"; Standard mode had
+no menu path to notices, the approval queue, Reports or Export; sent mail was "Outbox" under
+the gear at `/dev/messages`; `/settings`, `/outbox`, `/payments`, `/help` were bare 404s.
+- **Find anything**: the search box matches the Standard label, the Advanced label and a
+  central keyword map (`FIND_WORDS` in `src/ui/ui.ts`), plus places that are in no menu
+  (`EXTRA_DESTS`). Nineteen everyday queries are pinned to a sensible first hit.
+- **All pages** (`GET /all-pages`, `src/modules/m25_find/`): generated from the nav registry so
+  it cannot drift; plain headings, one line each, a no-script filter, a tag on Advanced-only
+  pages. Linked from the gear, the drawer, every Standard dropdown and the signed-in 404.
+- **Menus**: Standard gains Send a notice, Waiting for your OK, Sent messages, Reports; the
+  gear gains Connections and Export your data. Nothing left Advanced. The mobile drawer and
+  the desktop bar render from one model. Tab titles follow the Standard label; pages outside
+  the current menu get a fallback breadcrumb.
+- **Sent messages**: the Outbox is at `/outbox` (`/dev/messages` still answers), outbound
+  only by default, template code names only in Advanced.
+- **Record a payment**: `/receivables/payment` picks a household and opens that lease's
+  payment panel; buttons on Who owes me, Seriously behind and Home.
+- **Connections** leads with six plain lines (Email, Text messages, Bank feed, Resident
+  payments, Listings, AI); server detail is collapsed. 23 alias redirects for guessed URLs.
+- Not done, by choice: Home and `/ai` keep different button words where they mean different
+  things; the Setup hub's upload forms were not reordered.
+
+**One Inbox** — verdict was "honest and calm, but a prototype of a triage tool".
+- The loop carries its view: Mark done goes to the next email, with Undo; Previous / "3 of
+  10" / Next; "Send and mark done". Search, building and kind filters; honest paging.
+- Rows are a fixed grid so names line up; no pill for the normal case, amber for "Unknown
+  sender" / "2 possible people", red only for Urgent; relative age.
+- One vocabulary ("Who is this?"), an identity block with phones, re-filing folded away when
+  already right, type-to-find instead of a long select, a reply path for unknown senders,
+  drafts signed with the user and company (never "[Your name]"), a composer that keeps what
+  was typed, a People page, a three-step first run, keyboard keys (j/k/e/r, /), and the 390px
+  defects fixed. Styles live in `src/ui/parts/oneinbox.css`.
+
+**Palette — "Evergreen on warm paper"** (DECISIONS #136). Brand moves from emerald `#059669`
+to pine `#0A6B4E` (dark: fill `#0E7557`, links/focus `#5CCBA2`); one warm neutral family for
+app and marketing; paid / due / late are leaf green, ochre and brick red, deliberately off the
+brand hue; steel blue is info only; fills are flat. Every token name is kept; every literal in
+`theme.css` now goes through a token; charts use `ramp()` / `--series-n`. Measured contrast on
+the shipped values: lowest body-text pair 4.61 (light), 5.06 (dark); lowest UI pair 3.19.
+og-image and favicon regenerated. **Owed**: the marketing hero screenshots
+(`src/ui/mk-assets/*.png`) are captures of the old palette and need re-shooting.
+
+Tests: 832 unit; new `tests/find_pages.test.ts`, `tests/oi_*.test.ts`. The shared two-org
+fixture no longer depends on which suite creates it first.

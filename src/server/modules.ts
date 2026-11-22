@@ -36,6 +36,7 @@ import * as m21 from '../modules/m21_home/pages.ts'; // simple mode: the five-an
 import * as m22 from '../modules/m22_weekly/pages.ts'; // weekly cash & collections action report, alongside AppFolio
 import * as m23 from '../modules/m23_oneinbox/pages.ts'; // One Inbox: a forwarded shared mailbox, matched to people and sorted
 import * as m24 from '../modules/m24_placement/pages.ts'; // placement scorecard: tenant outcomes by leasing agent / lead source
+import * as m25 from '../modules/m25_find/pages.ts'; // /all-pages index + redirects for the URLs people type
 import * as setup from '../modules/setup/pages.ts'; // M2.5: setup hub, property wizard, CSV Migration Center
 import * as onboarding from '../modules/setup/onboarding.ts'; // working model: guided go-live checklist
 import * as importHub from '../modules/setup/import.ts'; // working model: universal Import Hub
@@ -49,6 +50,7 @@ import '../modules/m19_scoring/service.ts'; // registers score_delinquency job (
 /** Phase modules mount here as they are built (Phase 1+). Keeping the list in
  * one place makes the build order visible. */
 export function registerModules(r: Router): void {
+  m25.routes(r); // first: its exact-path aliases (/residents/new) must win over :id routes
   emailRail.routes(r); // /webhooks/email + the Connections test send
   orgExport.routes(r); // full data export (before m1's own /admin/* so nothing shadows it)
   m2.routes(r); // Phase 1: portfolio & units + dashboards

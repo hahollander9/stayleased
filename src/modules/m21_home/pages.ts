@@ -143,6 +143,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
   const needsOk = drafts.length + (money?.total || 0);
   const emptyLost = empty.reduce((s, u) => s + (u.rentLostCents || 0), 0);
   const canDecideAi = can(ctx, 'ai:approve');
+  const canRecordPay = can(ctx, 'payments:record');
 
   // A company that has not brought a building in yet has nothing to count, and
   // five boxes of $0.00 read as a product that is broken rather than one that
@@ -167,6 +168,11 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
 
       <div id="needs-ok">
       ${card(html`Needs your OK${when(needsOk, () => html` <span class="badge warn">${needsOk}</span>`)}`, html`
+        ${when(needsOk, () => html`<p class="sm-note sm-ok-split">
+          ${drafts.length ? html`<a href="/ai">${drafts.length} ${drafts.length === 1 ? 'message' : 'messages'} drafted for you</a>` : ''}
+          ${drafts.length && money?.total ? ' \u00b7 ' : ''}
+          ${money?.total ? html`<a href="/approvals">${money.total} ${money.total === 1 ? 'bill or spending request' : 'bills and spending requests'}</a>` : ''}
+        </p>`)}
         ${needsOk
           ? html`
             ${drafts.slice(0, 4).map((d) => html`<div class="sm-ok-item">
@@ -257,7 +263,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
         <div class="sm-big ${owed.total > 0 ? 'warn' : ''}">${usd(owed.total)}<span class="sm-big-note">across ${owed.households} resident${owed.households === 1 ? '' : 's'}</span></div>
         ${owed.households
           ? tbl(
-              [{ label: 'Resident' }, { label: 'Unit' }, { label: 'Owes', num: true }, { label: 'Oldest unpaid' }],
+              [{ label: 'Resident' }, { label: 'Unit' }, { label: 'Owes', num: true }, { label: 'Oldest unpaid' }, ...(canRecordPay ? [{ label: '', nosort: true }] : [])],
               owed.top.map((r) => ({
                 href: `/leases/${r.lease_id}`,
                 cells: [
@@ -265,6 +271,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
                   r.unit_number,
                   html`<b>${usd(r.balance)}</b>`,
                   r.oldest_due ? html`${fmtDate(r.oldest_due)}<span class="sub">${Math.max(0, Math.round((new Date(ctx.businessDate).getTime() - new Date(r.oldest_due).getTime()) / 86400000))} days</span>` : '—',
+                  ...(canRecordPay ? [html`<a class="small" href="/leases/${r.lease_id}?panel=payment">Record payment</a>`] : []),
                 ],
               })),
               { empty: '', sort: false },
@@ -280,7 +287,7 @@ export function homeScreen(rq: Rq): ReturnType<typeof shell> {
                 Adding up every resident's balance comes to ${usd(owed.subledger)}; your books say
                 ${usd(owed.glReceivable)}. That gap is worth looking into before it reaches a tax return —
                 <a href="/gl">open the full accounts</a>.</span>`}
-        </p>`)}
+        </p>`, { actions: canRecordPay ? html`<a class="btn btn-sm" href="/receivables/payment">Record a payment</a>` : undefined })}
 
       <div id="empty-units"></div>
       ${card(html`Units costing you money${when(empty.length, () => html` <span class="badge warn">${empty.length} empty</span>`)}`, html`

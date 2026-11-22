@@ -4,7 +4,7 @@
  * forwards a shared mailbox (maintenance@, leasing@, agencies@) to their
  * StayLeased address; each message is matched to a person on the contact list
  * they uploaded, sorted by kind and urgency, and given a suggested reply for a
- * human to send from their own email. Nothing is sent from here.
+ * human to edit, then send from here or from their own email.
  *
  * Everything in this file is deterministic and pure (no database, no LLM), so
  * the rule that matters most can be tested exhaustively:
@@ -266,19 +266,43 @@ export function classify(mail: MailIn, senderKind: ContactKind | null): { catego
 
 // ---------- suggested replies ----------
 
-/** A suggested reply for staff to copy into their own email — or null when
- * nobody has been identified, because a reply needs a known recipient.
+/** Who signs a suggested reply: the person at the keyboard and the company
+ * they answer for. A draft never carries a placeholder to fill in, because a
+ * placeholder that is not filled in goes to a resident. */
+export interface Signer { name: string; org: string }
+
+/** The text an older draft was signed with. `sendReply` refuses a message that
+ * still carries it. */
+export const SIGN_PLACEHOLDER = '[Your name]';
+
+function signOff(signer?: Signer | null): string {
+  const lines = [signer?.name?.trim(), signer?.org?.trim()].filter(Boolean);
+  return `\n\nThank you,\n${lines.length ? lines.join('\n') : 'The management office'}`;
+}
+
+/** A suggested reply for staff to edit and send.
  *
  * The wording promises a response, never an outcome: no repair date, no fee
  * waiver, no statement about what is owed. Those are the operator's calls, and
  * in a tenant-protective jurisdiction a careless written promise is a
- * liability. Staff edit before sending. */
-export function suggestReply(category: Category, urgency: Urgency, contact: Contact | null): string | null {
-  if (!contact) return null;
+ * liability. Staff edit before sending.
+ *
+ * When nobody has been identified the draft asks for exactly what is missing
+ * (name, building, unit, phone) and says nothing about any household, so it is
+ * safe to send to an address nobody recognises. An urgent one also says that
+ * someone is being contacted and keeps the 911 line: the email where minutes
+ * matter is the one that most needs a reply path. */
+export function suggestReply(category: Category, urgency: Urgency, contact: Contact | null, signer?: Signer | null): string {
+  const sign = signOff(signer);
+  if (!contact) {
+    const ask = 'please reply with your name, your building and unit number, and a phone number where we can reach you';
+    return urgency === 'urgent'
+      ? `Hello,\n\nThank you for telling us right away. We are contacting someone about this now. So we can send help to the right place, ${ask}.\n\nIf anyone is in danger (fire, gas smell, carbon monoxide alarm), please leave the unit and call 911 first.${sign}`
+      : `Hello,\n\nThank you for your message. So we can help quickly, ${ask}.${sign}`;
+  }
   const first = contact.kind === 'tenant' ? contact.name.trim().split(/\s+/)[0] || 'there' : contact.name.trim() || 'there';
   const place = [contact.property, contact.unit && contact.unit.toLowerCase() !== 'main' ? `Unit ${contact.unit}` : ''].filter(Boolean).join(', ');
   const at = place ? ` for ${place}` : '';
-  const sign = '\n\nThank you,\n[Your name]';
   switch (category) {
     case 'repair':
       return urgency === 'urgent'

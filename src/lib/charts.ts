@@ -3,15 +3,44 @@ import { html, raw, esc, type Raw } from './html.ts';
 /** Server-rendered SVG charts (environment fallback for Recharts, DECISIONS.md
  * #6). Consistent with the design system; zero client JS. */
 
-// Led by the brand's emerald, then hues far enough apart to tell five series
-// from each other in both themes. The old list opened on blue, so every chart
-// on an emerald product was a blue chart.
-export const PALETTE = ['#10b981', '#0ea5e9', '#f59e0b', '#8b5cf6', '#f43f5e', '#14b8a6', '#64748b', '#84cc16'];
+// Every colour here is a custom property from src/ui/theme.css with the light
+// value as its fallback, so a chart follows the theme and still prints, and a
+// chart rendered where the stylesheet is absent keeps the light palette.
+//
+// Categorical series: led by the brand green, then hues far enough apart to
+// tell six series from each other. One list, at least 3:1 on the card surface
+// in both themes.
+export const PALETTE = [
+  'var(--series-1, #0E8A63)', 'var(--series-2, #3A7BD5)', 'var(--series-3, #C27C0E)',
+  'var(--series-4, #7C5CD6)', 'var(--series-5, #D1456A)', 'var(--series-6, #64748B)',
+];
 
+// A status drawn as a MARK (bar, arc, line). These are mid-tones chosen to hold
+// 3:1 on both surfaces; status as TEXT uses --ok / --warn / --bad instead.
 const TONE: Record<string, string> = {
-  ok: '#10b981', warn: '#f59e0b', bad: '#ef4444', info: '#0ea5e9', accent: '#10b981',
-  muted: '#71809a', violet: '#a78bfa',
+  ok: 'var(--mark-ok, #2E9457)', warn: 'var(--mark-warn, #C27C0E)', bad: 'var(--mark-bad, #C8372D)',
+  info: 'var(--mark-info, #3A7BD5)', accent: 'var(--mark-accent, #0E8A63)',
+  muted: 'var(--line-strong, #7B8079)', violet: 'var(--series-4, #7C5CD6)',
 };
+
+/** Sequential evergreen ramp, step 1 (least) to 6 (most). "More" is always the
+ * step furthest from the surface, so the lightness order flips between themes;
+ * the tokens carry that, and `rampInk` is the label colour that passes on the
+ * same step (ink on the pale steps, white or the page colour on the deep ones). */
+const RAMP_FALLBACK = ['#D5EBDF', '#A6D5BF', '#6FB898', '#3A9873', '#157553', '#0A4F3A'];
+const RAMP_INK_FALLBACK = ['#15201B', '#15201B', '#15201B', '#15201B', '#FFFFFF', '#FFFFFF'];
+const clampStep = (n: number): number => Math.max(1, Math.min(6, Math.round(n)));
+export function ramp(step: number): string {
+  const n = clampStep(step);
+  return `var(--ramp-${n}, ${RAMP_FALLBACK[n - 1]})`;
+}
+export function rampInk(step: number): string {
+  const n = clampStep(step);
+  return `var(--ramp-ink-${n}, ${RAMP_INK_FALLBACK[n - 1]})`;
+}
+/** Funnel stages run most → least, so stage 0 takes the deepest step. Steps 1
+ * is left out: it is too close to the surface to stand as a band on its own. */
+const stageStep = (i: number): number => Math.max(2, 6 - i);
 export function toneColor(t: string): string {
   return TONE[t] || PALETTE[0]!;
 }
@@ -124,14 +153,13 @@ export function sparkline(points: number[], opts?: { tone?: string; w?: number; 
 
 export function funnel(stages: { label: string; value: number }[]): Raw {
   const max = Math.max(...stages.map((s) => s.value), 1);
-  const shades = ['#60a5fa', '#4a86e8', '#3b6bc4', '#2c4f95', '#1d3461'];
   return html`<div class="chart">${stages.map((s, i) => {
     const pct = Math.max(2, (s.value / max) * 100);
     const conv = i > 0 && stages[i - 1]!.value > 0 ? Math.round((s.value / stages[i - 1]!.value) * 100) : null;
-    const fg = i === 0 ? '#0b1526' : '#eef2fa';
+    const fg = rampInk(stageStep(i));
     return html`<div style="display:flex;align-items:center;gap:8px;margin:5px 0">
       <div style="width:110px;flex:none;font-size:12px;color:var(--ink-2)">${s.label}</div>
-      <div style="flex:1"><div style="width:${pct.toFixed(1)}%;background:${raw(shades[Math.min(i, shades.length - 1)]!)};height:20px;border-radius:5px;display:flex;align-items:center;padding:0 7px;color:${raw(fg)};font-size:11.5px;font-weight:700;min-width:26px">${s.value}</div></div>
+      <div style="flex:1"><div style="width:${pct.toFixed(1)}%;background:${raw(ramp(stageStep(i)))};height:20px;border-radius:5px;display:flex;align-items:center;padding:0 7px;color:${raw(fg)};font-size:11.5px;font-weight:700;min-width:26px">${s.value}</div></div>
       <div style="width:52px;flex:none;font-size:11px;color:var(--muted)">${conv !== null ? `${conv}%` : ''}</div>
     </div>`;
   })}</div>`;
@@ -140,13 +168,13 @@ export function funnel(stages: { label: string; value: number }[]): Raw {
 // ===== Entrata-BI-grade charts (bar/area/funnel/split) =====
 
 /** Entrata-BI-grade inline-SVG charts. Zero dependencies, server-rendered.
- * Palette: the signature-blue family (like Entrata BI's periwinkle range) so
- * every chart reads as one system. All charts scale to card width via
+ * Palette: the evergreen ramp, so every chart reads as one system. All charts scale to card width via
  * viewBox + width:100% (see .chart CSS). */
 
-const BLUE = '#60a5fa';
-const BLUE_MID = '#3b6bc4';
-const BLUE_SOFT = '#1d3461';
+// one hue, three weights: the strong bar, the ordinary bar, and the line
+const BAR_STRONG = ramp(5);
+const BAR = ramp(4);
+const LINE = TONE.accent!;
 const GRID = 'var(--chart-grid, #eef0f3)';
 const AXIS = 'var(--chart-axis, #98a1ae)';
 
@@ -190,7 +218,7 @@ export function barChart(labels: string[], values: number[], opts?: { kind?: 'nu
     const yy = y(v);
     const hh = Math.max(padT + ih - yy, 1.5);
     const last = i === values.length - 1;
-    const fill = opts?.highlightLast ? (last ? BLUE : BLUE_MID) : BLUE_MID;
+    const fill = opts?.highlightLast ? (last ? BAR_STRONG : BAR) : BAR;
     bars += `<rect class="ct" data-tip="${esc(labels[i] || '')} · ${esc(tickLabel(v, kind))}" x="${(cx - bw / 2).toFixed(1)}" y="${yy.toFixed(1)}" width="${bw.toFixed(1)}" height="${hh.toFixed(1)}" rx="3" fill="${fill}"><title>${esc(labels[i] || '')}: ${esc(tickLabel(v, kind))}</title></rect>`;
     const every = n > 8 ? 2 : 1;
     if (i % every === 0) bars += `<text x="${cx}" y="${H - 8}" text-anchor="middle" font-size="10" fill="${AXIS}">${esc(labels[i] || '')}</text>`;
@@ -208,7 +236,7 @@ export function areaChart(labels: string[], values: number[], opts?: { kind?: 'n
   const W = 640;
   const padL = 42, padR = 10, padT = 12, padB = 26;
   const iw = W - padL - padR, ih = H - padT - padB;
-  const color = opts?.color || BLUE;
+  const color = opts?.color || LINE;
   const lo = Math.min(...values), hi = Math.max(...values);
   const span = hi - lo || 1;
   const vmin = Math.max(0, lo - span * 0.25);
@@ -258,7 +286,6 @@ export function funnelChart(stages: { label: string; value: number }[], opts?: {
   const max = Math.max(...stages.map((s) => s.value), 1);
   const minW = 0.22, maxW = 0.94;
   const widthFor = (v: number): number => W * (minW + (maxW - minW) * (v / max));
-  const shades = [BLUE, '#4a86e8', BLUE_MID, '#2c4f95', BLUE_SOFT];
   let out = '';
   stages.forEach((s, i) => {
     const wTop = widthFor(s.value);
@@ -267,8 +294,8 @@ export function funnelChart(stages: { label: string; value: number }[], opts?: {
     const yTop = 5 + i * (bandH + gap);
     const xTL = (W - wTop) / 2, xTR = xTL + wTop;
     const xBL = (W - wBot) / 2, xBR = xBL + wBot;
-    const fill = shades[Math.min(i, shades.length - 1)];
-    const ink = i <= 0 ? '#0b1526' : '#eef2fa';
+    const fill = ramp(stageStep(i));
+    const ink = rampInk(stageStep(i));
     const share = max ? Math.round((s.value / max) * 100) : 0;
     out += `<path class="ct" data-tip="${esc(s.label)} · ${s.value.toLocaleString('en-US')}${i > 0 ? ` (${share}% of top)` : ''}" d="M ${xTL.toFixed(1)} ${yTop} L ${xTR.toFixed(1)} ${yTop} L ${xBR.toFixed(1)} ${yTop + bandH} L ${xBL.toFixed(1)} ${yTop + bandH} Z" fill="${fill}"><title>${esc(s.label)}: ${s.value.toLocaleString('en-US')}</title></path>`;
     out += `<text x="${W / 2}" y="${yTop + bandH / 2 - 3}" text-anchor="middle" font-size="12" font-weight="600" fill="${ink}">${esc(s.label)}</text>`;
@@ -281,7 +308,8 @@ export function funnelChart(stages: { label: string; value: number }[], opts?: {
 export function splitBar(parts: { label: string; value: number }[], opts?: { kind?: 'num' | 'pct' | 'usd'; label?: string }): Raw {
   const W = 640, H = 64, barH = 26;
   const total = parts.reduce((s, p) => s + p.value, 0) || 1;
-  const colors = [BLUE, BLUE_MID, '#8caef0', BLUE_SOFT];
+  // neighbours two steps apart, so adjacent segments separate without an outline
+  const colors = [ramp(6), ramp(4), ramp(2), ramp(5)];
   let x = 0, segs = '', legend = '';
   parts.forEach((p, i) => {
     const w = (p.value / total) * W;

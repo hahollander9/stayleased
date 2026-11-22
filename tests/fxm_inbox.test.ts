@@ -275,3 +275,55 @@ test('Mass message pages count real delivery outcomes when email is on', async (
   assert.match(list.text, /2 delivered · 1 sending · 2 not delivered · 1 saved, not delivered/);
   assert.doesNotMatch(list.text, /Email and text delivery are not connected yet/);
 });
+
+// ---------- One Inbox: the composer ----------
+
+test('One Inbox: a reply that still says [Your name] is refused, and what was typed is not lost', async () => {
+  const from = `signer-${sfx}@realdomain.com`;
+  const got = ingest(live.org, mail(from, 'Laundry room'), { via: 'manual' });
+  const ctx = ctxOf(live);
+  const before = val<number>('SELECT COUNT(*) c FROM outbox_messages WHERE org_id=?', live.org);
+  const refused = sendReply(ctx, got.id, { subject: 'Re: Laundry room', text: 'It reopens Monday.\n\nThank you,\n[Your name]' });
+  assert.equal(refused.ok, false);
+  assert.match((refused as { error: string }).error, /\[Your name\]/);
+  assert.equal(val<number>('SELECT COUNT(*) c FROM outbox_messages WHERE org_id=?', live.org), before, 'nothing was written');
+
+  // the suggestion itself never carries the placeholder; it is signed
+  const page = await get(base, `/one-inbox/m/${got.id}`, cookieLive);
+  assert.doesNotMatch(page.text, /\[Your name\]/);
+  assert.match(page.text, /Thank you,\s+User admin-on\s+Inbox on /);
+  assert.match(page.text, /Send and mark done/);
+
+  // through the form: the page comes back with the typed text in it, not a redirect that drops it
+  const typed = 'A one-of-a-kind sentence about the laundry room. [Your name]';
+  const back = await post(base, `/one-inbox/m/${got.id}/reply`, { subject: 'Re: Laundry room (edited)', text: typed }, cookieLive);
+  assert.equal(back.status, 422);
+  assert.match(back.text, /<b>Not sent\.<\/b>/);
+  assert.match(back.text, /A one-of-a-kind sentence about the laundry room\. \[Your name\]/);
+  assert.match(back.text, /value="Re: Laundry room \(edited\)"/);
+  assert.equal(message(live.org, got.id)!.replied_at, null);
+  await drain();
+  assert.equal(sent.length, 0);
+});
+
+test('One Inbox: “Send and mark done” sends, finishes the email and moves on; the sent reply shows under the email', async () => {
+  const a = ingest(live.org, mail(`first-${sfx}@realdomain.com`, 'Bike room code'), { via: 'manual' });
+  const r = await post(base, `/one-inbox/m/${a.id}/reply`, { subject: 'Re: Bike room code', text: 'The code is at the front desk.', after: 'done', view: 'open' }, cookieLive);
+  assert.ok(redirected(r));
+  assert.match(String(r.location), new RegExp(`did=done&was=${a.id}$`));
+  assert.doesNotMatch(String(r.location), new RegExp(`/one-inbox/m/${a.id}`), 'it moved on from the email it finished');
+  await drain();
+  const m = message(live.org, a.id)!;
+  assert.equal(m.status, 'done');
+  assert.ok(m.replied_at);
+  assert.equal(sent.filter((x) => x.to === `first-${sfx}@realdomain.com`).length, 1);
+
+  // the reply is on the page as part of the thread, and the composer is folded away so it is not sent twice
+  const page = await get(base, `/one-inbox/m/${a.id}`, cookieLive);
+  assert.match(page.text, /<b>Sent\.<\/b>/);
+  assert.match(page.text, /The code is at the front desk\./);
+  assert.match(page.text, /Write another reply/);
+  assert.doesNotMatch(page.text, /<textarea[^>]*id="oi-draft"[^>]*>[^<]*Thank you/, 'the second composer starts empty');
+  // another organization cannot read that reply through this page
+  assert.equal((await get(base, `/one-inbox/m/${a.id}`, cookieOther)).status, 404);
+});

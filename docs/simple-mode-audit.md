@@ -207,9 +207,37 @@ a bookkeeper searching for "trial balance" must find "trial balance".
 | Renewals pipeline | **Leases ending soon** |
 | Insurance compliance | **Renter's insurance** |
 | Units | **Units** *(kept)* |
-| Inbox | **Inbox** *(kept — already right)* |
-| Reports · Report library | **Reports** |
+| Inbox | **Inbox** *(kept — already right)*, with the menu hint "conversations with residents" |
+| One Inbox | **Shared mailbox (One Inbox)** in both modes' menus, hint "mail forwarded from your office address" |
+| Communications | **Send a notice** |
+| Outbox (was gear › Records, at `/dev/messages`) | **Sent messages**, under People › Messages and in the gear; served at `/outbox` |
+| Reports · Report library | **Reports** (under Money › Your books) |
 | My dashboard | *(advanced only)* |
+
+#### Findability pass (2026-11-22)
+
+Standard's five tabs are unchanged; what changed is that nothing a small operator does every
+week is now outside them, and anything else is one search or one page away.
+
+- **Standard gained menu paths** to Send a notice (`/comms`), Waiting for your OK (`/ai`),
+  Reports (`/reports`), Sent messages (`/outbox`), and — in the gear — Export your data and
+  Connections. Nothing left Advanced.
+- **People is three groups**: Messages (Inbox, Shared mailbox, Waiting for your OK, Send a
+  notice, Sent messages), Residents, New renters. The sub-nav row shows the active group.
+- **Every Standard dropdown ends** with "More in Advanced: … · All pages", so Standard says
+  that more exists instead of implying it does not.
+- **Find anything** (the search box) matches the Standard label, the Advanced label and a
+  list of the words people type, kept in one map (`FIND_WORDS` in `src/ui/ui.ts`), plus the
+  places that are in no menu (`EXTRA_DESTS`): Record a payment, New lease, Add a vendor,
+  Upload your data, Import history, Connections, Billing, All pages. A result is named in the
+  words of the mode the person is in.
+- **All pages** (`/all-pages`, "Everything in StayLeased") is generated from the same
+  registry, grouped Home · Money · Units · People · Repairs · Reports · Setup and your
+  company, with a one-line description each and a quiet "Advanced menus" tag.
+- **Subtitles in Standard** for Who owes me and Vendors drop the jargon ("Collections &
+  payment analytics", "COI", "Procure-to-Pay"); Who owes me lists the households first and
+  the charts second.
+- **The tab title** follows the Standard label ("Who owes me · StayLeased").
 
 ### Terms inside screens
 

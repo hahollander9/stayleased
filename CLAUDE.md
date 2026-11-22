@@ -107,6 +107,21 @@ own summary page.
   token cap (`STAYLEASED_AI_PUBLIC_DAILY_TOKEN_CAP`); `DEBUG_ERRORS` stays unset in prod;
   uploads are magic-byte sniffed; org isolation on every query (`canAccessProperty`).
 
+## Finding things, colour, and feature styles (2026-11-22)
+
+- **Find**: the search box is "Find anything". Keywords live in ONE map, `FIND_WORDS` in
+  `src/ui/ui.ts`; places in no menu go in `EXTRA_DESTS`. `/all-pages` (m25_find) is generated
+  from the nav registry. A new page needs a nav registration or an `EXTRA_DESTS` line, and
+  keywords — `tests/find_pages.test.ts` pins everyday queries to their first hit (#135).
+- **Sent messages** is `/outbox` (`/dev/messages` still answers). Aliases for guessed URLs
+  are in `src/modules/m25_find/pages.ts`, registered FIRST so they win over `/:id` routes.
+- **Palette** (#136): pine `#0A6B4E`; `--accent-strong`/`--brand`/`--grad` are fills (white
+  label only), `--accent` is for text, icons, borders, focus. No hex literals outside the
+  token blocks — use tokens, `color-mix()`, `--ramp-n`, `--series-n`, `--mark-*`.
+- **Feature styles** go in `src/ui/parts/<feature>.css`, appended to `theme.css` when served.
+- **Held mail** (#134): `sendEmail(ctx, { …, hold: true })` for anything a member of the
+  public, a bulk import or an unapproved agent action starts.
+
 ## Copy pins (grep before touching marketing copy)
 
 `e2e/homepage.test.ts` pins, currently: "Property management that does the work" ·

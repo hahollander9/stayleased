@@ -16,6 +16,7 @@ import { analyzeNewCalls, callRollup } from './analysis.ts';
 import { askStayLeased , askSmart , askPanelContext , type AskAnswer } from './ask.ts';
 import { currentThread, newThread, recall, remember } from './memory.ts';
 import { getOp } from './ops.ts';
+import { moneyApprovals, canApproveMoney } from '../m9_accounting/finops.ts';
 import { propose } from './framework.ts';
 import type { PendingAction } from './act.ts';
 import './ops_catalog.ts';   // one-shot operations: money, leasing, maintenance
@@ -89,6 +90,9 @@ export function routes(r: Router): void {
     const canConfigure = can(ctx, 'ai:configure');
     const st = llmStatus();
     const on = aiEnabled(ctx);
+    // Home counts these drafts and the money approvals as one number; each of
+    // the two lists says the other exists, so neither count looks wrong.
+    const moneyWaiting = canApproveMoney(ctx) ? moneyApprovals(ctx).total : 0;
     const brainBadge = html`<span class="badge ${st.live ? 'ok' : ''}" title="${st.live ? 'Live LLM active' : 'Deterministic demo brain'}">${st.mode} brain${st.live ? ` · ${st.model}` : ''}</span>`;
     return shell(rq, {
       title: 'AI Activity',
@@ -98,6 +102,7 @@ export function routes(r: Router): void {
         : 'Nothing is waiting. Drafts appear here before anything is sent.',
       actions: html`<a class="btn btn-ghost" href="/ai/calls">Call analysis</a><a class="btn btn-ghost" href="/ai/essentials">Content studio</a>${when(canConfigure, () => html`<form method="post" action="/ai/kill-switch" data-confirm="${on ? 'Pause ALL AI agents org-wide? Nothing will send until re-enabled.' : 'Re-enable AI agents?'}"><button class="btn ${on ? 'btn-ghost btn-quiet-danger' : ''}">${on ? 'Pause all AI' : 'Resume AI'}</button></form>`)}`,
       content: html`
+        ${when(moneyWaiting > 0, () => html`<p class="also-waiting">Also waiting for your OK: <a href="/approvals">${moneyWaiting} ${moneyWaiting === 1 ? 'bill or spending request' : 'bills and spending requests'}</a></p>`)}
         ${when(!on, () => html`<div class="callout bad"><b>AI is paused.</b> Agents keep recording proposals for the audit trail, but nothing sends and nothing runs on its own until an admin resumes.</div>`)}
         ${tabs([
           { href: '/ai', label: 'Approval queue', active: view === 'queue', count: pending.length },

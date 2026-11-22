@@ -29,19 +29,19 @@ export interface Marketing {
 }
 
 export const DEFAULT_MARKETING: Marketing = {
-  theme: '#047857',
+  theme: '#0A6B4E',
   heroTitle: 'Come home to something better',
   heroSub: 'Thoughtful floorplans, resident-first service, and a location you will love.',
   about: 'Professionally managed homes with responsive maintenance, easy online payments, and a community team that knows your name.',
   neighborhood: 'Minutes from parks, coffee, groceries and transit.',
   amenities: ['Resident lounge', 'Fitness center', '24/7 emergency maintenance', 'Online payments & requests', 'Pet friendly', 'Package alerts'],
   photos: [
-    { label: 'Community exterior', a: '#5563e8', b: '#8b5ce8' },
-    { label: 'Resident lounge', a: '#12a5a5', b: '#4653e5' },
-    { label: 'Model kitchen', a: '#e8843a', b: '#d24379' },
-    { label: 'Fitness studio', a: '#5a9e2f', b: '#12a5a5' },
-    { label: 'Pool deck', a: '#4a7ab8', b: '#6d28d9' },
-    { label: 'Courtyard', a: '#c2a416', b: '#e8843a' },
+    { label: 'Community exterior', a: '#0A6B4E', b: '#157553' },
+    { label: 'Resident lounge', a: '#157553', b: '#0A4F3A' },
+    { label: 'Model kitchen', a: '#8F5A00', b: '#A86B0A' },
+    { label: 'Fitness studio', a: '#17703A', b: '#0A6B4E' },
+    { label: 'Pool deck', a: '#2A5F9E', b: '#3A7BD5' },
+    { label: 'Courtyard', a: '#35423B', b: '#535F58' },
   ],
   sections: { gallery: true, amenities: true, neighborhood: true, floorplans: true, tour: true },
   published: true,
@@ -140,7 +140,7 @@ function siteDoc(prop: any, mk: Marketing, title: string, body: Raw, extraHead: 
     <meta name="theme-color" content="${mk.theme}" />
     <link rel="stylesheet" href="/assets/theme.css" />
     <link rel="icon" href="/assets/favicon.svg" />
-    <style>.site .hero{background:radial-gradient(700px 320px at 50% -10%, rgba(96,165,250,.18), transparent 65%),linear-gradient(160deg,#0b1120,${mk.theme}66)} .site .btn{background:${mk.theme};border-color:${mk.theme}} .site a.btn, .site a.btn:hover{color:#fff} .site a{color:${mk.theme}}</style>
+    <style>.site .hero{background:linear-gradient(160deg,#0F1512,${mk.theme}66)} .site .btn{background:${mk.theme};border-color:${mk.theme}} .site a.btn, .site a.btn:hover{color:#fff} .site a{color:${mk.theme}}</style>
     ${extraHead}
   </head><body class="site">${body}</body></html>`.s}`;
   return htmlRes(page);
@@ -189,7 +189,7 @@ export function routes(r: Router): void {
       <header class="hero">
         <h1>${mk.heroTitle}</h1>
         <p>${mk.heroSub}</p>
-        <a class="btn" style="background:#fff;color:#1b2331;border-color:#fff" href="#tour">Schedule a tour</a>
+        <a class="btn" style="background:#fff;color:#15201B;border-color:#fff" href="#tour">Schedule a tour</a>
         <a class="btn" style="margin-left:8px" href="#floorplans">${totalAvail} homes available now</a>
       </header>
       ${when(flash, () => html`<section style="padding-top:20px"><div class="flash ${flash![0]}">${flash![1]}</div></section>`)}
@@ -197,7 +197,7 @@ export function routes(r: Router): void {
       ${when(mk.sections.floorplans, () => html`<section id="floorplans">
         <h2>Floorplans & live pricing</h2>
         <div class="fp-grid">${fps.map((f) => html`<div class="card"><div class="card-body">
-          <div class="ph" style="--ph-a:${mk.theme};--ph-b:#8b5ce8;min-height:90px;margin-bottom:10px">${f.name}</div>
+          <div class="ph" style="--ph-a:${mk.theme};--ph-b:#07563E;min-height:90px;margin-bottom:10px">${f.name}</div>
           <h3 style="font-size:16px">${f.name} — ${f.beds === 0 ? 'Studio' : `${f.beds} bed`} · ${f.baths} bath</h3>
           <p class="muted">${f.sqft.toLocaleString()} sqft</p>
           <p style="font-size:17px">${f.startingAt
@@ -356,7 +356,7 @@ export function routes(r: Router): void {
           <button class="btn" style="color:#fff">Search</button>
         </form>
         <div class="fp-grid" style="margin-top:16px">${cards.map(({ p, avail, cheapest }) => html`<a class="card" href="/p/${p.slug}" style="text-decoration:none;color:inherit"><div class="card-body">
-          <div class="ph" style="--ph-a:${marketingOf(p).theme};--ph-b:#8b5ce8;min-height:110px;margin-bottom:10px">${p.name}</div>
+          <div class="ph" style="--ph-a:${marketingOf(p).theme};--ph-b:#07563E;min-height:110px;margin-bottom:10px">${p.name}</div>
           <h3 style="font-size:16px">${p.name}</h3>
           <p class="muted">${p.city}, ${p.state}</p>
           <p>${avail > 0 ? html`<b class="pos">${avail} available</b>${cheapest ? html` · from ${usd(cheapest)}` : ''}` : html`<span class="muted">Join the waitlist</span>`}</p>

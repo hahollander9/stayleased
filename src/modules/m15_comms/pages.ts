@@ -65,7 +65,11 @@ export function routes(r: Router): void {
     return shell(rq, {
       title: 'Inbox',
       active: '/inbox',
-      subtitle: 'Every email, text, call and note with a person — one thread',
+      // Two places hold mail. This line says which this one is, and where the
+      // other is, so nobody has to open both to find out.
+      subtitle: html`Conversations with residents and applicants: every email, text, call and note, one thread per person.
+        ${when(can(ctx, 'comms:view'), () => html`<span class="inbox-other">Looking for mail forwarded from your office address? <a href="/one-inbox">Shared mailbox (One Inbox)</a></span>`)}`,
+      actions: html`<a class="btn btn-ghost" href="/outbox">Sent messages</a>${when(can(ctx, 'comms:mass'), () => html` <a class="btn btn-ghost" href="/comms">Send a notice</a>`)}`,
       content: html`
         ${tabs([
           { href: '/inbox?view=needs_reply', label: 'Needs reply', active: view === 'needs_reply', count: needsReply },
@@ -442,13 +446,13 @@ export function routes(r: Router): void {
           { label: 'Skipped (opt-out / no address)', value: String(recipients.filter((x) => x.status.startsWith('skipped')).length), tone: 'warn' },
           { label: 'Deferred (quiet hours)', value: String(recipients.filter((x) => x.status === 'deferred_quiet').length) },
         ])}
-        ${when(live && !showDelivery, () => html`<div class="callout warn">Email and text delivery are not connected yet. Each message below is saved to the <a href="/dev/messages?template=mass">Outbox</a> with the resident's name and address so you can send it yourself; nothing has reached a resident.</div>`)}
+        ${when(live && !showDelivery, () => html`<div class="callout warn">Email and text delivery are not connected yet. Each message below is saved to the <a href="/outbox?template=mass">Outbox</a> with the resident's name and address so you can send it yourself; nothing has reached a resident.</div>`)}
         ${when(live && showDelivery, () => html`<div class="callout${nFailed || nSaved ? ' warn' : ''}">
           ${mailOn
             ? 'Email is delivered to residents. Each email below shows whether it was sent, is still sending, bounced or was not delivered.'
             : 'Email delivery is switched off for this organization now. Emails already handed to the mail provider keep their result below; anything written from here on is saved, not delivered.'}
-          ${when(channels.includes('sms') || recipients.some((x) => x.channel === 'sms'), () => html`Text messages are not connected yet: each text is saved to the <a href="/dev/messages?template=mass">Outbox</a> with the resident's name and number, and has not reached the resident.`)}
-          ${when(savedEmails > 0, () => html`${savedEmails} email${savedEmails === 1 ? ' was' : 's were'} saved and not sent${mailOn ? html`; open ${savedEmails === 1 ? 'it' : 'each one'} in the <a href="/dev/messages?template=mass&channel=email">Outbox</a> to send it` : ''}.`)}
+          ${when(channels.includes('sms') || recipients.some((x) => x.channel === 'sms'), () => html`Text messages are not connected yet: each text is saved to the <a href="/outbox?template=mass">Outbox</a> with the resident's name and number, and has not reached the resident.`)}
+          ${when(savedEmails > 0, () => html`${savedEmails} email${savedEmails === 1 ? ' was' : 's were'} saved and not sent${mailOn ? html`; open ${savedEmails === 1 ? 'it' : 'each one'} in the <a href="/outbox?template=mass&channel=email">Outbox</a> to send it` : ''}.`)}
           ${when(nFailed > 0, () => html`${nFailed} message${nFailed === 1 ? ' was' : 's were'} not delivered; the reason is in the last column.`)}</div>`)}
         ${card('Recipients', tbl(
           [{ label: 'Resident' }, { label: 'Unit' }, { label: 'Channel' }, { label: 'Status' }, { label: !live ? 'Reason / sent' : showDelivery ? 'Reason / written' : 'Reason / saved' }],
@@ -539,7 +543,7 @@ export function routes(r: Router): void {
         rows.map((r2) => ({
           cells: [
             html`<span class="mono small">${r2.key}</span>`, String(r2.count), fmtTs(r2.last),
-            r2.sample?.entity ? html`<a href="/dev/messages?template=${r2.key}" class="small">${r2.sample.entity} · ${String(r2.sample.entity_id || '').slice(-6)}</a>` : '—',
+            r2.sample?.entity ? html`<a href="/outbox?template=${r2.key}" class="small">${r2.sample.entity} · ${String(r2.sample.entity_id || '').slice(-6)}</a>` : '—',
             TEMPLATES[r2.key]
               ? html`<form method="post" action="/comms/automations/toggle" style="display:inline">
                   <input type="hidden" name="key" value="${r2.key}">
