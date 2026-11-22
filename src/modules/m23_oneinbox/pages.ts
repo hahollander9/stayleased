@@ -1,6 +1,7 @@
 import { html, raw, when, join, type Child, type Raw } from '../../lib/html.ts';
 import { notFound, redirect, type Router, type Rq, type Res } from '../../lib/http.ts';
-import { requirePerm, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
+import { deliveryNote } from '../../lib/sim/messaging.ts';
 import { q } from '../../lib/db.ts';
 import { fmtTs } from '../../lib/dates.ts';
 import { parseCsv } from '../../lib/csv.ts';
@@ -9,7 +10,7 @@ import { shell, card, tbl, field, input, select, textarea, checkbox, tabs, empty
 import { inboundToken } from '../m3_crm/ils_email.ts';
 import { parseRoster, suggestReply, emailsIn, phonesIn, type Category, type ContactKind, type RosterParse } from './engine.ts';
 import {
-  contacts, counts, ingest, message, fileTo, unfile, setDone, replaceRoster, addContact, purge,
+  contacts, counts, ingest, message, fileTo, unfile, setDone, replaceRoster, addContact, purge, replyBlocker, sendReply,
   inboxAddress, lastReceivedAt, type ContactRow, type MessageRow,
 } from './service.ts';
 import { SAMPLE_ROSTER, SAMPLE_MAIL } from './sample.ts';
@@ -107,6 +108,9 @@ function messagePage(rq: Rq, m: MessageRow): Res {
   const candIds: string[] = JSON.parse(m.candidates || '[]');
   const cands = candIds.map((cid) => all.find((x) => x.id === cid)).filter((x): x is ContactRow => !!x);
   const draft = suggestReply(m.category, m.urgency, c);
+  const blocker = replyBlocker(ctx, m);
+  const canSend = !blocker && can(ctx, 'comms:send');
+  const replyHome = inboundToken() ? 'here, to One Inbox' : 'to the reply address in Settings → Communications';
   const history = c
     ? q<any>(
       `SELECT m.id, m.received_at, m.subject, m.category, m.status FROM oi_messages m JOIN oi_contacts k ON k.id=m.contact_id AND k.org_id=m.org_id
@@ -132,12 +136,25 @@ function messagePage(rq: Rq, m: MessageRow): Res {
           ${card('The email', html`
             <p class="small muted" style="margin:0 0 8px">From <b>${m.from_name || m.from_email}</b> &lt;${m.from_email}&gt;${m.mailbox ? html` · to ${m.mailbox}` : ''}${m.forwarded_by ? html` · forwarded by ${m.forwarded_by}` : ''}</p>
             <div style="white-space:pre-wrap;font-size:14px;line-height:1.55">${m.body}</div>`)}
-          ${when(draft, () => card('Suggested reply', html`
-            <p class="small muted" style="margin:0 0 8px">Copy this into your own email, edit it, and send it from there. Nothing is sent from StayLeased.</p>
-            ${textarea('draft', { value: draft!, rows: 9, id: 'oi-draft' })}
-            <div class="btn-row"><button type="button" class="btn btn-sm" data-copy="#oi-draft">Copy reply</button>
-              <a class="btn btn-sm btn-ghost" href="mailto:${m.from_email}?subject=${encodeURIComponent(`Re: ${m.subject}`)}&body=${encodeURIComponent(draft!)}">Open in my email</a></div>`))}
-          ${when(!draft, () => card('Suggested reply', html`<p class="small muted" style="margin:0">No reply is suggested until this email is filed to a person. A reply needs a known recipient.</p>`))}
+          ${when(m.replied_at, () => html`<div class="callout" style="margin:0 0 12px">A reply was sent from StayLeased on ${fmtTs(m.replied_at!, TZ)}.
+            ${when(m.reply_message_id, () => html`<a href="/dev/messages/${m.reply_message_id}">See it and its delivery status</a>.`)}</div>`)}
+          ${when(draft || canSend, () => card(canSend ? 'Reply' : 'Suggested reply', canSend
+            ? html`
+              <p class="small muted" style="margin:0 0 8px">${draft ? 'Edit the suggestion, then send.' : 'Write the reply, then send.'} It goes to <b>${m.from_email}</b> by email, and their answer comes back ${replyHome}.</p>
+              <form method="post" action="/one-inbox/m/${m.id}/reply">
+                ${field('Subject', input('subject', { value: `Re: ${m.subject || 'your message'}` }))}
+                ${field('Message', textarea('text', { value: draft || '', rows: 10, required: true, id: 'oi-draft' }))}
+                <div class="btn-row">
+                  <button class="btn" type="submit">Send reply</button>
+                  <button type="button" class="btn btn-ghost" data-copy="#oi-draft">Copy</button>
+                </div>
+              </form>`
+            : html`
+              <p class="small muted" style="margin:0 0 8px">Copy this into your own email, edit it, and send it from there. ${blocker} ${when(!m.is_sample, () => html`<a href="/setup/connections">Set up email</a>.`)}</p>
+              ${textarea('draft', { value: draft!, rows: 9, id: 'oi-draft' })}
+              <div class="btn-row"><button type="button" class="btn btn-sm" data-copy="#oi-draft">Copy reply</button>
+                <a class="btn btn-sm btn-ghost" href="mailto:${m.from_email}?subject=${encodeURIComponent(`Re: ${m.subject}`)}&body=${encodeURIComponent(draft!)}">Open in my email</a></div>`))}
+          ${when(!draft && !canSend, () => card('Suggested reply', html`<p class="small muted" style="margin:0">No reply is suggested until this email is filed to a person. A reply needs a known recipient.</p>`))}
         </div>
         <div>
           ${card('Who is this from?', html`
@@ -319,6 +336,14 @@ export function routes(r: Router): void {
     });
     fileTo(ctx, m.id, cid, true);
     return redirect(`/one-inbox/m/${m.id}`, `${name} added and this email filed to them.`);
+  });
+
+  r.post('/one-inbox/m/:id/reply', act, (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const mid = rq.params.id!;
+    const res = sendReply(ctx, mid, { subject: String(rq.body.subject || ''), text: String(rq.body.text || '') });
+    if (!res.ok) return redirect(`/one-inbox/m/${mid}`, res.error, 'err');
+    return redirect(`/one-inbox/m/${mid}`, `Reply sent. ${deliveryNote(ctx)}.`);
   });
 
   r.post('/one-inbox/m/:id/done', act, (rq) =>

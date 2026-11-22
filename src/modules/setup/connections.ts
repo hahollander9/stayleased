@@ -9,6 +9,7 @@ import { dbPath } from '../../lib/db.ts';
 import { isAbsolute } from 'node:path';
 import { shell, card, statusBadge, dl } from '../../ui/ui.ts';
 import { ilsIntakeCard } from '../m3_crm/ils_email.ts';
+import { emailRailStatus } from '../m15_comms/email_rail.ts';
 
 /** Connections — one honest page about every external rail.
  * What's live is labeled live; what's simulated says so in plain words; what
@@ -25,6 +26,7 @@ interface Rail {
 }
 
 function rails(ctx: Ctx): Rail[] {
+  const mail = emailRailStatus(ctx);
   const ai = llmStatus();
   const live = ctx.orgKind === 'live';
   return [
@@ -82,10 +84,8 @@ function rails(ctx: Ctx): Rail[] {
     },
     {
       key: 'messaging', name: 'Email & SMS delivery',
-      desc: live
-        ? 'Messages compose, thread and audit fully, but nothing reaches a real phone or inbox until a delivery provider is connected. Every message is saved in the Outbox marked “Saved — not delivered”, so staff can pass it on another way. The resident portal does not show messages yet.'
-        : 'Outbox simulator — messages are recorded and visible, not delivered externally.',
-      status: live ? 'waitlist' : 'simulated',
+      desc: live ? mail.line : 'Outbox simulator — messages are recorded and visible, not delivered externally.',
+      status: live ? (mail.state === 'live' ? 'live' : 'waitlist') : 'simulated',
     },
     {
       key: 'pms_sync', name: 'Buildium · AppFolio · Yardi live sync',
@@ -142,8 +142,10 @@ export function routes(r: Router): void {
         <div class="btn-row" style="margin-top:10px">
           ${when(rail.key === 'ai', () => html`<form method="post" action="/setup/connections/test-ai"><button class="btn" type="submit">Test connection</button></form>`)}
           ${when(rail.key === 'imports', () => html`<a class="btn" href="/setup/import">Try an import</a>`)}
+          ${when(rail.key === 'messaging' && emailRailStatus(ctx).state !== 'off', () => html`<form method="post" action="/setup/connections/test-email"><button class="btn" type="submit">Send me a test email</button></form>
+            <a class="btn btn-ghost" href="/admin/settings?section=communications">${emailRailStatus(ctx).state === 'live' ? 'Email settings' : 'Turn it on'}</a>`)}
           ${when(!!rail.href && rail.key !== 'imports', () => html`<a class="btn btn-ghost" href="${rail.href}">Open</a>`)}
-          ${when(rail.status === 'waitlist', () =>
+          ${when(rail.status === 'waitlist' && !(rail.key === 'messaging' && emailRailStatus(ctx).state !== 'off'), () =>
             requested.includes(rail.key)
               ? html`<span class="pill">Requested ✓</span>`
               : html`<form method="post" action="/setup/connections/request"><input type="hidden" name="rail" value="${rail.key}" /><button class="btn btn-ghost" type="submit">Request access</button></form>`)}

@@ -257,6 +257,20 @@ export const SPECS: SettingSpec[] = [
 
   // ---------- Communications ----------
   {
+    key: 'email_delivery', group: 'Communications', label: 'Send email for real',
+    help: 'On means emails written in StayLeased — replies from One Inbox, notices, renewal offers, portal invitations — are delivered to the person’s inbox. Off means they are saved in the Outbox and go nowhere. Text messages are not delivered either way. Check Setup → Connections first: it shows whether email is set up on this server and sends a test.',
+    ctl: { t: 'bool', on: 'Deliver email to recipients' },
+    orgOnly: true,
+    orgOnlyWhy: 'Delivery is one switch for the whole organization, so nobody has to remember which buildings really send.',
+  },
+  {
+    key: 'email_reply_to', group: 'Communications', label: 'Replies go to',
+    help: 'The address a recipient’s reply is sent to. Leave it blank to use the One Inbox forwarding address when it is switched on, or otherwise the email of the person who sent the message.',
+    ctl: { t: 'text', placeholder: 'office@yourcompany.com' },
+    orgOnly: true,
+    orgOnlyWhy: 'One reply address for the organization, so replies land in one place.',
+  },
+  {
     key: 'quiet_hours', group: 'Communications', label: 'Quiet hours',
     help: 'No message is sent to a resident inside this window. Anything queued waits for morning.',
     subs: [

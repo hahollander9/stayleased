@@ -23,6 +23,7 @@ import * as m9ops from '../modules/m9_accounting/finops.ts'; // approvals inbox 
 import * as m11 from '../modules/m11_utilities/pages.ts'; // also registers utility_cycle job
 import * as m12 from '../modules/m12_insurance/pages.ts'; // also registers insurance_compliance job + deposit-alt hook
 import * as m16 from '../modules/m16_procurement/pages.ts';
+import * as emailRail from '../modules/m15_comms/email_rail.ts'; // real email: test send + provider webhook
 import * as m15 from '../modules/m15_comms/pages.ts'; // also registers mass_comms job + send hook
 import * as m13 from '../modules/m13_pricing/pages.ts'; // also registers pricing_engine job
 import * as m14 from '../modules/m14_reports/pages.ts'; // also registers metric_snapshots + report_delivery jobs
@@ -48,6 +49,7 @@ import '../modules/m19_scoring/service.ts'; // registers score_delinquency job (
 /** Phase modules mount here as they are built (Phase 1+). Keeping the list in
  * one place makes the build order visible. */
 export function registerModules(r: Router): void {
+  emailRail.routes(r); // /webhooks/email + the Connections test send
   orgExport.routes(r); // full data export (before m1's own /admin/* so nothing shadows it)
   m2.routes(r); // Phase 1: portfolio & units + dashboards
   people.routes(r); // Phase 2: residents & leases (ledger)

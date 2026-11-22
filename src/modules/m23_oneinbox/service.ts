@@ -40,6 +40,8 @@ export interface MessageRow {
   status: 'open' | 'done';
   done_at: string | null;
   is_sample: number;
+  replied_at: string | null;
+  reply_message_id: string | null;
 }
 
 function toContact(r: any): ContactRow {
@@ -265,4 +267,46 @@ export function purge(ctx: Ctx, scope: 'sample' | 'all'): { messages: number; co
     audit(ctx, 'one_inbox', ctx.orgId, scope === 'all' ? 'purged' : 'sample_cleared', null, { messages, contacts: people });
     return { messages, contacts: people };
   });
+}
+
+// ---------- replying ----------
+
+import { esc } from '../../lib/html.ts';
+import { sendEmail } from '../../lib/sim/messaging.ts';
+import { emailLive, isDeliverableAddress, registerReplyToResolver } from '../../lib/email.ts';
+import { inboundToken } from '../m3_crm/ils_email.ts';
+
+// A reply to something StayLeased sent comes back into One Inbox, when mail
+// forwarding is switched on for this server; otherwise the email module falls
+// back to the sender's own address.
+registerReplyToResolver((orgId) => (inboundToken() ? inboxAddress(orgId) : null));
+
+/** Why a reply cannot be sent from here, or null when it can. */
+export function replyBlocker(ctx: Ctx, m: MessageRow): string | null {
+  if (m.is_sample) return 'This is a sample email, so there is nobody to reply to.';
+  if (!emailLive(ctx)) return 'Email delivery is not switched on for this account.';
+  if (!isDeliverableAddress(m.from_email)) return 'The sender’s address is not one email can be delivered to.';
+  return null;
+}
+
+/** Send a reply to the person who wrote. The text is the operator's own —
+ * the suggestion is only a starting point — and it is escaped into simple
+ * paragraphs, so nothing typed here can carry markup into someone's inbox. */
+export function sendReply(ctx: Ctx, messageId: string, input: { subject: string; text: string }): { ok: true; outboxId: string } | { ok: false; error: string } {
+  const m = message(ctx.orgId, messageId);
+  if (!m) return { ok: false, error: 'That email is no longer here.' };
+  const blocked = replyBlocker(ctx, m);
+  if (blocked) return { ok: false, error: blocked };
+  const text = String(input.text || '').replace(/\r\n/g, '\n').trim();
+  if (text.length < 2) return { ok: false, error: 'Write the reply first.' };
+  if (text.length > 20000) return { ok: false, error: 'That reply is too long to send.' };
+  const subject = String(input.subject || '').replace(/[\r\n]+/g, ' ').trim().slice(0, 200) || `Re: ${m.subject || 'your message'}`;
+  const body = text.split(/\n{2,}/).map((p) => `<p>${esc(p).replace(/\n/g, '<br>')}</p>`).join('');
+  const outboxId = sendEmail(ctx, {
+    to: m.from_email, toName: m.from_name || null, subject, body,
+    templateKey: 'one_inbox_reply', entity: 'oi_message', entityId: m.id,
+  });
+  run('UPDATE oi_messages SET replied_at=?, reply_message_id=? WHERE id=? AND org_id=?', nowIso(), outboxId, m.id, ctx.orgId);
+  audit(ctx, 'oi_message', m.id, 'reply', null, { outbox: outboxId });
+  return { ok: true, outboxId };
 }

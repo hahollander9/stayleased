@@ -4,7 +4,7 @@ import {
   redirect, notFound, forbidden, fileRes, type Router, type Rq, badRequest,
 } from '../../lib/http.ts';
 import {
-  requirePerm, requireUser, devOnly, hashPassword, tempPassword, type Ctx, sysCtx, requireStaff,
+  requirePerm, requireUser, devOnly, can, hashPassword, tempPassword, type Ctx, sysCtx, requireStaff,
   canAccessProperty, propFilter,
 } from '../../lib/auth.ts';
 import { q, q1, run, insert, j, js, val, update } from '../../lib/db.ts';
@@ -16,6 +16,7 @@ import { getSetting, getSettingMerged, layerSetting, narrowOverride, setSetting,
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
 import { receiveInbound, isLiveOrg, deliveryLabel, RECORDED } from '../../lib/sim/messaging.ts';
+import { emailLive, deliverNow } from '../../lib/email.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
 import { SPECS, GROUPS, renderSetting, isInstantSetting, describeSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
@@ -864,7 +865,9 @@ export function routes(r: Router): void {
       title: 'Outbox',
       active: '/dev/messages',
       subtitle: ctx.orgKind === 'live'
-        ? `Every message the platform writes — portal invites and one-time passwords included. Email and text delivery are not connected yet, so nothing here has reached anyone: open a message to read it and pass it on yourself. ${total} message${total === 1 ? '' : 's'}.`
+        ? emailLive(ctx)
+          ? 'Every message the platform writes. Email is delivered for real — each row shows whether it was sent, is still sending, bounced, or was not delivered. Text messages are not connected: open one to read it and pass it on yourself.'
+          : `Every message the platform writes — portal invites and one-time passwords included. Email and text delivery are not connected yet, so nothing here has reached anyone: open a message to read it and pass it on yourself. ${total} message${total === 1 ? '' : 's'}.`
         : `Outbox simulator — nothing actually sends. ${total} message${total === 1 ? '' : 's'} captured.`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
@@ -881,7 +884,7 @@ export function routes(r: Router): void {
               html`<span class="small nowrap">${m.created_at.slice(5, 16).replace('T', ' ')}</span>`,
               html`${m.to_name ? html`<b>${m.to_name}</b> ` : ''}<span class="muted small">${m.to_addr}</span>`,
               html`<span class="small">${m.subject || m.body.replace(/<[^>]+>/g, ' ').slice(0, 90)}</span>`,
-              statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status)),
+              statusBadge(m.status === RECORDED || m.status === 'queued' ? 'warn' : m.status === 'bounced' ? 'failed' : m.status, deliveryLabel(m.status)),
               m.template_key ? html`<span class="mono small">${m.template_key}</span>` : '—',
             ],
           })),
@@ -901,10 +904,14 @@ export function routes(r: Router): void {
       crumbs: [['Outbox', '/dev/messages']],
       content: html`
         ${m.status === RECORDED ? html`<div class="callout warn"><b>Saved — not delivered.</b> Email and text delivery are not connected yet, so this message has not reached ${m.to_name || m.to_addr}. Copy it and send it yourself if they need it.</div>` : null}
+        ${m.status === 'failed' || m.status === 'bounced' ? html`<div class="callout warn"><b>${m.status === 'bounced' ? 'Bounced.' : 'Not delivered.'}</b> ${m.delivery_error || 'The mail provider did not accept this message.'}
+          ${m.status === 'failed' && m.channel === 'email' && can(ctx, 'comms:send') ? html`<form method="post" action="/dev/messages/${m.id}/retry" style="margin-top:8px"><button class="btn btn-sm" type="submit">Try again</button></form>` : null}</div>` : null}
+        ${m.status === 'queued' ? html`<div class="callout"><b>Sending.</b> ${m.delivery_error ? html`The last attempt did not go through (${m.delivery_error}); it will be tried again shortly.` : 'This message is on its way.'}</div>` : null}
         ${card('Details', dl([
           ['Direction', m.direction], ['Channel', m.channel],
           [m.direction === 'in' ? 'From' : 'To', `${m.to_name || ''} <${m.to_addr}>`],
-          ['Delivery', statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status))], ['Template', m.template_key || '—'],
+          ['Delivery', statusBadge(m.status === RECORDED || m.status === 'queued' ? 'warn' : m.status === 'bounced' ? 'failed' : m.status, deliveryLabel(m.status))], ['Template', m.template_key || '—'],
+          ...(m.delivered_at ? [['Handed to mail provider', fmtTs(m.delivered_at)] as [string, any]] : []),
           [m.status === RECORDED ? 'Saved' : m.direction === 'in' ? 'Received' : 'Sent', fmtTs(m.created_at)], ['Entity', m.entity ? `${m.entity}/${m.entity_id}` : '—'],
         ]))}
         ${card('Rendered message', m.channel === 'email'
@@ -921,6 +928,21 @@ export function routes(r: Router): void {
             <button class="btn">Receive reply</button>
           </form>`) : null}`,
     });
+  });
+
+  r.post('/dev/messages/:id/retry', requirePerm('comms:send'), async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    if (!m) return notFound('Message not found');
+    if (!ctx.allProperties && !(m.property_id && ctx.propertyIds.includes(m.property_id))) return notFound('Message not found');
+    if (m.status !== 'failed' || m.channel !== 'email' || m.direction !== 'out') return redirect(`/dev/messages/${m.id}`, 'Only an email that was not delivered can be tried again.', 'err');
+    if (!emailLive(ctx)) return redirect(`/dev/messages/${m.id}`, 'Email delivery is switched off for this organization.', 'err');
+    run("UPDATE outbox_messages SET status='queued', attempts=0, next_attempt_at=NULL, delivery_error=NULL WHERE id=? AND status='failed'", m.id);
+    const res = await deliverNow(m.id);
+    audit(ctx, 'message', m.id, 'email_retry', null, { status: res.status });
+    return res.status === 'sent'
+      ? redirect(`/dev/messages/${m.id}`, 'Sent.')
+      : redirect(`/dev/messages/${m.id}`, `Still not delivered: ${res.error || res.status}`, 'err');
   });
 
   r.post('/dev/messages/:id/reply', devOnly, requirePerm('dev:console'), (rq) => {

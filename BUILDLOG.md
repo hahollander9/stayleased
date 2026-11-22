@@ -2544,3 +2544,38 @@ Eighteen held up, and all are fixed here with a regression test apiece (#132).
 
 Tests: `fxr_recv` (9), `fxr_acct` (7), `fxr_lease` (6), plus one in `fx_main`. Gates: `tsc --noEmit`
 clean · unit 759/759 · full seeded e2e 218/218. DECISIONS #132 appended against the current tail.
+
+## 2026-11-22 — Email that actually sends
+
+Asked for in one line: "make it so it can send emails". Until now a live organization's
+messages were written to the Outbox and went nowhere (#129 made the product say so).
+
+- **`src/lib/email.ts`** — the first real resident-facing rail. Postmark or Resend, chosen by
+  env. `send()` still only writes a row (it runs inside transactions everywhere and cannot
+  wait on a network call); a live org with email on gets `queued` instead of `recorded`, and
+  the queue is drained right after the write and again on every poller tick. Statuses:
+  `queued → sent | failed`, later `bounced`. Temporary failures back off 1/5/30/120 minutes,
+  five attempts, then `failed` with the provider's reason on the row.
+- **Three gates, all re-checked at the moment of sending**: the server is configured, the
+  organization is `live`, and the organization's own switch (`email_delivery`, off by
+  default) is on. The demo cannot send whatever is set.
+- **Guards**: reserved and fixture domains (`.demo`, `.test`, `example.com`…) are refused
+  before the provider sees them; subjects are flattened to one line; a per-org daily cap
+  holds mail back rather than failing it; a hard bounce or spam complaint puts the address on
+  that organization's do-not-email list; one message is handed off by one caller at a time,
+  so the poller, the post-write kick and "send now" cannot produce two copies. Logs carry the
+  message id and reason, never the address or the body.
+- **`POST /webhooks/email`** — bounces and complaints from the provider. Unauthenticated like
+  the Stripe route; a shared secret compared in constant time is its authentication, and an
+  event can only touch a message whose provider id this server recorded.
+- **One Inbox can answer**: the message page has a real "Send reply" form (the suggestion is
+  the starting text; with no suggestion the box is blank). The operator's text is escaped
+  into paragraphs. The message records that it was answered and links to the Outbox row.
+- **Connections** shows the true state (not set up / set up and off / delivering) and has
+  "Send me a test email", which works before the switch is on — that is what it is for.
+- **Outbox** shows Sending / Sent / Not delivered / Bounced with the reason, and "Try again"
+  on a failed email. Mass messages report `sent` only when email really left.
+- **Settings → Communications**: "Send email for real" and "Replies go to".
+- Tests: `tests/fx_email.test.ts`, 19 tests through an injected transport — nothing touches
+  the network. Text messages are unchanged: saved, not delivered.
+- To switch it on in production: DEPLOY.md → "Real email".

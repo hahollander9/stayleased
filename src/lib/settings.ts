@@ -18,6 +18,9 @@ export const SETTING_DEFAULTS: Record<string, any> = {
   // screen by hand. A new live org starts with this off (setup/onboarding.ts):
   // the default policy below is ours, not the operator's lease.
   late_fees_enabled: true,
+  // real email delivery for a live org — off until the operator turns it on
+  email_delivery: false,
+  email_reply_to: '',
   nsf_fee_cents: 3500,
   prorate_method: 'actual_days', // actual_days | thirty_day
   payment_methods: { ach: true, card: true, cash_equivalent: true },

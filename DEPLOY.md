@@ -127,3 +127,33 @@ automatic. Nothing in the app changes.
   inquiry, tour and application forms, answer 404 until the operator publishes the site in
   Marketing → Sites.
 
+
+## Real email (2026-11-22)
+
+StayLeased sends email through a transactional mail provider — Postmark or Resend. Until
+this is set up, every message is saved in the Outbox marked "Saved — not delivered", exactly
+as before. Text messages are not part of this; they are still only saved.
+
+1. Open an account with **Postmark** (postmarkapp.com) or **Resend** (resend.com).
+2. Add and verify a **sending domain** there. The provider shows a few DNS records (DKIM, and
+   a Return-Path/SPF record); add them where the domain's DNS lives. A subdomain such as
+   `mail.stayleased.com` keeps the main domain's reputation separate. Without verified DNS,
+   mail lands in spam or is refused.
+3. In Render → Environment, set:
+   - `STAYLEASED_EMAIL_PROVIDER` — `postmark` or `resend`
+   - `STAYLEASED_EMAIL_API_KEY` — Postmark's *Server API token*, or Resend's API key
+   - `STAYLEASED_EMAIL_FROM` — an address on the verified domain, e.g. `office@mail.stayleased.com`
+   - `STAYLEASED_EMAIL_WEBHOOK_SECRET` — any random string of 16+ characters (step 5)
+   - optional: `STAYLEASED_EMAIL_STREAM` (Postmark message stream; default `outbound`),
+     `STAYLEASED_EMAIL_DAILY_CAP_PER_ORG` (default 500 a day per organization)
+4. Sign in → **Setup → Connections → "Send me a test email"**. When it arrives, turn on
+   **Settings → Communications → "Send email for real"**. That switch is per organization and
+   off by default; the demo never sends, whatever is set.
+5. Bounces and spam complaints: in the provider's dashboard add a webhook to
+   `https://stayleased.com/webhooks/email?key=<the secret from step 3>` for *Bounce* and
+   *Spam complaint* events. A bounced address goes on that organization's do-not-email list
+   and the Outbox shows the message as "Bounced".
+
+Replies: the Reply-To is the address in Settings → Communications → "Replies go to"; if that
+is blank and One Inbox forwarding is on (`STAYLEASED_INBOUND_TOKEN`), the organization's One
+Inbox address; otherwise the staff member who sent it.
