@@ -606,9 +606,14 @@ function stampCharge(batchId: string, chargeId: string): void {
 
 /** Provision portal access and, when a login was actually minted, stamp it with
  * the upload — so removal can take back a login the import created (and only
- * one the import created; a pre-existing account merely gets linked). */
+ * one the import created; a pre-existing account merely gets linked).
+ *
+ * The invitation is HELD, never delivered: an import must not mail a one-time
+ * password to a whole building at the moment of apply. Every import lane
+ * (rent roll, directory, lease PDFs) provisions through here, which is what
+ * keeps "invitations are saved in the Outbox, not emailed" true. */
 export function portalAccessFor(ctx: Ctx, batchId: string, residentId: string): boolean {
-  const access = ensurePortalAccess(ctx, residentId);
+  const access = ensurePortalAccess(ctx, residentId, { hold: true });
   if (!access.invited) return false;
   if (access.userId) run('UPDATE users SET import_batch_id=? WHERE id=?', batchId, access.userId);
   return true;

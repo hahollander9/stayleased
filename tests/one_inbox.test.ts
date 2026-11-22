@@ -206,17 +206,17 @@ test('screens: list, message, setup; an unidentified sender gets no draft', asyn
   assert.equal(list.status, 200);
   assert.match(list.text, /Quick question/);
   assert.doesNotMatch(list.text, /Kitchen sink leaking/);
-  const water = q1<any>(`SELECT id FROM oi_messages WHERE subject='water'`)!.id;
+  const water = q1<any>(`SELECT id FROM oi_messages WHERE subject='water' AND org_id=?`, fx.orgA)!.id;
   const page = await get(base, `/one-inbox/m/${water}`, cookieA);
   assert.match(page.text, /No reply is suggested until this email is filed/);
-  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking'`)!.id;
+  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking' AND org_id=?`, fx.orgA)!.id;
   assert.match((await get(base, `/one-inbox/m/${sink}`, cookieA)).text, /Hi Denise,/);
   assert.match((await get(base, '/one-inbox/setup', cookieA)).text, /inbox-[a-f0-9]{10}@/);
   assert.notEqual((await get(base, '/one-inbox', '')).status, 200);
 });
 
 test('another org cannot see or act on this org’s mail', async () => {
-  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking'`)!.id;
+  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking' AND org_id=?`, fx.orgA)!.id;
   assert.equal((await get(base, `/one-inbox/m/${sink}`, cookieB)).status, 404);
   assert.equal((await post(base, `/one-inbox/m/${sink}/done`, {}, cookieB)).status, 404);
   assert.doesNotMatch((await get(base, '/one-inbox?view=open', cookieB)).text, /Kitchen sink leaking/);

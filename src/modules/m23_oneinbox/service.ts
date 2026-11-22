@@ -273,7 +273,7 @@ export function purge(ctx: Ctx, scope: 'sample' | 'all'): { messages: number; co
 
 import { esc } from '../../lib/html.ts';
 import { sendEmail } from '../../lib/sim/messaging.ts';
-import { emailLive, isDeliverableAddress, registerReplyToResolver } from '../../lib/email.ts';
+import { emailLive, isDeliverableAddress, registerReplyToResolver, suppressed } from '../../lib/email.ts';
 import { inboundToken } from '../m3_crm/ils_email.ts';
 
 // A reply to something StayLeased sent comes back into One Inbox, when mail
@@ -286,7 +286,20 @@ export function replyBlocker(ctx: Ctx, m: MessageRow): string | null {
   if (m.is_sample) return 'This is a sample email, so there is nobody to reply to.';
   if (!emailLive(ctx)) return 'Email delivery is not switched on for this account.';
   if (!isDeliverableAddress(m.from_email)) return 'The sender’s address is not one email can be delivered to.';
+  // an address that bounced or reported mail as spam is never written to again
+  const why = suppressed(ctx.orgId, m.from_email);
+  if (why !== null) return `This address is on the do-not-email list${why ? ` (${why})` : ''}, so a reply cannot be sent to it from here.`;
   return null;
+}
+
+/** What actually happened to the reply sent from here: the linked Outbox row,
+ * read at view time. `replied_at` only says a reply was WRITTEN; whether it
+ * was delivered is the provider's answer, which arrives later. */
+export function replyDelivery(orgId: string, m: MessageRow): { status: string; error: string | null } | null {
+  if (!m.reply_message_id) return null;
+  const r = q1<{ status: string; delivery_error: string | null }>(
+    'SELECT status, delivery_error FROM outbox_messages WHERE id=? AND org_id=?', m.reply_message_id, orgId);
+  return r ? { status: r.status, error: r.delivery_error } : null;
 }
 
 /** Send a reply to the person who wrote. The text is the operator's own —

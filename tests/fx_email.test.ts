@@ -16,7 +16,7 @@ import { setSetting } from '../src/lib/settings.ts';
 import { sendEmail, sendSms, deliveryNote, deliveryLabel, RECORDED } from '../src/lib/sim/messaging.ts';
 import {
   setEmailTransport, deliverEmailQueue, emailLive, emailConfigured, isDeliverableAddress, suppressed,
-  htmlToText, parseProviderEvent, type OutgoingEmail, type TransportResult,
+  htmlToText, parseProviderEvent, mailSafeHtml, type OutgoingEmail, type TransportResult,
 } from '../src/lib/email.ts';
 import { ingest, sendReply, replyBlocker, message } from '../src/modules/m23_oneinbox/service.ts';
 import { startTestServer, loginAs, get, post } from './harness.ts';
@@ -296,6 +296,96 @@ test('Connections: the test email works before the switch is on, and says so', a
   assert.equal(t.status, 'sent');
   const livePage = await get(base, '/setup/connections', cookieLive);
   assert.match(livePage.text, /delivered for real/);
+});
+
+test('what leaves the building is plain: attributes, images and scripts are stripped, relative links made absolute', async () => {
+  const out = mailSafeHtml('<p style="color:red" onclick="x()">Hi <img src="https://t/p.gif"><script>alert(1)</script><a href="/sign/abc" style="x">sign</a> <a href="javascript:alert(1)">bad</a> <a href="https://ok.com/a?b=1&c=2">ok</a></p><form action="https://evil"><input></form>', 'https://stayleased.com');
+  assert.equal(out, '<p>Hi <a href="https://stayleased.com/sign/abc">sign</a> <a>bad</a> <a href="https://ok.com/a?b=1&amp;c=2">ok</a></p>');
+  const mid = sendEmail(ctxOf(live), { to: 'ana@realdomain.com', subject: 'x', body: '<p>Hi <a href="https://evil.example/x" onmouseover="x">Verify</a><img src="https://track/p.gif"></p>' });
+  await drain();
+  assert.equal(row(mid).status, 'sent');
+  assert.doesNotMatch(sent[0]!.html, /img|onmouseover/);
+});
+
+test('an unanswered call is not blindly repeated: it stops and says the outcome is unknown', async () => {
+  setEmailTransport(async (m) => { sent.push(m); throw new Error('timeout'); });
+  try {
+    const mid = sendEmail(ctxOf(live), { to: 'maybe@realdomain.com', subject: 'x', body: '<p>x</p>' });
+    await drain(); await drain();
+    assert.equal(sent.length, 1);
+    assert.equal(row(mid).status, 'failed');
+    assert.match(row(mid).delivery_error, /not known whether this was delivered/);
+    // with a provider that de-duplicates repeats, the same failure is retried
+    setEmailTransport(async (m) => { sent.push(m); throw new Error('timeout'); }, { idempotent: true });
+    const mid2 = sendEmail(ctxOf(live), { to: 'maybe2@realdomain.com', subject: 'x', body: '<p>x</p>' });
+    await drain();
+    assert.equal(row(mid2).status, 'queued');
+    run("UPDATE outbox_messages SET status='failed' WHERE id=?", mid2);
+  } finally {
+    setEmailTransport(async (m) => { sent.push(m); return answer(m); });
+  }
+});
+
+test('a message cut off by a restart is not sent again on its own', async () => {
+  const mid = sendEmail(ctxOf(liveOff), { to: 'cut@realdomain.com', subject: 'x', body: '<p>x</p>' });
+  // as a restart leaves it: queued, an attempt counted, no outcome recorded
+  setSetting(sysCtx(liveOff.org), 'email_delivery', true);
+  run("UPDATE outbox_messages SET status='queued', attempts=1, next_attempt_at=NULL, delivery_error=NULL WHERE id=?", mid);
+  await drain();
+  setSetting(sysCtx(liveOff.org), 'email_delivery', false);
+  assert.equal(sent.length, 0);
+  assert.equal(row(mid).status, 'failed');
+  assert.match(row(mid).delivery_error, /not known/);
+});
+
+test('the server losing its configuration makes mail wait, not fail', async () => {
+  const mid = sendEmail(ctxOf(live), { to: 'wait@realdomain.com', subject: 'x', body: '<p>x</p>' });
+  const key = process.env.STAYLEASED_EMAIL_API_KEY;
+  delete process.env.STAYLEASED_EMAIL_API_KEY;
+  try {
+    await drain();
+    assert.equal(row(mid).status, 'queued');
+    assert.match(row(mid).delivery_error, /not configured on this server/);
+  } finally { process.env.STAYLEASED_EMAIL_API_KEY = key; }
+  run('UPDATE outbox_messages SET next_attempt_at=? WHERE id=?', '2000-01-01T00:00:00.000Z', mid);
+  await drain();
+  assert.equal(row(mid).status, 'sent');
+});
+
+test('one-to-one mail goes ahead of a mass message, and a pass empties the queue', async () => {
+  const order: string[] = [];
+  setEmailTransport(async (m) => { order.push(m.tag || ''); return { ok: true, providerId: id('pm') }; });
+  try {
+    const o = mkOrg('live', `pri${id('c').slice(-4)}`, true);
+    for (let i = 0; i < 45; i++) sendEmail(ctxOf(o), { to: `r${i}@realdomain.com`, subject: 'blast', body: '<p>x</p>', templateKey: 'mass' });
+    sendEmail(ctxOf(o), { to: 'otp@realdomain.com', subject: 'code', body: '<p>x</p>', templateKey: 'portal_invite' });
+    await drain();
+    assert.equal(order[0], 'portal_invite');
+    assert.equal(order.length, 46, 'more than one batch is drained in a single pass');
+  } finally {
+    setEmailTransport(async (m) => { sent.push(m); return answer(m); });
+  }
+});
+
+test('a mass message recipient line and its sent count follow the real delivery', async () => {
+  const mass = id('mm');
+  insert('mass_messages', { id: mass, org_id: live.org, filters: '{}', subject: 'Water off Tuesday', body: '<p>x</p>', channels: '["email"]', scheduled_for: '2026-07-26', status: 'sent', created_at: nowIso() });
+  const good = sendEmail(ctxOf(live), { to: 'good@realdomain.com', subject: 'Water', body: '<p>x</p>', templateKey: 'mass' });
+  answer = (m) => (m.to.startsWith('bad') ? { ok: false, error: 'refused', retry: false } : { ok: true, providerId: 'pm-mass-good' });
+  const bad = sendEmail(ctxOf(live), { to: 'bad@realdomain.com', subject: 'Water', body: '<p>x</p>', templateKey: 'mass' });
+  for (const oid of [good, bad]) insert('mass_recipients', { id: id('mr'), org_id: live.org, mass_id: mass, resident_id: id('res'), channel: 'email', status: 'queued', outbox_id: oid });
+  await drain();
+  const st = (oid: string): string => q1<any>('SELECT status FROM mass_recipients WHERE outbox_id=?', oid).status;
+  assert.equal(st(good), 'sent');
+  assert.equal(st(bad), 'failed');
+  assert.equal(q1<any>('SELECT sent_count FROM mass_messages WHERE id=?', mass).sent_count, 1);
+});
+
+test('a held message is recorded, never delivered, even with email on', async () => {
+  const mid = sendEmail(ctxOf(live), { to: 'held@realdomain.com', subject: 'x', body: '<p>x</p>', hold: true });
+  await drain();
+  assert.equal(row(mid).status, RECORDED);
+  assert.equal(sent.length, 0);
 });
 
 test('htmlToText keeps the words and drops the markup', () => {

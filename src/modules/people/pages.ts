@@ -1,4 +1,5 @@
 import { html, raw, when, esc, type Child, type Raw } from '../../lib/html.ts';
+import { isLiveOrg, deliveryNote } from '../../lib/sim/messaging.ts';
 import { redirect, notFound, fileRes, type Router, type Rq } from '../../lib/http.ts';
 import { requirePerm, propFilter, canAccessProperty, can, hashPassword, tempPassword, type Ctx } from '../../lib/auth.ts';
 import { q, q1, val, run, j, insert, tx } from '../../lib/db.ts';
@@ -600,7 +601,7 @@ export function routes(r: Router): void {
     return redirect(
       `/residents/${res.id}`,
       out.invited
-        ? 'Portal access created — the invite (with the one-time password) is in your Message Console.'
+        ? isLiveOrg(ctx) ? `Portal access created. The invitation carries a one-time password. ${deliveryNote(ctx, 'email')}.` : 'Portal access created — the invite (with the one-time password) is in your Message Console.'
         : 'That email already had a portal account — linked it to this resident.',
     );
   });

@@ -280,7 +280,6 @@ export function scheduleMass(
 export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped: number; deferred: number } {
   const done = outboundStatus(ctx); // 'sent' (demo) | 'recorded' (live — nothing left the building)
   const doneEmail = outboundStatus(ctx, 'email'); // 'queued' when this live org's email is really delivered
-  let emailed = 0;
   const origin = messageOrigin(ctx);
   let sent = 0;
   let skipped = 0;
@@ -290,6 +289,7 @@ export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped
     ctx.orgId, date,
   );
   for (const m of due) {
+    let emailed = 0; // per message: an email blast must not make the next, text-only one read as sent
     run(`UPDATE mass_messages SET status='sending' WHERE id=?`, m.id);
     const pend = q<any>(`SELECT * FROM mass_recipients WHERE mass_id=? AND status IN ('pending','deferred_quiet')`, m.id);
     let anyDeferred = false;
@@ -407,7 +407,7 @@ registerJob({
   describe: 'Delivers scheduled mass messages and announcement echoes — consent and quiet hours enforced per recipient.',
   run: (ctx, date) => {
     const r = runMassMessages(ctx, date);
-    const verb = isLiveOrg(ctx) ? 'saved to the Outbox (not delivered — email and text are not connected)' : 'sent';
+    const verb = !isLiveOrg(ctx) ? 'sent' : outboundStatus(ctx, 'email') === 'queued' ? 'written (email is delivered for real; texts are saved to the Outbox, not delivered)' : 'saved to the Outbox (not delivered — email and text are not connected)';
     return r.sent || r.skipped || r.deferred ? `${r.sent} ${verb}, ${r.skipped} skipped, ${r.deferred} deferred (quiet hours)` : 'nothing scheduled';
   },
 });

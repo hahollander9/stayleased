@@ -851,9 +851,12 @@ export function routes(r: Router): void {
     // Opened up from developers to anyone who sends messages, so it has to
     // respect what they may see: staff scoped to some buildings get those
     // buildings' messages, and nothing that belongs to no building.
+    // The one exception is a message with no building that the viewer sent
+    // personally (a One Inbox reply): it is theirs to follow up on.
     if (!ctx.allProperties) {
-      if (!ctx.propertyIds.length) where += ' AND 1=0';
-      else { where += ` AND property_id IN (${ctx.propertyIds.map(() => '?').join(',')})`; params.push(...ctx.propertyIds); }
+      const own = `(property_id IS NULL AND direction='out' AND sent_by=?)`;
+      if (!ctx.propertyIds.length) { where += ` AND ${own}`; params.push(ctx.userId); }
+      else { where += ` AND (property_id IN (${ctx.propertyIds.map(() => '?').join(',')}) OR ${own})`; params.push(...ctx.propertyIds, ctx.userId); }
     }
     if (channel) { where += ' AND channel=?'; params.push(channel); }
     if (template) { where += ' AND template_key=?'; params.push(template); }
@@ -893,17 +896,43 @@ export function routes(r: Router): void {
     });
   });
 
+  // One rule for the detail page and everything that acts on a message: the
+  // row is in the viewer's organization, and either they see every building,
+  // or it belongs to one of theirs, or it has no building and they sent it.
+  const outboxRow = (ctx: Ctx, mid: string): any | null => {
+    const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', mid, ctx.orgId);
+    if (!m) return null;
+    if (ctx.allProperties) return m;
+    if (m.property_id) return ctx.propertyIds.includes(m.property_id) ? m : null;
+    return m.direction === 'out' && !!ctx.userId && m.sent_by === ctx.userId ? m : null;
+  };
+  /** A saved outbound email that can be handed to the provider now: held
+   * invitations, and anything written before email was switched on. Never a
+   * text message, never a demo organization. */
+  const sendableNow = (ctx: Ctx, m: any): boolean =>
+    m.status === RECORDED && m.channel === 'email' && m.direction === 'out' && emailLive(ctx);
+
   r.get('/dev/messages/:id', requirePerm('comms:view'), (rq) => {
     const ctx = rq.ctx as Ctx;
-    const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const m = outboxRow(ctx, rq.params.id!);
     if (!m) return notFound('Message not found');
-    if (!ctx.allProperties && !(m.property_id && ctx.propertyIds.includes(m.property_id))) return notFound('Message not found');
+    const canSendNow = sendableNow(ctx, m);
+    const whom = m.to_name || m.to_addr;
     return shell(rq, {
       title: m.subject || `${m.channel.toUpperCase()} message`,
       active: '/dev/messages',
       crumbs: [['Outbox', '/dev/messages']],
       content: html`
-        ${m.status === RECORDED ? html`<div class="callout warn"><b>Saved — not delivered.</b> Email and text delivery are not connected yet, so this message has not reached ${m.to_name || m.to_addr}. Copy it and send it yourself if they need it.</div>` : null}
+        ${m.status === RECORDED ? html`<div class="callout warn"><b>Saved — not delivered.</b> ${canSendNow
+          ? html`This email was saved and has not been sent to ${whom}. It can be sent now.
+            ${can(ctx, 'comms:send')
+              ? html`<form method="post" action="/dev/messages/${m.id}/send" style="margin-top:8px"><button class="btn btn-sm" type="submit">Send this email</button></form>`
+              : 'Your account does not have permission to send it.'}`
+          : m.direction === 'out' && m.channel !== 'email' && emailLive(ctx)
+            ? html`Text messages are not connected yet, so this message has not reached ${whom}. Copy it and send it yourself if they need it.`
+            : m.direction === 'out' && ctx.orgKind === 'live' && !emailLive(ctx)
+              ? html`Email and text delivery are not connected yet, so this message has not reached ${whom}. Copy it and send it yourself if they need it.`
+              : html`This message was saved and has not reached ${whom}. Copy it and send it yourself if they need it.`}</div>` : null}
         ${m.status === 'failed' || m.status === 'bounced' ? html`<div class="callout warn"><b>${m.status === 'bounced' ? 'Bounced.' : 'Not delivered.'}</b> ${m.delivery_error || 'The mail provider did not accept this message.'}
           ${m.status === 'failed' && m.channel === 'email' && can(ctx, 'comms:send') ? html`<form method="post" action="/dev/messages/${m.id}/retry" style="margin-top:8px"><button class="btn btn-sm" type="submit">Try again</button></form>` : null}</div>` : null}
         ${m.status === 'queued' ? html`<div class="callout"><b>Sending.</b> ${m.delivery_error ? html`The last attempt did not go through (${m.delivery_error}); it will be tried again shortly.` : 'This message is on its way.'}</div>` : null}
@@ -932,9 +961,8 @@ export function routes(r: Router): void {
 
   r.post('/dev/messages/:id/retry', requirePerm('comms:send'), async (rq) => {
     const ctx = rq.ctx as Ctx;
-    const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const m = outboxRow(ctx, rq.params.id!);
     if (!m) return notFound('Message not found');
-    if (!ctx.allProperties && !(m.property_id && ctx.propertyIds.includes(m.property_id))) return notFound('Message not found');
     if (m.status !== 'failed' || m.channel !== 'email' || m.direction !== 'out') return redirect(`/dev/messages/${m.id}`, 'Only an email that was not delivered can be tried again.', 'err');
     if (!emailLive(ctx)) return redirect(`/dev/messages/${m.id}`, 'Email delivery is switched off for this organization.', 'err');
     run("UPDATE outbox_messages SET status='queued', attempts=0, next_attempt_at=NULL, delivery_error=NULL WHERE id=? AND status='failed'", m.id);
@@ -943,6 +971,26 @@ export function routes(r: Router): void {
     return res.status === 'sent'
       ? redirect(`/dev/messages/${m.id}`, 'Sent.')
       : redirect(`/dev/messages/${m.id}`, `Still not delivered: ${res.error || res.status}`, 'err');
+  });
+
+  // Send a saved email: a held invitation, or a message written before email
+  // delivery was switched on. The person pressing the button has read it.
+  r.post('/dev/messages/:id/send', requirePerm('comms:send'), async (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const m = outboxRow(ctx, rq.params.id!);
+    if (!m) return notFound('Message not found');
+    const back = `/dev/messages/${m.id}`;
+    if (m.direction !== 'out' || m.channel !== 'email') return redirect(back, 'Only an outgoing email can be sent from here. Text messages are not connected.', 'err');
+    if (m.status !== RECORDED) return redirect(back, 'Only an email that was saved and not sent can be sent from here.', 'err');
+    if (!emailLive(ctx)) return redirect(back, 'Email delivery is not switched on for this organization, so nothing was sent.', 'err');
+    // the status guard makes a double press send once
+    const claimed = run("UPDATE outbox_messages SET status='queued', attempts=0, next_attempt_at=NULL, delivery_error=NULL WHERE id=? AND org_id=? AND status=?", m.id, ctx.orgId, RECORDED).changes;
+    if (!claimed) return redirect(back, 'This email is already being sent.', 'err');
+    const res = await deliverNow(m.id);
+    audit(ctx, 'message', m.id, 'email_send_saved', null, { status: res.status });
+    if (res.status === 'sent') return redirect(back, `Sent to ${m.to_addr}.`);
+    if (res.status === 'queued') return redirect(back, `Not sent yet${res.error ? `: ${res.error}` : ''}. It will be tried again shortly; this page shows the result.`);
+    return redirect(back, `Not delivered: ${res.error || res.status}`, 'err');
   });
 
   r.post('/dev/messages/:id/reply', devOnly, requirePerm('dev:console'), (rq) => {

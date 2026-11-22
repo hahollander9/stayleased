@@ -24,6 +24,11 @@ export interface OutboundMessage {
   entityId?: string | null;
   threadId?: string | null;
   personId?: string | null;
+  /** Write the row but do not deliver it, whatever the organization's email
+   * switch says. For mail nobody deliberately chose to send right now: bulk
+   * portal invitations from an import, and anything started by a member of the
+   * public. Staff can read it in the Outbox and send it on purpose. */
+  hold?: boolean;
 }
 
 /** M15 registers this to thread every outbound message + simulate opens */
@@ -57,11 +62,14 @@ export function outboundStatus(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }, c
 
 /** One sentence for flash messages after anything that calls send(): what
  * actually happened to the message. Live orgs: saved, not delivered. */
-export function deliveryNote(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): string {
+export function deliveryNote(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }, channel?: 'email' | 'sms' | 'held'): string {
   if (!isLiveOrg(ctx)) return 'Sent (see Message console)';
-  return emailLive(ctx)
-    ? 'Email is on its way — the Outbox shows when it is delivered. Text messages are not connected yet'
-    : 'Saved to the Outbox — email and text delivery are not connected yet';
+  if (!emailLive(ctx)) return 'Saved to the Outbox — email and text delivery are not connected yet';
+  // say what happened to THIS message when the caller knows what it wrote
+  if (channel === 'email') return 'Email is on its way — the Outbox shows when it is delivered';
+  if (channel === 'sms') return 'Saved to the Outbox — text messages are not connected yet, so it was not delivered';
+  if (channel === 'held') return 'Saved to the Outbox, not emailed — open it there to send it';
+  return 'Email is on its way — the Outbox shows when it is delivered. Text messages are not connected yet';
 }
 
 /** Absolute origin for links inside a message body (an inbox has no page for
@@ -87,7 +95,7 @@ export function deliveryLabel(status: string | null | undefined): string {
 
 export function send(ctx: Ctx, msg: OutboundMessage): string {
   const mid = id('msg');
-  const status = outboundStatus(ctx, msg.channel);
+  const status = msg.hold && isLiveOrg(ctx) ? RECORDED : outboundStatus(ctx, msg.channel);
   insert('outbox_messages', {
     id: mid,
     org_id: ctx.orgId,

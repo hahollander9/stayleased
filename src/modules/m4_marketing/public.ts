@@ -8,7 +8,7 @@ import { hasRealAddress, formatAddress } from '../../lib/address.ts';
 import { v } from '../../lib/validate.ts';
 import { logo } from '../../ui/ui.ts';
 import { isLiveOrg } from '../../lib/sim/messaging.ts';
-import { intakeLead, bookTour, tourSlots } from '../m3_crm/service.ts';
+import { intakeLead, bookTour, tourSlots, TOUR_TYPES } from '../m3_crm/service.ts';
 import { MK_PAGES, MK_GROUPS } from './features.ts';
 
 /** M4 public marketing sites + prospect flows. Everything renders from LIVE
@@ -87,6 +87,21 @@ export function publicProperty(slug: string | undefined): any | null {
  * a lead and asks the leasing agent for a draft, which costs real tokens. */
 export function publicFormAllowed(rq: Rq): boolean {
   return rateLimit(`pubform:${rq.ip}`, 12, 600000);
+}
+
+/** Limits on what a stranger may put into a lead record. Everything typed on
+ * these forms is stored, shown to staff, and quoted in drafts and messages. */
+const PUBLIC_NAME_MAX = 80;
+const publicName = (): ReturnType<typeof v.string> => v.string({ min: 1, max: PUBLIC_NAME_MAX, pattern: /^[^\r\n\t]*$/ });
+/** Optional free text: trimmed, control characters dropped, cut to `max`. */
+function publicText(raw: unknown, max: number): string | null {
+  if (typeof raw !== 'string') return null;
+  const s = raw.replace(/[\u0000-\u0008\u000b-\u001f\u007f]/g, '').trim().slice(0, max);
+  return s || null;
+}
+function publicPhone(raw: unknown): string | null {
+  const s = publicText(raw, 40);
+  return s && /^[0-9+().\-\sx#]{7,40}$/i.test(s) ? s : null;
 }
 
 interface FpAvail {
@@ -256,15 +271,18 @@ export function routes(r: Router): void {
     if (!prop) return notFound();
     if (!publicFormAllowed(rq)) return redirect(`/p/${prop.slug}#contact`, 'That is a lot of requests in a few minutes — please try again shortly.', 'err');
     const ctx = sysCtx(prop.org_id);
-    const schema = v.object({ first_name: v.string({ min: 1 }), last_name: v.string({ min: 1 }), email: v.email() });
+    const schema = v.object({ first_name: publicName(), last_name: publicName(), email: v.email() });
     const parsed = schema.safe(rq.body);
-    if (!parsed.ok) return redirect(`/p/${prop.slug}#contact`, 'Please provide your name and a valid email.', 'err');
+    if (!parsed.ok || parsed.value.email.length > 254) return redirect(`/p/${prop.slug}#contact`, `Please provide your name (up to ${PUBLIC_NAME_MAX} characters each) and a valid email.`, 'err');
+    const moveIn = v.date().safe(rq.body.move_in);
+    const beds = parseInt(String(rq.body.beds ?? ''), 10);
+    const plan = publicText(rq.body.plan, 60);
     intakeLead(ctx, {
       propertyId: prop.id, firstName: parsed.value.first_name, lastName: parsed.value.last_name,
-      email: parsed.value.email, phone: rq.body.phone ? String(rq.body.phone) : null,
-      source: 'website', channel: 'web', desiredMoveIn: rq.body.move_in || null,
-      beds: rq.body.beds !== '' && rq.body.beds !== undefined ? parseInt(String(rq.body.beds), 10) : null,
-      message: [rq.body.plan ? `Interested in ${rq.body.plan}.` : '', rq.body.message || ''].filter(Boolean).join(' ') || null,
+      email: parsed.value.email, phone: publicPhone(rq.body.phone),
+      source: 'website', channel: 'web', desiredMoveIn: moveIn.ok ? moveIn.value : null,
+      beds: Number.isInteger(beds) && beds >= 0 && beds <= 9 ? beds : null,
+      message: [plan ? `Interested in ${plan}.` : '', publicText(rq.body.message, 2000) || ''].filter(Boolean).join(' ') || null,
     });
     return redirect(`/p/${prop.slug}`, isLiveOrg({ orgId: prop.org_id })
       ? 'Thanks! Our leasing team will reach out shortly.'
@@ -276,19 +294,28 @@ export function routes(r: Router): void {
     if (!prop) return notFound();
     if (!publicFormAllowed(rq)) return redirect(`/p/${prop.slug}#tour`, 'That is a lot of requests in a few minutes — please try again shortly.', 'err');
     const ctx = sysCtx(prop.org_id);
-    const schema = v.object({ first_name: v.string({ min: 1 }), last_name: v.string({ min: 1 }), email: v.email(), date: v.date() });
+    const schema = v.object({ first_name: publicName(), last_name: publicName(), email: v.email(), date: v.date() });
     const parsed = schema.safe(rq.body);
-    if (!parsed.ok) return redirect(`/p/${prop.slug}#tour`, 'Please complete your name, email and tour day.', 'err');
+    if (!parsed.ok || parsed.value.email.length > 254) return redirect(`/p/${prop.slug}#tour`, `Please complete your name (up to ${PUBLIC_NAME_MAX} characters each), email and tour day.`, 'err');
+    // Day, time and type are checked against what this property actually
+    // offers BEFORE anything is written: these values end up in the tour
+    // record and in the confirmation and reminder written from it.
+    const date = parsed.value.date;
+    const type = String(rq.body.type || 'in_person');
+    if (!(TOUR_TYPES as readonly string[]).includes(type)) return redirect(`/p/${prop.slug}#tour`, 'Please choose a tour type from the list.', 'err');
+    if (date <= ctx.businessDate || date > addDays(ctx.businessDate, 60)) return redirect(`/p/${prop.slug}#tour`, 'Please choose a tour day from the list.', 'err');
+    const startTime = String(rq.body.start_time || '');
+    if (!tourSlots(ctx, prop.id, date).includes(startTime)) return redirect(`/p/${prop.slug}#tour`, 'That time is not open on that day — please pick another time.', 'err');
     const { leadId } = intakeLead(ctx, {
       propertyId: prop.id, firstName: parsed.value.first_name, lastName: parsed.value.last_name,
-      email: parsed.value.email, phone: rq.body.phone ? String(rq.body.phone) : null,
+      email: parsed.value.email, phone: publicPhone(rq.body.phone),
       source: 'website', channel: 'web', message: 'Self-scheduled a tour from the website.',
     });
     try {
-      bookTour(ctx, {
-        leadId, date: parsed.value.date, startTime: String(rq.body.start_time || '10:00'),
-        type: String(rq.body.type || 'in_person'), agentUserId: null,
-      });
+      // heldConfirmation: nobody on staff chose to send this. In a live
+      // organization the confirmation waits in the Outbox; this form must not
+      // be a way to make the server email an address a stranger typed.
+      bookTour(ctx, { leadId, date, startTime, type, agentUserId: null, heldConfirmation: true });
     } catch {
       return redirect(`/p/${prop.slug}#tour`, 'That time was just taken — pick another slot.', 'err');
     }

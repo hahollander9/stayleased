@@ -1,7 +1,8 @@
 import { html, raw, when, join, type Child, type Raw } from '../../lib/html.ts';
 import { notFound, redirect, type Router, type Rq, type Res } from '../../lib/http.ts';
 import { requirePerm, can, type Ctx } from '../../lib/auth.ts';
-import { deliveryNote } from '../../lib/sim/messaging.ts';
+import { deliveryNote, deliveryLabel } from '../../lib/sim/messaging.ts';
+import { emailLive } from '../../lib/email.ts';
 import { q } from '../../lib/db.ts';
 import { fmtTs } from '../../lib/dates.ts';
 import { parseCsv } from '../../lib/csv.ts';
@@ -10,7 +11,7 @@ import { shell, card, tbl, field, input, select, textarea, checkbox, tabs, empty
 import { inboundToken } from '../m3_crm/ils_email.ts';
 import { parseRoster, suggestReply, emailsIn, phonesIn, type Category, type ContactKind, type RosterParse } from './engine.ts';
 import {
-  contacts, counts, ingest, message, fileTo, unfile, setDone, replaceRoster, addContact, purge, replyBlocker, sendReply,
+  contacts, counts, ingest, message, fileTo, unfile, setDone, replaceRoster, addContact, purge, replyBlocker, replyDelivery, sendReply,
   inboxAddress, lastReceivedAt, type ContactRow, type MessageRow,
 } from './service.ts';
 import { SAMPLE_ROSTER, SAMPLE_MAIL } from './sample.ts';
@@ -19,8 +20,8 @@ import { SAMPLE_ROSTER, SAMPLE_MAIL } from './sample.ts';
  * operator's own system. Named "One Inbox" (not "Inbox") because /inbox is the
  * resident-thread inbox for orgs whose residents live in StayLeased; this one
  * is for an operator whose residents live in AppFolio and who forwards a
- * mailbox here. Staff read, file and copy a suggested reply; nothing is sent
- * from this screen. */
+ * mailbox here. Staff read and file; a reply is sent from this screen when
+ * the organization's email delivery is on, and copied out otherwise. */
 
 registerNav('Residents', { href: '/one-inbox', label: 'One Inbox', perm: 'comms:view', match: ['/one-inbox'] });
 
@@ -69,7 +70,9 @@ function listPage(rq: Rq): Res {
   return shell(rq, {
     title: 'One Inbox',
     active: '/one-inbox',
-    subtitle: 'A shared mailbox, matched to people and sorted. Replies are sent from your own email.',
+    subtitle: emailLive(ctx)
+      ? 'A shared mailbox, matched to people and sorted. Replies can be sent from here by email.'
+      : 'A shared mailbox, matched to people and sorted. Replies are sent from your own email.',
     actions: html`<a class="btn btn-ghost" href="/one-inbox/setup">Setup</a>`,
     content: html`
       ${when(n.sample > 0, () => html`<div class="callout info">Showing <b>sample data</b> (fictional people and emails).
@@ -99,6 +102,25 @@ function listPage(rq: Rq): Res {
             </a>`), '') : emptyState('Nothing in this view', view === 'needs_filing' ? 'Every open email has been matched to a person.' : undefined), { flush: true })}`}
     `,
   });
+}
+
+/** The reply banner states what the Outbox row says now, not what was hoped
+ * for when the reply was written. */
+function replyBanner(ctx: Ctx, m: MessageRow): Raw {
+  const d = replyDelivery(ctx.orgId, m);
+  const at = fmtTs(m.replied_at!, TZ);
+  const link = when(d, () => html` <a href="/dev/messages/${m.reply_message_id}">Open it in the Outbox</a>.`);
+  if (!d) return html`<div class="callout" style="margin:0 0 12px">A reply was written from StayLeased on ${at}. Its Outbox record is no longer available, so its delivery is not known.</div>`;
+  if (d.status === 'failed' || d.status === 'bounced') {
+    return html`<div class="callout warn" style="margin:0 0 12px"><b>${deliveryLabel(d.status)}.</b> The reply written on ${at} did not reach ${m.from_email}. ${d.error || 'The mail provider did not accept it.'}${link}</div>`;
+  }
+  if (d.status === 'queued') {
+    return html`<div class="callout" style="margin:0 0 12px"><b>${deliveryLabel(d.status)}.</b> The reply written on ${at} is on its way to ${m.from_email}.${d.error ? ` The last attempt did not go through (${d.error}); it will be tried again shortly.` : ''}${link}</div>`;
+  }
+  if (d.status === 'recorded') {
+    return html`<div class="callout warn" style="margin:0 0 12px"><b>${deliveryLabel(d.status)}.</b> The reply written on ${at} was saved to the Outbox and has not been emailed.${link}</div>`;
+  }
+  return html`<div class="callout" style="margin:0 0 12px"><b>${deliveryLabel(d.status)}.</b> The reply to ${m.from_email} was written on ${at}.${link}</div>`;
 }
 
 function messagePage(rq: Rq, m: MessageRow): Res {
@@ -136,8 +158,7 @@ function messagePage(rq: Rq, m: MessageRow): Res {
           ${card('The email', html`
             <p class="small muted" style="margin:0 0 8px">From <b>${m.from_name || m.from_email}</b> &lt;${m.from_email}&gt;${m.mailbox ? html` · to ${m.mailbox}` : ''}${m.forwarded_by ? html` · forwarded by ${m.forwarded_by}` : ''}</p>
             <div style="white-space:pre-wrap;font-size:14px;line-height:1.55">${m.body}</div>`)}
-          ${when(m.replied_at, () => html`<div class="callout" style="margin:0 0 12px">A reply was sent from StayLeased on ${fmtTs(m.replied_at!, TZ)}.
-            ${when(m.reply_message_id, () => html`<a href="/dev/messages/${m.reply_message_id}">See it and its delivery status</a>.`)}</div>`)}
+          ${when(m.replied_at, () => replyBanner(ctx, m))}
           ${when(draft || canSend, () => card(canSend ? 'Reply' : 'Suggested reply', canSend
             ? html`
               <p class="small muted" style="margin:0 0 8px">${draft ? 'Edit the suggestion, then send.' : 'Write the reply, then send.'} It goes to <b>${m.from_email}</b> by email, and their answer comes back ${replyHome}.</p>
@@ -150,11 +171,13 @@ function messagePage(rq: Rq, m: MessageRow): Res {
                 </div>
               </form>`
             : html`
-              <p class="small muted" style="margin:0 0 8px">Copy this into your own email, edit it, and send it from there. ${blocker} ${when(!m.is_sample, () => html`<a href="/setup/connections">Set up email</a>.`)}</p>
+              <p class="small muted" style="margin:0 0 8px">Copy this into your own email, edit it, and send it from there. ${blocker
+                ? html`${blocker}${when(!emailLive(ctx) && !m.is_sample, () => html` <a href="/setup/connections">Set up email</a>.`)}`
+                : 'Your account does not have permission to send email from StayLeased; ask an administrator if it should.'}</p>
               ${textarea('draft', { value: draft!, rows: 9, id: 'oi-draft' })}
               <div class="btn-row"><button type="button" class="btn btn-sm" data-copy="#oi-draft">Copy reply</button>
                 <a class="btn btn-sm btn-ghost" href="mailto:${m.from_email}?subject=${encodeURIComponent(`Re: ${m.subject}`)}&body=${encodeURIComponent(draft!)}">Open in my email</a></div>`))}
-          ${when(!draft && !canSend, () => card('Suggested reply', html`<p class="small muted" style="margin:0">No reply is suggested until this email is filed to a person. A reply needs a known recipient.</p>`))}
+          ${when(!draft && !canSend, () => card('Suggested reply', html`<p class="small muted" style="margin:0">No reply is suggested until this email is filed to a person. A reply needs a known recipient.${when(blocker && emailLive(ctx) && !m.is_sample, () => html` ${blocker}`)}</p>`))}
         </div>
         <div>
           ${card('Who is this from?', html`
@@ -343,7 +366,7 @@ export function routes(r: Router): void {
     const mid = rq.params.id!;
     const res = sendReply(ctx, mid, { subject: String(rq.body.subject || ''), text: String(rq.body.text || '') });
     if (!res.ok) return redirect(`/one-inbox/m/${mid}`, res.error, 'err');
-    return redirect(`/one-inbox/m/${mid}`, `Reply sent. ${deliveryNote(ctx)}.`);
+    return redirect(`/one-inbox/m/${mid}`, `Reply written. ${deliveryNote(ctx, 'email')}.`);
   });
 
   r.post('/one-inbox/m/:id/done', act, (rq) =>

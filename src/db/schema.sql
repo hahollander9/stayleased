@@ -1876,6 +1876,7 @@ CREATE TABLE IF NOT EXISTS mass_recipients (
   sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_massrcpt ON mass_recipients(org_id, mass_id, status);
+CREATE INDEX IF NOT EXISTS idx_massrcpt_outbox ON mass_recipients(outbox_id);
 
 -- ---------- Phase 14: revenue intelligence (M13) ----------
 
