@@ -1,5 +1,5 @@
 import * as nodeFs from 'node:fs';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { join, dirname, isAbsolute } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { Router, createApp, fileRes, jsonRes, notFound, redirect, type Rq } from '../lib/http.ts';
@@ -40,8 +40,16 @@ export function buildRouter(): Router {
     '/assets/vendor/leaflet.js': ['src/ui/vendor/leaflet.js', 'text/javascript; charset=utf-8'],
     '/assets/vendor/leaflet.css': ['src/ui/vendor/leaflet.css', 'text/css; charset=utf-8'],
   };
+  // theme.css is the base sheet; each file in src/ui/parts/ is one feature's
+  // styles, appended in name order so a feature can be worked on without
+  // touching (or colliding in) the 2,500-line base file. One request either way.
+  const themeCss = (): Buffer => {
+    const dir = join(ROOT, 'src/ui/parts');
+    const parts = existsSync(dir) ? readdirSync(dir).filter((f) => f.endsWith('.css')).sort().map((f) => readFileSync(join(dir, f))) : [];
+    return Buffer.concat([readFileSync(join(ROOT, 'src/ui/theme.css')), ...parts.flatMap((b) => [Buffer.from('\n'), b])]);
+  };
   for (const [route, [path, mime]] of Object.entries(assets)) {
-    r.get(route, () => fileRes(readFileSync(join(ROOT, path)), mime, { inline: true, cache: true }));
+    r.get(route, () => fileRes(route === '/assets/theme.css' ? themeCss() : readFileSync(join(ROOT, path)), mime, { inline: true, cache: true }));
   }
   r.get('/favicon.ico', () => fileRes(readFileSync(join(ROOT, 'src/ui/favicon.svg')), 'image/svg+xml', { inline: true, cache: true }));
 

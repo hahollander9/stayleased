@@ -16,7 +16,7 @@ import { uiMode, type UiMode } from '../lib/uimode.ts';
 const ASSET_V: string = (() => {
   try {
     const h = createHash('sha1');
-    for (const f of ['src/ui/theme.css', 'src/ui/app.js']) h.update(readFileSync(pjoin(ROOT, f)));
+    for (const f of ['src/ui/theme.css', 'src/ui/app.js', 'src/ui/parts/oneinbox.css', 'src/ui/parts/find.css']) { try { h.update(readFileSync(pjoin(ROOT, f))); } catch { /* a part may not exist */ } }
     return h.digest('hex').slice(0, 8);
   } catch {
     return 'dev';
