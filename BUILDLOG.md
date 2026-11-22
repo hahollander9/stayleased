@@ -2579,3 +2579,38 @@ messages were written to the Outbox and went nowhere (#129 made the product say 
 - Tests: `tests/fx_email.test.ts`, 19 tests through an injected transport — nothing touches
   the network. Text messages are unchanged: saved, not delivered.
 - To switch it on in production: DEPLOY.md → "Real email".
+
+## 2026-11-22 — Email, second pass: what three reviewers found before it merged
+
+The rail above went to three reviewers told to break it (abuse, delivery, every existing
+caller) before the PR was merged (#132). They found that turning on a real rail changes the
+meaning of code that was written when nothing left the building.
+
+- **Mail a stranger starts is held, not delivered.** The public tour form would have mailed a
+  confirmation — with the visitor's own unescaped HTML in it — to any address typed into it,
+  from the operator's name. Now: the confirmation and its reminder are written `recorded`
+  (`hold: true` on `send()`), names are capped, the time must be an open slot, and every
+  interpolated value in the leasing emails is escaped. The same hold applies to portal
+  invitations created by an import (a hundred one-time passwords at the moment of apply, while
+  the screen said "not emailed") and to an AI leasing reply nobody approved. Held mail has a
+  "Send this email" button in the Outbox.
+- **Sanitized once, at the rail.** `mailSafeHtml()` in `lib/email.ts`: a short list of plain
+  tags, every attribute removed, links only http(s)/mailto with relative ones made absolute,
+  no images/forms/scripts. Covers every current and future caller.
+- **No blind repeat.** An unanswered provider call (timeout, dropped connection, a restart
+  mid-send) is not retried on Postmark — the row stops with "not known whether this was
+  delivered". Resend gets an `Idempotency-Key` from the outbox id, so there it is retried.
+- **The server's fault is not the message's.** Missing configuration makes mail wait with an
+  accurate note; a rejected key is retried; any 2xx is accepted.
+- **Fair queue.** A pass runs until nothing is due, one-to-one mail goes ahead of mass mail,
+  a capped organization's due rows are deferred together, and a kick during a pass asks for
+  another.
+- **Followers follow.** A mass message's recipient lines and sent count now track the real
+  outbox status; One Inbox's "reply sent" banner reads the live status; flashes across
+  leasing, leases, renewals and messages say what actually happened (`deliveryNote(ctx,
+  channel)`); links in e-signature and application emails are absolute and come from
+  configuration, never a Host header; provider error text no longer reaches the log.
+- Tests: `tests/fx_email.test.ts` (26), `tests/fxm_public.test.ts` (10),
+  `tests/fxm_leases.test.ts` (6), `tests/fxm_inbox.test.ts` (8). 809 unit tests passing.
+- `src/ui/parts/*.css` are appended to `theme.css` when served, so a feature's styles can be
+  worked on without colliding in the base sheet.
