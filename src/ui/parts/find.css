@@ -1,0 +1,141 @@
+/* Find — the palette, All pages index, drawer sub-heads (served appended to theme.css). Tokens only. */
+
+/* ---------- menus: a hint under a label, and the last line of a Standard dropdown ---------- */
+.menu a .mhint { display: block; font-size: 12.5px; font-weight: 400; color: var(--muted); margin-top: 1px; }
+.menu a.mmore {
+  margin-top: 6px; padding-top: 9px; border-top: 1px solid var(--line-2); border-radius: 0 0 7px 7px;
+  font-size: 12.5px; color: var(--muted); line-height: 1.45; white-space: normal; max-width: 300px;
+}
+.menu a.mmore .mmore-what { display: block; }
+.menu a.mmore .mmore-go { color: var(--accent); font-weight: 600; }
+.menu a.mmore:hover { transform: none; }
+
+/* ---------- the Find anything button ---------- */
+.searchbtn .findkbd { margin-left: 8px; white-space: nowrap; font-size: 11.5px; }
+@media (max-width: 1100px) { .searchbtn .findkbd { display: none; } }
+
+/* ---------- the palette before anything is typed ---------- */
+.palette .palette-start { display: none; padding: 6px; max-height: 46vh; overflow-y: auto; }
+.palette #palette-input:placeholder-shown ~ .palette-start { display: block; }
+.palette #palette-input:placeholder-shown ~ .results { display: none; }
+.palette .palette-start .ps-head { padding: 6px 10px 4px; font-size: 12.5px; color: var(--muted); }
+.palette .palette-start a { display: flex; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 8px; color: var(--ink); font-size: 13.5px; text-decoration: none; }
+.palette .palette-start a:hover, .palette .palette-start a:focus-visible { background: var(--accent-soft); text-decoration: none; }
+.palette .palette-start .kind, .palette .results .kind { font-size: 11px; letter-spacing: .02em; }
+.palette .palette-start .kind { text-transform: uppercase; color: var(--muted); width: 74px; flex: none; }
+.palette .hintbar { font-size: 12.5px; }
+@media (max-width: 640px) {
+  .palette .palette-start a, .palette .results a { min-height: 44px; }
+}
+
+/* ---------- drawer: group sub-heads, and the closing group ---------- */
+.nav-group > .nav-sub { padding: 8px 10px 2px; font-size: 12.5px; color: var(--muted); }
+.nav-group > .nav-head + .nav-sub { padding-top: 2px; }
+.nav-group.nav-more { margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--line-2); }
+@media (max-width: 640px) {
+  .sidebar .nav a { min-height: 44px; }
+}
+
+/* ---------- breadcrumb note for a page outside the current menus ---------- */
+.crumbs a { text-decoration: underline; text-underline-offset: 2px; }
+
+/* ---------- All pages ---------- */
+.ap-find { margin: 0 0 14px; max-width: 640px; }
+.ap-find label, .pay-find label, .err-find label { display: block; font-size: 13px; font-weight: 600; color: var(--ink); margin-bottom: 5px; }
+.ap-find-row, .pay-find-row, .err-find-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ap-find-row input, .pay-find-row input, .err-find-row input {
+  flex: 1 1 220px; min-width: 0; min-height: 40px; padding: 8px 11px; font: 14px var(--font); color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius-sm);
+}
+.ap-find-row input:focus-visible, .pay-find-row input:focus-visible, .err-find-row input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.ap-jump { display: flex; flex-wrap: wrap; gap: 6px 16px; margin: 0 0 6px; font-size: 13px; }
+.ap-jump a { color: var(--accent); padding: 4px 0; }
+.ap-sec { margin-top: 22px; scroll-margin-top: 120px; }
+.ap-sec h2 { font-size: 16px; margin: 0 0 8px; color: var(--ink); }
+.ap-list { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 8px; }
+.ap-row {
+  display: block; height: 100%; padding: 10px 12px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink); text-decoration: none;
+}
+.ap-row:hover { border-color: var(--accent); text-decoration: none; }
+.ap-row:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ap-name { display: block; font-size: 14px; font-weight: 600; }
+.ap-what { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); line-height: 1.45; }
+.ap-aka { white-space: nowrap; }
+.ap-tag {
+  display: inline-block; vertical-align: 1px; margin-left: 4px; padding: 0 6px; border: 1px solid var(--line); border-radius: 99px;
+  font-size: 12.5px; font-weight: 400; color: var(--muted); white-space: nowrap;
+}
+.ap-foot { margin: 18px 0 0; font-size: 13px; color: var(--muted); max-width: 78ch; }
+.ap-foot .ap-tag { margin-left: 0; }
+@media (max-width: 640px) {
+  .ap-list { grid-template-columns: 1fr; }
+  .ap-row { min-height: 44px; }
+  .ap-jump a { padding: 12px 0; }
+  .ap-find-row input, .pay-find-row input, .err-find-row input, .ap-find-row .btn, .pay-find-row .btn, .err-find-row .btn { min-height: 44px; }
+}
+
+/* ---------- the signed-in 404 ---------- */
+.err-box .err-find { margin: 22px auto 0; max-width: 380px; text-align: left; }
+
+/* ---------- Connections: the plain list ---------- */
+.cx-list { list-style: none; margin: 0; padding: 0; }
+.cx-line {
+  display: grid; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr) auto; gap: 4px 18px; align-items: start;
+  padding: 14px 16px; border-top: 1px solid var(--line-2);
+}
+.cx-line:first-child { border-top: 0; }
+.cx-name b { display: block; font-size: 14px; }
+.cx-state { display: block; margin-top: 2px; font-size: 13px; color: var(--muted); }
+.cx-state.on { color: var(--ok); font-weight: 600; }
+.cx-says { margin: 0; font-size: 13px; line-height: 1.5; color: var(--ink-2, var(--ink)); max-width: 68ch; }
+.cx-act { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.cx-act form { margin: 0; }
+.cx-server { margin-top: 18px; border-top: 1px solid var(--line-2); padding-top: 12px; }
+.cx-server > summary { cursor: pointer; font-size: 13.5px; font-weight: 600; color: var(--ink); padding: 6px 0; }
+.cx-server > summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .cx-line { grid-template-columns: 1fr; }
+  .cx-act { justify-content: flex-start; margin-top: 6px; }
+  .cx-act .btn { min-height: 44px; }
+  .cx-server > summary { min-height: 44px; display: flex; align-items: center; }
+}
+
+/* ---------- Setup: jump row and anchors ---------- */
+.setup-jump { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 16px; margin: 0 0 14px; font-size: 13px; }
+.setup-jump .sj-label { color: var(--muted); }
+.setup-jump a { color: var(--accent); padding: 4px 0; }
+.find-anchor { scroll-margin-top: 120px; }
+/* sits AFTER the upload history, so it scrolls to a point that leaves the table above it on screen */
+.find-anchor-end { scroll-margin-top: 70vh; }
+@media (max-width: 640px) { .setup-jump a { padding: 12px 0; } }
+
+/* ---------- Record a payment: pick the household ---------- */
+.pay-find { margin: 0 0 16px; max-width: 560px; }
+.pay-list { list-style: none; margin: 0; padding: 0; }
+.pay-list li { border-top: 1px solid var(--line-2); }
+.pay-list li:first-child { border-top: 0; }
+.pay-list a {
+  display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: 2px 16px; align-items: center;
+  padding: 10px 16px; min-height: 44px; color: var(--ink); text-decoration: none; font-size: 13.5px;
+}
+.pay-list a:hover { background: var(--accent-soft); text-decoration: none; }
+.pay-list a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.pay-who .sub { display: block; font-size: 12.5px; color: var(--muted); }
+.pay-where { color: var(--muted); font-size: 13px; }
+.pay-owes { font-size: 13px; color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pay-owes b { color: var(--ink); }
+@media (max-width: 640px) {
+  .pay-list a { grid-template-columns: minmax(0, 1fr) auto; }
+  .pay-where { grid-column: 1; grid-row: 2; }
+  .pay-owes { grid-column: 2; grid-row: 1 / span 2; }
+}
+
+/* ---------- small cross-links ---------- */
+.also-waiting { margin: 0 0 12px; font-size: 13px; color: var(--muted); }
+.sm-ok-split { margin: 0 0 10px; }
+.inbox-other { display: block; margin-top: 2px; }
+.toolbar .ob-check { align-self: flex-end; }
+.toolbar .ob-check .check { margin: 0 0 8px; align-items: center; }
+.toolbar .ob-check input { min-width: 0; width: auto; padding: 0; margin: 0; }
+.ob-showing { margin: 0 0 10px; }

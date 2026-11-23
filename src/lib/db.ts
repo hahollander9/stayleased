@@ -41,6 +41,16 @@ export function db(): DatabaseSync {
   // SQLite has no ADD COLUMN IF NOT EXISTS, so each runs once and then no-ops)
   const MIGRATIONS = [
     "ALTER TABLE vendor_invoices ADD COLUMN po_id TEXT", // Phase 12: 2/3-way match
+    // the email rail (lib/email.ts): what the provider said about each message
+    "ALTER TABLE outbox_messages ADD COLUMN provider_id TEXT",
+    "ALTER TABLE outbox_messages ADD COLUMN delivered_at TEXT",
+    "ALTER TABLE outbox_messages ADD COLUMN delivery_error TEXT",
+    "ALTER TABLE outbox_messages ADD COLUMN attempts INTEGER NOT NULL DEFAULT 0",
+    "ALTER TABLE outbox_messages ADD COLUMN next_attempt_at TEXT",
+    "CREATE INDEX IF NOT EXISTS idx_outbox_queue ON outbox_messages(status, channel, next_attempt_at)",
+    "CREATE INDEX IF NOT EXISTS idx_outbox_provider ON outbox_messages(provider_id)",
+    "ALTER TABLE oi_messages ADD COLUMN replied_at TEXT", // One Inbox: a reply sent from StayLeased
+    "ALTER TABLE oi_messages ADD COLUMN reply_message_id TEXT",
     "ALTER TABLE vendor_invoices ADD COLUMN discount_cents INTEGER NOT NULL DEFAULT 0", // early-pay terms
     "ALTER TABLE vendor_invoices ADD COLUMN discount_by TEXT", // pay-by date to capture it
     "ALTER TABLE vendors ADD COLUMN terms TEXT", // e.g. '2/10 net 30'

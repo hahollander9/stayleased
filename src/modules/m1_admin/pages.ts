@@ -1,10 +1,10 @@
 import { html, raw, when, join, type Child, type Raw, safeHtml } from '../../lib/html.ts';
 import { VError } from '../../lib/validate.ts';
 import {
-  redirect, notFound, forbidden, fileRes, type Router, type Rq, badRequest,
+  redirect, notFound, forbidden, fileRes, type Router, type Rq, type Res, badRequest,
 } from '../../lib/http.ts';
 import {
-  requirePerm, requireUser, devOnly, hashPassword, tempPassword, type Ctx, sysCtx, requireStaff,
+  requirePerm, requireUser, devOnly, can, hashPassword, tempPassword, type Ctx, sysCtx, requireStaff,
   canAccessProperty, propFilter,
 } from '../../lib/auth.ts';
 import { q, q1, run, insert, j, js, val, update } from '../../lib/db.ts';
@@ -16,6 +16,7 @@ import { getSetting, getSettingMerged, layerSetting, narrowOverride, setSetting,
 import { advanceBusinessDate, jobDefs, runJob, ensureJobRows } from '../../lib/jobs.ts';
 import { getDials, setDials, DEFAULT_DIALS, type Dials } from '../../lib/sim/dials.ts';
 import { receiveInbound, isLiveOrg, deliveryLabel, RECORDED } from '../../lib/sim/messaging.ts';
+import { emailLive, deliverNow } from '../../lib/email.ts';
 import { getFile, canDownload, canServeInline } from '../../lib/files.ts';
 import { clearOrgData } from '../m2_portfolio/service.ts';
 import { SPECS, GROUPS, renderSetting, isInstantSetting, describeSetting, parseSetting, type SettingSpec } from './settings_spec.ts';
@@ -39,7 +40,27 @@ registerNav('Admin', { href: '/admin/api', label: 'Integrations', perm: 'admin:a
 registerNav('Developer', { href: '/dev/sim', label: 'Simulator console', perm: 'dev:console', demoOnly: true });
 // The Outbox is where every "saved, not delivered" message points, so the
 // people who send messages must be able to open it — not only developers.
-registerNav('Admin', { href: '/dev/messages', label: 'Outbox', perm: 'comms:view' });
+// It is served at /outbox — a place a person would look, and type. /dev/messages
+// was the developer console it grew out of; that address still answers.
+registerNav('Admin', { href: '/outbox', label: 'Outbox', perm: 'comms:view', match: ['/outbox', '/dev/messages'] });
+
+/** What a message is, in words, for the people who do not need the template's
+ * code name. Anything not listed reads as its key with the underscores out. */
+const MESSAGE_KINDS: Record<string, string> = {
+  portal_invite: 'Portal invitation', email_test: 'Test email', mass: 'Notice to a group',
+  scheduled_report: 'Scheduled report', adverse_action: 'Application decision letter',
+  payment_nsf: 'Returned payment notice', payment_receipt: 'Payment receipt', rent_reminder: 'Rent reminder',
+  late_notice: 'Late rent notice', payment_plan_confirmed: 'Payment plan confirmation',
+  insurance_reminder: 'Renters insurance reminder', insurance_autoenroll: 'Renters insurance enrollment',
+  po_sent: 'Purchase order', tour_confirmation: 'Tour confirmation', renewal_offer: 'Renewal offer', tour_reminder: 'Tour reminder', wo_update: 'Repair update',
+};
+function messageKind(key: string | null | undefined): string {
+  if (!key) return '';
+  const known = MESSAGE_KINDS[key];
+  if (known) return known;
+  const words = key.replaceAll('_', ' ').trim();
+  return words ? words[0]!.toUpperCase() + words.slice(1) : '';
+}
 
 registerSearch((ctx, query) => {
   if (!ctx.perms.has('admin:staff')) return [];
@@ -840,71 +861,124 @@ export function routes(r: Router): void {
   // The outbox is a RECORD, not a simulator: live orgs need to read what the
   // platform generated for their residents (portal invites carry the one-time
   // passwords) until the live email/SMS rails ship. Only /dev/sim stays demo-only.
-  r.get('/dev/messages', requirePerm('comms:view'), (rq) => {
+  const outboxList = (rq: Rq): Res => {
     const ctx = rq.ctx as Ctx;
+    const advanced = uiMode(ctx) === 'advanced';
     const channel = rq.query.get('channel') || '';
     const template = rq.query.get('template') || '';
     const qtext = rq.query.get('q') || '';
+    // An outbox that listed received mail too was two lists in one. Sent is
+    // the default; received is one tick away.
+    const received = rq.query.get('received') === '1';
     const params: unknown[] = [ctx.orgId];
     let where = 'org_id=?';
     // Opened up from developers to anyone who sends messages, so it has to
     // respect what they may see: staff scoped to some buildings get those
     // buildings' messages, and nothing that belongs to no building.
+    // The one exception is a message with no building that the viewer sent
+    // personally (a One Inbox reply): it is theirs to follow up on.
     if (!ctx.allProperties) {
-      if (!ctx.propertyIds.length) where += ' AND 1=0';
-      else { where += ` AND property_id IN (${ctx.propertyIds.map(() => '?').join(',')})`; params.push(...ctx.propertyIds); }
+      const own = `(property_id IS NULL AND direction='out' AND sent_by=?)`;
+      if (!ctx.propertyIds.length) { where += ` AND ${own}`; params.push(ctx.userId); }
+      else { where += ` AND (property_id IN (${ctx.propertyIds.map(() => '?').join(',')}) OR ${own})`; params.push(...ctx.propertyIds, ctx.userId); }
     }
+    if (!received) where += " AND direction='out'";
     if (channel) { where += ' AND channel=?'; params.push(channel); }
     if (template) { where += ' AND template_key=?'; params.push(template); }
-    if (qtext) { where += ' AND (subject LIKE ? OR to_addr LIKE ? OR body LIKE ?)'; params.push(`%${qtext}%`, `%${qtext}%`, `%${qtext}%`); }
+    if (qtext) { where += ' AND (subject LIKE ? OR to_addr LIKE ? OR to_name LIKE ? OR body LIKE ?)'; params.push(`%${qtext}%`, `%${qtext}%`, `%${qtext}%`, `%${qtext}%`); }
     const total = val<number>(`SELECT COUNT(*) c FROM outbox_messages WHERE ${where}`, ...params);
     const page = Math.max(1, parseInt(rq.query.get('page') || '1', 10) || 1);
     const rows = q<any>(`SELECT * FROM outbox_messages WHERE ${where} ORDER BY created_at DESC LIMIT 50 OFFSET ?`, ...params, (page - 1) * 50);
+    const count = `${total.toLocaleString('en-US')} message${total === 1 ? '' : 's'}`;
+    const attention = (st: string): string | undefined => (st === RECORDED || st === 'queued' ? 'warn' : st === 'failed' || st === 'bounced' ? 'failed' : undefined);
     return shell(rq, {
       title: 'Outbox',
-      active: '/dev/messages',
+      active: '/outbox',
       subtitle: ctx.orgKind === 'live'
-        ? `Every message the platform writes — portal invites and one-time passwords included. Email and text delivery are not connected yet, so nothing here has reached anyone: open a message to read it and pass it on yourself. ${total} message${total === 1 ? '' : 's'}.`
-        : `Outbox simulator — nothing actually sends. ${total} message${total === 1 ? '' : 's'} captured.`,
+        ? emailLive(ctx)
+          ? 'Every message the platform writes. Email is delivered for real — each row shows whether it was sent, is still sending, bounced, or was not delivered. Text messages are not connected: open one to read it and pass it on yourself.'
+          : `Every message the platform writes — portal invites and one-time passwords included. Email and text delivery are not connected yet, so nothing here has reached anyone: open a message to read it and pass it on yourself. ${count}.`
+        : `This is the practice company, so nothing here was really sent. ${count}.`,
+      actions: can(ctx, 'comms:view') ? html`<a class="btn btn-ghost" href="/inbox">Inbox</a>${can(ctx, 'comms:mass') ? html` <a class="btn btn-ghost" href="/comms">Send a notice</a>` : ''}` : undefined,
       content: html`
-        <form method="get" class="toolbar" data-autosubmit>
-          ${field('Channel', select('channel', [['email', 'Email'], ['sms', 'SMS']], channel, { blank: 'All channels' }))}
-          ${field('Template', input('template', { value: template, placeholder: 'e.g. payment_nsf', list: '' }))}
-          ${field('Search', input('q', { value: qtext, placeholder: 'subject, address or body' }))}
+        <form method="get" action="/outbox" class="toolbar" data-autosubmit>
+          ${field('Sent by', select('channel', [['email', 'Email'], ['sms', 'Text message']], channel, { blank: 'Email and text' }))}
+          ${advanced
+            ? field('Template', input('template', { value: template, placeholder: 'e.g. payment_nsf', list: '' }))
+            : template ? html`<input type="hidden" name="template" value="${template}" />` : ''}
+          ${field('Search', input('q', { value: qtext, placeholder: 'A name, an address or words in the message', type: 'search' }))}
+          <div class="field ob-check">${checkbox('received', 'Include received', received)}</div>
+          <button class="btn btn-ghost" type="submit">Show</button>
         </form>
+        ${when(!advanced && !!template, () => html`<p class="small muted ob-showing">Showing only: <b>${messageKind(template)}</b>. <a href="/outbox${received ? '?received=1' : ''}">Show every kind</a></p>`)}
         ${card(null, html`${tbl(
-          [{ label: '' }, { label: 'When' }, { label: 'To' }, { label: 'Subject / body' }, { label: 'Delivery' }, { label: 'Template' }],
+          [{ label: 'How' }, { label: 'When' }, { label: received ? 'To or from' : 'To' }, { label: 'Message' }, { label: 'Delivered?' }, { label: advanced ? 'Template' : 'What it is' }],
           rows.map((m) => ({
-            href: `/dev/messages/${m.id}`,
+            href: `/outbox/${m.id}`,
             cells: [
-              html`${statusBadge(undefined, m.direction === 'in' ? 'in' : m.channel)}`,
+              html`<span class="small nowrap">${m.channel === 'email' ? 'Email' : 'Text'}${m.direction === 'in' ? ' in' : ''}</span>`,
               html`<span class="small nowrap">${m.created_at.slice(5, 16).replace('T', ' ')}</span>`,
               html`${m.to_name ? html`<b>${m.to_name}</b> ` : ''}<span class="muted small">${m.to_addr}</span>`,
               html`<span class="small">${m.subject || m.body.replace(/<[^>]+>/g, ' ').slice(0, 90)}</span>`,
-              statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status)),
-              m.template_key ? html`<span class="mono small">${m.template_key}</span>` : '—',
+              statusBadge(attention(m.status), deliveryLabel(m.status)),
+              m.template_key
+                ? advanced ? html`<span class="mono small">${m.template_key}</span>` : html`<span class="small" title="${m.template_key}">${messageKind(m.template_key)}</span>`
+                : html`<span class="small muted">${m.direction === 'in' ? 'Received' : 'Written by hand'}</span>`,
             ],
           })),
-          { empty: 'No messages yet. Actions across StayLeased (receipts, reminders, letters) will land here.' },
+          { empty: qtext || channel || template
+            ? 'No messages match. Clear the search to see everything.'
+            : 'No messages yet. Receipts, reminders, letters and replies appear here as they go out.' },
         )}${pager(rq, total)}`, { flush: true })}`,
     });
-  });
+  };
 
-  r.get('/dev/messages/:id', requirePerm('comms:view'), (rq) => {
+  // One rule for the detail page and everything that acts on a message: the
+  // row is in the viewer's organization, and either they see every building,
+  // or it belongs to one of theirs, or it has no building and they sent it.
+  const outboxRow = (ctx: Ctx, mid: string): any | null => {
+    const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', mid, ctx.orgId);
+    if (!m) return null;
+    if (ctx.allProperties) return m;
+    if (m.property_id) return ctx.propertyIds.includes(m.property_id) ? m : null;
+    return m.direction === 'out' && !!ctx.userId && m.sent_by === ctx.userId ? m : null;
+  };
+  /** A saved outbound email that can be handed to the provider now: held
+   * invitations, and anything written before email was switched on. Never a
+   * text message, never a demo organization. */
+  const sendableNow = (ctx: Ctx, m: any): boolean =>
+    m.status === RECORDED && m.channel === 'email' && m.direction === 'out' && emailLive(ctx);
+
+  const outboxDetail = (rq: Rq): Res => {
     const ctx = rq.ctx as Ctx;
-    const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
+    const m = outboxRow(ctx, rq.params.id!);
     if (!m) return notFound('Message not found');
-    if (!ctx.allProperties && !(m.property_id && ctx.propertyIds.includes(m.property_id))) return notFound('Message not found');
+    const canSendNow = sendableNow(ctx, m);
+    const whom = m.to_name || m.to_addr;
     return shell(rq, {
       title: m.subject || `${m.channel.toUpperCase()} message`,
-      active: '/dev/messages',
-      crumbs: [['Outbox', '/dev/messages']],
+      active: '/outbox',
+      crumbs: [[uiMode(ctx) === 'standard' ? 'Sent messages' : 'Outbox', '/outbox']],
       content: html`
-        ${m.status === RECORDED ? html`<div class="callout warn"><b>Saved — not delivered.</b> Email and text delivery are not connected yet, so this message has not reached ${m.to_name || m.to_addr}. Copy it and send it yourself if they need it.</div>` : null}
+        ${m.status === RECORDED ? html`<div class="callout warn"><b>Saved — not delivered.</b> ${canSendNow
+          ? html`This email was saved and has not been sent to ${whom}. It can be sent now.
+            ${can(ctx, 'comms:send')
+              ? html`<form method="post" action="/outbox/${m.id}/send" style="margin-top:8px"><button class="btn btn-sm" type="submit">Send this email</button></form>`
+              : 'Your account does not have permission to send it.'}`
+          : m.direction === 'out' && m.channel !== 'email' && emailLive(ctx)
+            ? html`Text messages are not connected yet, so this message has not reached ${whom}. Copy it and send it yourself if they need it.`
+            : m.direction === 'out' && ctx.orgKind === 'live' && !emailLive(ctx)
+              ? html`Email and text delivery are not connected yet, so this message has not reached ${whom}. Copy it and send it yourself if they need it.`
+              : html`This message was saved and has not reached ${whom}. Copy it and send it yourself if they need it.`}</div>` : null}
+        ${m.status === 'failed' || m.status === 'bounced' ? html`<div class="callout warn"><b>${m.status === 'bounced' ? 'Bounced.' : 'Not delivered.'}</b> ${m.delivery_error || 'The mail provider did not accept this message.'}
+          ${m.status === 'failed' && m.channel === 'email' && can(ctx, 'comms:send') ? html`<form method="post" action="/outbox/${m.id}/retry" style="margin-top:8px"><button class="btn btn-sm" type="submit">Try again</button></form>` : null}</div>` : null}
+        ${m.status === 'queued' ? html`<div class="callout"><b>Sending.</b> ${m.delivery_error ? html`The last attempt did not go through (${m.delivery_error}); it will be tried again shortly.` : 'This message is on its way.'}</div>` : null}
         ${card('Details', dl([
-          ['Direction', m.direction], ['Channel', m.channel],
+          ['Direction', m.direction === 'in' ? 'Received' : 'Sent'], ['How', m.channel === 'email' ? 'Email' : 'Text message'],
           [m.direction === 'in' ? 'From' : 'To', `${m.to_name || ''} <${m.to_addr}>`],
-          ['Delivery', statusBadge(m.status === RECORDED ? 'warn' : m.status, deliveryLabel(m.status))], ['Template', m.template_key || '—'],
+          ['Delivered?', statusBadge(m.status === RECORDED || m.status === 'queued' ? 'warn' : m.status === 'bounced' || m.status === 'failed' ? 'failed' : undefined, deliveryLabel(m.status))],
+          [uiMode(ctx) === 'advanced' ? 'Template' : 'What it is', uiMode(ctx) === 'advanced' ? m.template_key || '—' : messageKind(m.template_key) || (m.direction === 'in' ? 'Received' : 'Written by hand')],
+          ...(m.delivered_at ? [['Handed to mail provider', fmtTs(m.delivered_at)] as [string, any]] : []),
           [m.status === RECORDED ? 'Saved' : m.direction === 'in' ? 'Received' : 'Sent', fmtTs(m.created_at)], ['Entity', m.entity ? `${m.entity}/${m.entity_id}` : '—'],
         ]))}
         ${card('Rendered message', m.channel === 'email'
@@ -916,28 +990,72 @@ export function routes(r: Router): void {
             : html`<div style="border:1px solid var(--line);border-radius:8px;padding:16px;background:#fff">${safeHtml(m.body)}</div>`
           : html`<div style="max-width:340px;background:var(--info-soft);border-radius:14px;padding:10px 14px;font-size:14px">${m.body}</div>`)}
         ${m.direction === 'out' && m.person_id && !isLiveOrg(ctx) ? card('Simulate inbound reply', html`
-          <form method="post" action="/dev/messages/${m.id}/reply">
+          <form method="post" action="/outbox/${m.id}/reply">
             ${field('Reply body', textarea('body', { required: true, placeholder: 'Type the simulated reply from this person…' }))}
             <button class="btn">Receive reply</button>
           </form>`) : null}`,
     });
-  });
+  };
 
-  r.post('/dev/messages/:id/reply', devOnly, requirePerm('dev:console'), (rq) => {
+  const outboxRetry = async (rq: Rq): Promise<Res> => {
+    const ctx = rq.ctx as Ctx;
+    const m = outboxRow(ctx, rq.params.id!);
+    if (!m) return notFound('Message not found');
+    if (m.status !== 'failed' || m.channel !== 'email' || m.direction !== 'out') return redirect(`/outbox/${m.id}`, 'Only an email that was not delivered can be tried again.', 'err');
+    if (!emailLive(ctx)) return redirect(`/outbox/${m.id}`, 'Email delivery is switched off for this organization.', 'err');
+    run("UPDATE outbox_messages SET status='queued', attempts=0, next_attempt_at=NULL, delivery_error=NULL WHERE id=? AND status='failed'", m.id);
+    const res = await deliverNow(m.id);
+    audit(ctx, 'message', m.id, 'email_retry', null, { status: res.status });
+    return res.status === 'sent'
+      ? redirect(`/outbox/${m.id}`, 'Sent.')
+      : redirect(`/outbox/${m.id}`, `Still not delivered: ${res.error || res.status}`, 'err');
+  };
+
+  // Send a saved email: a held invitation, or a message written before email
+  // delivery was switched on. The person pressing the button has read it.
+  const outboxSend = async (rq: Rq): Promise<Res> => {
+    const ctx = rq.ctx as Ctx;
+    const m = outboxRow(ctx, rq.params.id!);
+    if (!m) return notFound('Message not found');
+    const back = `/outbox/${m.id}`;
+    if (m.direction !== 'out' || m.channel !== 'email') return redirect(back, 'Only an outgoing email can be sent from here. Text messages are not connected.', 'err');
+    if (m.status !== RECORDED) return redirect(back, 'Only an email that was saved and not sent can be sent from here.', 'err');
+    if (!emailLive(ctx)) return redirect(back, 'Email delivery is not switched on for this organization, so nothing was sent.', 'err');
+    // the status guard makes a double press send once
+    const claimed = run("UPDATE outbox_messages SET status='queued', attempts=0, next_attempt_at=NULL, delivery_error=NULL WHERE id=? AND org_id=? AND status=?", m.id, ctx.orgId, RECORDED).changes;
+    if (!claimed) return redirect(back, 'This email is already being sent.', 'err');
+    const res = await deliverNow(m.id);
+    audit(ctx, 'message', m.id, 'email_send_saved', null, { status: res.status });
+    if (res.status === 'sent') return redirect(back, `Sent to ${m.to_addr}.`);
+    if (res.status === 'queued') return redirect(back, `Not sent yet${res.error ? `: ${res.error}` : ''}. It will be tried again shortly; this page shows the result.`);
+    return redirect(back, `Not delivered: ${res.error || res.status}`, 'err');
+  };
+
+  const outboxReply = (rq: Rq): Res => {
     const ctx = rq.ctx as Ctx;
     const m = q1<any>('SELECT * FROM outbox_messages WHERE id=? AND org_id=?', rq.params.id!, ctx.orgId);
     if (!m) return notFound();
     // devOnly gates on deployment mode; a live org on a demo-mode deployment
     // must still never get an invented inbound message.
-    if (isLiveOrg(ctx)) return redirect(`/dev/messages/${m.id}`, 'Simulated replies are for the demo only — inbound email and text are not connected.', 'err');
+    if (isLiveOrg(ctx)) return redirect(`/outbox/${m.id}`, 'Simulated replies are for the demo only — inbound email and text are not connected.', 'err');
     receiveInbound(ctx, {
       channel: m.channel, from: m.to_addr, fromName: m.to_name || undefined,
       subject: m.subject ? `Re: ${m.subject}` : undefined, body: String(rq.body.body || ''),
       propertyId: m.property_id, threadId: m.thread_id, personId: m.person_id,
     });
     emit(ctx, 'message.inbound', 'message', m.id, { channel: m.channel, from: m.to_addr });
-    return redirect('/dev/messages', 'Inbound reply recorded.');
-  });
+    return redirect('/outbox?received=1', 'Inbound reply recorded.');
+  };
+
+  // Both addresses, every method: /outbox is where it lives; /dev/messages is
+  // where a year of links, bookmarks and flashes still point.
+  for (const base of ['/outbox', '/dev/messages']) {
+    r.get(base, requirePerm('comms:view'), outboxList);
+    r.get(`${base}/:id`, requirePerm('comms:view'), outboxDetail);
+    r.post(`${base}/:id/retry`, requirePerm('comms:send'), outboxRetry);
+    r.post(`${base}/:id/send`, requirePerm('comms:send'), outboxSend);
+    r.post(`${base}/:id/reply`, devOnly, requirePerm('dev:console'), outboxReply);
+  }
 
   // ---------- API keys & webhooks admin ----------
   r.get('/admin/api', requirePerm('admin:api'), (rq) => {

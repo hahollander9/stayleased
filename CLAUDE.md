@@ -107,6 +107,21 @@ own summary page.
   token cap (`STAYLEASED_AI_PUBLIC_DAILY_TOKEN_CAP`); `DEBUG_ERRORS` stays unset in prod;
   uploads are magic-byte sniffed; org isolation on every query (`canAccessProperty`).
 
+## Finding things, colour, and feature styles (2026-11-22)
+
+- **Find**: the search box is "Find anything". Keywords live in ONE map, `FIND_WORDS` in
+  `src/ui/ui.ts`; places in no menu go in `EXTRA_DESTS`. `/all-pages` (m25_find) is generated
+  from the nav registry. A new page needs a nav registration or an `EXTRA_DESTS` line, and
+  keywords — `tests/find_pages.test.ts` pins everyday queries to their first hit (#135).
+- **Sent messages** is `/outbox` (`/dev/messages` still answers). Aliases for guessed URLs
+  are in `src/modules/m25_find/pages.ts`, registered FIRST so they win over `/:id` routes.
+- **Palette** (#136): pine `#0A6B4E`; `--accent-strong`/`--brand`/`--grad` are fills (white
+  label only), `--accent` is for text, icons, borders, focus. No hex literals outside the
+  token blocks — use tokens, `color-mix()`, `--ramp-n`, `--series-n`, `--mark-*`.
+- **Feature styles** go in `src/ui/parts/<feature>.css`, appended to `theme.css` when served.
+- **Held mail** (#134): `sendEmail(ctx, { …, hold: true })` for anything a member of the
+  public, a bulk import or an unapproved agent action starts.
+
 ## Copy pins (grep before touching marketing copy)
 
 `e2e/homepage.test.ts` pins, currently: "Property management that does the work" ·
@@ -142,8 +157,15 @@ optional `STAYLEASED_GA_ID` (GA4 — everything about it is OFF
 until this is set), optional `STAYLEASED_STRIPE_SECRET_KEY` + `STAYLEASED_STRIPE_WEBHOOK_SECRET`
 (billing is inert without them; `STAYLEASED_BILLING_UNIT_PRICE_CENTS` defaults to 600 = $6/unit,
 and only sets the price for NEW accounts — existing ones keep the price on their own row).
+Real email (DECISIONS #133, `src/lib/email.ts`): `STAYLEASED_EMAIL_PROVIDER` (`postmark`|`resend`) +
+`STAYLEASED_EMAIL_API_KEY` + `STAYLEASED_EMAIL_FROM`, optional `STAYLEASED_EMAIL_WEBHOOK_SECRET`,
+`STAYLEASED_EMAIL_STREAM`, `STAYLEASED_EMAIL_DAILY_CAP_PER_ORG`. Three gates, re-checked at hand-off:
+server configured · org is live · org setting `email_delivery` on (default off). `send()` only writes
+a row (`queued`); the queue drains after the write and on the poller. `POST /webhooks/email` takes
+bounces — unauthenticated, secret-checked. Tests inject a transport with `setEmailTransport`; never
+let a test reach a provider. SMS is still recorded-only.
 Stripe's endpoint is `POST /webhooks/stripe`: `customer.subscription.*`, `invoice.paid`,
-`invoice.payment_failed`, `invoice.finalized`. It is the ONE unauthenticated route in the app —
+`invoice.payment_failed`, `invoice.finalized`. It and `/webhooks/email` are the only unauthenticated POST routes —
 the signature is its authentication, verified over `Rq.rawBody` (DECISIONS #99), and no card
 field may ever be added to m20 (#98). Live orgs are fenced from sim jobs. Every RESIDENT-facing
 external rail is still simulated and disclosed in-product; Stripe is the first real one and is
@@ -192,7 +214,8 @@ never qualify (DECISIONS #57).
   penny-perfect fixtures + PDF-lane verification (files from Henry); (3) production-readiness
   sweep waves 1–3 (`claude/production-readiness-sweep-plan.md` in the project); (4) scorer #3
   asset/vendor per `claude/agent-scoring-architecture.md`; (5) demo access-code gate (rewrite
-  the verification band's "open to anyone" in the same commit); (6) live email rail.
+  the verification band's "open to anyone" in the same commit). The live email rail shipped 2026-11-22;
+  SMS is the next rail.
 - Superpowers plans live in `docs/superpowers/plans/` — read the latest before starting
   related work.
 

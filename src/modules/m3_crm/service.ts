@@ -6,13 +6,23 @@ import { emit } from '../../lib/events.ts';
 import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { getDials } from '../../lib/sim/dials.ts';
-import { sendEmail, sendSms, isLiveOrg } from '../../lib/sim/messaging.ts';
+import { sendEmail, sendSms, isLiveOrg, outboundStatus } from '../../lib/sim/messaging.ts';
+import { esc, safeHtml } from '../../lib/html.ts';
 import { Rng } from '../../lib/rng.ts';
 import { FIRST, LAST } from '../../seed/names.ts';
 import { unitStats } from '../m2_portfolio/service.ts';
 
 /** M3 services: lead intake with dedupe, cadences, tours, quotes, the IlsFeed
  * simulator, funnel analytics, Leasing Center round-robin. */
+
+export const TOUR_TYPES = ['in_person', 'self_guided', 'virtual'] as const;
+
+/** A value headed for an email SUBJECT. Subjects are plain text, so HTML
+ * escaping would show up as literal `&amp;` in the inbox; what must not get
+ * through is a line break (a header) or anything that reads as markup. */
+function subjectText(v: unknown): string {
+  return String(v ?? '').replace(/[\r\n\t<>]+/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
 
 export const LEAD_SOURCES = ['zillow', 'apartments_com', 'facebook', 'craigslist', 'google', 'website', 'walk_in', 'phone', 'referral'] as const;
 
@@ -108,14 +118,18 @@ export function setLeadStatus(ctx: Ctx, leadId: string, status: string, reason?:
 }
 
 /** outbound message from the guest card */
-export function messageLead(ctx: Ctx, leadId: string, channel: 'email' | 'sms', subject: string, body: string): void {
+export function messageLead(ctx: Ctx, leadId: string, channel: 'email' | 'sms', subject: string, body: string, opts: { hold?: boolean } = {}): void {
   const lead = q1<any>('SELECT * FROM leads WHERE id=? AND org_id=?', leadId, ctx.orgId);
   if (!lead) throw new Error('lead not found');
   if (channel === 'email' && lead.email) {
     sendEmail(ctx, {
       to: lead.email, toName: `${lead.first_name} ${lead.last_name}`, subject,
-      body: `<p>${body.replaceAll('\n', '<br/>')}</p>`, propertyId: lead.property_id,
-      entity: 'lead', entityId: leadId, personId: leadId,
+      // The body is text a staff member typed, or an agent draft that carries a
+      // few formatting tags (<b>, <p>) and quotes what a stranger wrote. It goes
+      // to a real inbox now, so it gets the same allowlist the app uses to
+      // display it: formatting survives, everything else arrives as text.
+      body: `<p>${safeHtml(body).s.replaceAll('\n', '<br/>')}</p>`, propertyId: lead.property_id,
+      entity: 'lead', entityId: leadId, personId: leadId, hold: !!opts.hold,
     });
   } else if (channel === 'sms' && lead.phone) {
     sendSms(ctx, {
@@ -128,9 +142,11 @@ export function messageLead(ctx: Ctx, leadId: string, channel: 'email' | 'sms', 
   leadEvent(ctx, leadId, channel === 'email' ? 'email_out' : 'sms_out', `${subject ? subject + ' — ' : ''}${body.slice(0, 120)}`);
   completeNextTask(ctx, leadId);
   // stage moves always carry their reason — visible on the lead timeline
-  // …but only when something reached the prospect. In a live organization the
-  // message is saved, not delivered, so the lead has not been contacted yet.
-  if (lead.status === 'new' && !isLiveOrg(ctx)) setLeadStatus(ctx, leadId, 'contacted', `first ${channel === 'email' ? 'email' : 'text'} sent`);
+  // …but only when something reached the prospect. In a live organization a
+  // text is saved, not delivered, and so is an email unless delivery is on —
+  // in those cases the lead has not been contacted yet.
+  const reached = !isLiveOrg(ctx) || (channel === 'email' && outboundStatus(ctx, 'email') === 'queued');
+  if (lead.status === 'new' && reached) setLeadStatus(ctx, leadId, 'contacted', `first ${channel === 'email' ? 'email' : 'text'} sent`);
 }
 
 // ---------- tours (M3.3) ----------
@@ -157,10 +173,21 @@ export function tourSlots(ctx: Ctx, propertyId: string, date: string): string[] 
 
 export function bookTour(
   ctx: Ctx,
-  opts: { leadId: string; date: string; startTime: string; type?: string; unitId?: string | null; agentUserId?: string | null; skipConfirmation?: boolean },
+  opts: {
+    leadId: string; date: string; startTime: string; type?: string; unitId?: string | null; agentUserId?: string | null; skipConfirmation?: boolean;
+    /** The booking came from a member of the public, not from staff. The
+     * confirmation is written but held in the Outbox (live organizations): a
+     * form anyone can post must not make this server email whatever address
+     * was typed into it. */
+    heldConfirmation?: boolean;
+  },
 ): string {
   const lead = q1<any>('SELECT * FROM leads WHERE id=? AND org_id=?', opts.leadId, ctx.orgId);
   if (!lead) throw new Error('lead not found');
+  // both values are stored and later written into message subjects and bodies
+  if (!/^([01]\d|2[0-3]):[0-5]\d$/.test(opts.startTime)) throw new Error('pick a tour time in the form HH:MM');
+  const type = opts.type || 'in_person';
+  if (!(TOUR_TYPES as readonly string[]).includes(type)) throw new Error('pick a tour type from the list');
   const clash = q1<any>(
     `SELECT id FROM tours WHERE property_id=? AND date=? AND start_time=? AND status='scheduled'`,
     lead.property_id, opts.date, opts.startTime,
@@ -169,10 +196,10 @@ export function bookTour(
   const tourId = id('tur');
   insert('tours', {
     id: tourId, org_id: ctx.orgId, property_id: lead.property_id, lead_id: lead.id,
-    unit_id: opts.unitId || null, type: opts.type || 'in_person', date: opts.date, start_time: opts.startTime,
+    unit_id: opts.unitId || null, type, date: opts.date, start_time: opts.startTime,
     agent_user_id: opts.agentUserId || (ctx.kind === 'staff' ? ctx.userId : null), status: 'scheduled', created_at: nowIso(),
   });
-  leadEvent(ctx, lead.id, 'tour_scheduled', `${(opts.type || 'in_person').replaceAll('_', ' ')} tour booked for ${fmtDate(opts.date)} ${opts.startTime}`);
+  leadEvent(ctx, lead.id, 'tour_scheduled', `${type.replaceAll('_', ' ')} tour booked for ${fmtDate(opts.date)} ${opts.startTime}`);
   // stage moves always carry their reason — visible on the lead timeline
   if (lead.status === 'new' || lead.status === 'contacted') setLeadStatus(ctx, lead.id, 'touring', `tour booked for ${fmtDate(opts.date)} ${opts.startTime}`);
   completeNextTask(ctx, lead.id);
@@ -180,8 +207,9 @@ export function bookTour(
     sendEmail(ctx, {
       to: lead.email, toName: `${lead.first_name} ${lead.last_name}`,
       subject: `Your tour is confirmed — ${fmtDate(opts.date)} at ${opts.startTime}`,
-      body: `<p>Hi ${lead.first_name},</p><p>You're confirmed for a ${(opts.type || 'in-person').replaceAll('_', ' ')} tour on <b>${fmtDate(opts.date)} at ${opts.startTime}</b>. Reply to this message if you need to reschedule — see you soon!</p>`,
+      body: `<p>Hi ${esc(lead.first_name)},</p><p>You're confirmed for a ${esc(type.replaceAll('_', ' '))} tour on <b>${esc(fmtDate(opts.date))} at ${esc(opts.startTime)}</b>. Reply to this message if you need to reschedule — see you soon!</p>`,
       propertyId: lead.property_id, entity: 'tour', entityId: tourId, personId: lead.id, templateKey: 'tour_confirmation',
+      hold: !!opts.heldConfirmation,
     });
   }
   emit(ctx, 'tour.scheduled', 'tour', tourId, { leadId: lead.id, date: opts.date });
@@ -233,8 +261,8 @@ export function buildQuote(
   if (lead.email) {
     sendEmail(ctx, {
       to: lead.email, toName: `${lead.first_name} ${lead.last_name}`,
-      subject: `Your personalized quote for unit ${unit.unit_number}`,
-      body: `<p>Hi ${lead.first_name},</p><p>Here's your quote for <b>unit ${unit.unit_number}</b> (valid 14 days):</p><ul><li>Rent (${opts.termMonths}-month term): $${(rent / 100).toFixed(2)}/mo</li>${items.map((x) => `<li>${x.label}: $${(x.monthly_cents / 100).toFixed(2)}/mo</li>`).join('')}</ul><p><b>Total: $${(total / 100).toFixed(2)}/mo</b> · Move-in ${fmtDate(opts.moveIn)}${opts.concessionNote ? `<br/>Special: ${opts.concessionNote}` : ''}</p><p>Ready when you are — apply online any time.</p>`,
+      subject: `Your personalized quote for unit ${subjectText(unit.unit_number)}`,
+      body: `<p>Hi ${esc(lead.first_name)},</p><p>Here's your quote for <b>unit ${esc(unit.unit_number)}</b> (valid 14 days):</p><ul><li>Rent (${esc(opts.termMonths)}-month term): $${(rent / 100).toFixed(2)}/mo</li>${items.map((x) => `<li>${esc(x.label)}: $${(Number(x.monthly_cents) / 100).toFixed(2)}/mo</li>`).join('')}</ul><p><b>Total: $${(total / 100).toFixed(2)}/mo</b> · Move-in ${esc(fmtDate(opts.moveIn))}${opts.concessionNote ? `<br/>Special: ${esc(opts.concessionNote)}` : ''}</p><p>Ready when you are — apply online any time.</p>`,
       propertyId: unit.property_id, entity: 'quote', entityId: quoteId, personId: lead.id, templateKey: 'quote',
     });
   }
@@ -321,17 +349,37 @@ registerJob({
        WHERE t.org_id=? AND t.status='scheduled' AND t.date=? AND t.reminder_sent=0`,
       ctx.orgId, tomorrow,
     );
+    let written = 0;
+    let held = 0;
     for (const t of due) {
       if (t.email) {
+        // A tour with no agent on it was booked by nobody on staff: it came in
+        // through the public site (or an unattended agent action) and no one
+        // has taken it on. Its reminder is written but held, for the same
+        // reason its confirmation was — the address is whatever a stranger
+        // typed. A tour a staff member booked carries that agent, and its
+        // reminder goes out like any other.
+        const hold = !t.agent_user_id;
         sendEmail(ctx, {
-          to: t.email, toName: `${t.first_name} ${t.last_name}`, subject: `Reminder: your tour tomorrow at ${t.start_time}`,
-          body: `<p>Hi ${t.first_name} — quick reminder about your tour tomorrow (${fmtDate(t.date)}) at <b>${t.start_time}</b>. Reply if you need to reschedule!</p>`,
+          to: t.email, toName: `${t.first_name} ${t.last_name}`, subject: `Reminder: your tour tomorrow at ${subjectText(t.start_time)}`,
+          body: `<p>Hi ${esc(t.first_name)} — quick reminder about your tour tomorrow (${esc(fmtDate(t.date))}) at <b>${esc(t.start_time)}</b>. Reply if you need to reschedule!</p>`,
           propertyId: t.property_id, entity: 'tour', entityId: t.id, personId: t.lead_id, templateKey: 'tour_reminder',
+          hold,
         });
+        written++;
+        if (hold) held++;
       }
       run('UPDATE tours SET reminder_sent=1 WHERE id=?', t.id);
     }
-    return due.length ? `${due.length} reminders sent` : 'no tours tomorrow';
+    if (!due.length) return 'no tours tomorrow';
+    // say what was written, not that it was delivered
+    const live = isLiveOrg(ctx);
+    const verb = !live ? 'sent' : outboundStatus(ctx, 'email') === 'queued' ? 'queued for delivery' : 'saved to the Outbox';
+    const out = written - (live ? held : 0);
+    const parts = [`${out} ${out === 1 ? 'reminder' : 'reminders'} ${verb}`];
+    if (live && held) parts.push(`${held} held in the Outbox (self-booked, no agent yet)`);
+    if (due.length - written) parts.push(`${due.length - written} with no email on file`);
+    return parts.join(', ');
   },
 });
 

@@ -1,7 +1,8 @@
 import { html, raw, when, join } from '../../lib/html.ts';
 import { htmlRes, redirect, notFound, type Router, type Rq, type Res, takeFlash } from '../../lib/http.ts';
 import { q, q1, val, run, update, j } from '../../lib/db.ts';
-import { sysCtx } from '../../lib/auth.ts';
+import { sysCtx, rateLimit } from '../../lib/auth.ts';
+import { messageOrigin, outboundStatus } from '../../lib/sim/messaging.ts';
 import { fmtDate, addDays } from '../../lib/dates.ts';
 import { usd } from '../../lib/money.ts';
 import { v } from '../../lib/validate.ts';
@@ -240,9 +241,17 @@ export function routes(r: Router): void {
     const ctx = sysCtx(prop.org_id);
     const email = v.email().safe(rq.body.email);
     if (!email.ok) return redirect(`/apply/${rq.params.token}`, 'Valid email required.', 'err');
-    const base = `http://${String(rq.raw.headers.host || 'localhost:3000')}`;
+    // this page is public and the invitation is a real email to an address the
+    // applicant typed: an application has a handful of people on it, not dozens
+    if (!rateLimit(`applinvite:${app.id}`, 6, 3600000)) return redirect(`/apply/${rq.params.token}`, 'That is a lot of invitations for one application — please ask the leasing office to add anyone else.', 'err');
+    // the link goes into an email: build it from the configured origin, not
+    // from whatever Host header this request carried
+    const base = messageOrigin(ctx) || `http://${String(rq.raw.headers.host || 'localhost:3000')}`;
     inviteApplicant(ctx, app.id, String(rq.body.kind || 'co') as 'co' | 'guarantor' | 'occupant', email.value, base);
-    return redirect(`/apply/${rq.params.token}`, `Invite sent to ${email.value}.`);
+    // a live organization without email delivery only saved the invitation
+    return redirect(`/apply/${rq.params.token}`, outboundStatus(ctx, 'email') === 'recorded'
+      ? `${email.value} was added. The invitation has not been emailed — the leasing office will pass the link on.`
+      : `Invite sent to ${email.value}.`);
   });
 
   r.post('/apply/:token/step3', (rq) => {

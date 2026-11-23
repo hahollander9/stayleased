@@ -8,7 +8,7 @@ import { emit } from '../../lib/events.ts';
 import { getSetting, getSettingMerged } from '../../lib/settings.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { audit } from '../../lib/audit.ts';
-import { sendEmail } from '../../lib/sim/messaging.ts';
+import { sendEmail, messageOrigin } from '../../lib/sim/messaging.ts';
 import { resultFor } from '../../lib/sim/screening.ts';
 import { postJE } from '../m9_accounting/service.ts';
 import { Pdf } from '../../lib/pdf.ts';
@@ -95,6 +95,8 @@ export function inviteApplicant(ctx: Ctx, applicationId: string, kind: 'co' | 'g
     id: aplId, org_id: ctx.orgId, application_id: applicationId, kind,
     email: email.toLowerCase(), invite_token: t, status: 'invited', step: 1, created_at: nowIso(),
   });
+  const origin = messageOrigin(ctx) || baseUrl; // a configured origin beats anything a request header said
+  baseUrl = origin;
   sendEmail(ctx, {
     to: email, subject: `You're invited to join a rental application`,
     body: `<p>You've been added as a ${kind === 'co' ? 'co-applicant' : kind} on a rental application. Complete your part here:</p><p><a href="${baseUrl}/apply/${t}">${baseUrl}/apply/${t}</a></p><p>It takes about 5 minutes — have your income info handy.</p>`,

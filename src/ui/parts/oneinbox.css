@@ -1,0 +1,193 @@
+/* One Inbox — styles for /one-inbox (served appended to theme.css). Tokens only. */
+
+/* ---------- shared bits ---------- */
+[data-oi] .badge, .oi-tags .badge, .oi-tabs .badge { font-size: 12.5px; }
+.oi-urgent { color: var(--bad); font-weight: 650; }
+.oi-help, .oi-from, .oi-why, .oi-count, .oi-foot { font-size: 13px; line-height: 1.5; color: var(--ink-2); margin: 0 0 10px; }
+.oi-why, .oi-count, .oi-foot { color: var(--muted); }
+.oi-foot { margin: 14px 2px 0; }
+.oi-count { margin: 0 2px 10px; }
+.oi-help .btn { margin-left: 6px; vertical-align: baseline; }
+[data-oi] kbd, .oi-cands kbd {
+  display: inline-block; min-width: 20px; padding: 0 5px; border: 1px solid var(--line); border-radius: 4px;
+  background: var(--surface-2); color: var(--muted); font: 600 12.5px/1.5 var(--font); text-align: center;
+}
+[data-oi] details > summary, .oi-danger > summary, .oi-add > summary {
+  cursor: pointer; font-size: 13px; font-weight: 600; color: var(--accent-ink); padding: 8px 0; border-radius: 6px;
+}
+[data-oi] details > summary:focus-visible, .oi-danger > summary:focus-visible, .oi-add > summary:focus-visible {
+  outline: 2px solid var(--accent); outline-offset: 2px;
+}
+[data-oi] details[open] > summary { margin-bottom: 8px; }
+
+/* a slim strip: one sentence and, at most, one action */
+.oi-strip, .oi-note, .oi-quiet {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px 14px; flex-wrap: wrap;
+  padding: 9px 14px; margin: 0 0 14px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--surface-2); font-size: 13px; color: var(--ink-2);
+}
+.oi-strip form, .oi-note form, .oi-quiet form { margin: 0; }
+.oi-quiet { background: var(--warn-soft); }
+.oi-quiet-acts { display: inline-flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.oi-note { border-color: var(--line-strong); color: var(--ink); animation: oi-in .18s ease-out 1; }
+@keyframes oi-in { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .oi-note { animation: none; } }
+.oi-delivery { margin: 0 0 12px; }
+
+/* ---------- list: search, tabs, rows ---------- */
+.oi-find { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 14px; }
+.oi-find input[type="search"], .oi-find select {
+  height: 38px; padding: 0 11px; border: 1px solid var(--line); border-radius: var(--radius-sm);
+  background: var(--bg); color: var(--ink); font: 13.5px var(--font);
+}
+.oi-find input[type="search"] { flex: 1 1 260px; min-width: 0; }
+.oi-find select { flex: 0 1 190px; min-width: 0; }
+.oi-find select option { background: var(--surface); }
+.oi-find input[type="search"]:focus-visible, .oi-find select:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.oi-find .btn { height: 38px; }
+.oi-clear { font-size: 13px; padding: 8px 4px; }
+
+.oi-list { list-style: none; margin: 0; padding: 0; }
+.oi-list > li { border-bottom: 1px solid var(--line-2); }
+.oi-list > li:last-child { border-bottom: 0; }
+.oi-row {
+  display: grid; grid-template-columns: 8px minmax(0, 240px) minmax(0, 1fr) auto 68px; column-gap: 14px; align-items: center;
+  padding: 11px 16px; color: var(--ink); font-size: 13.5px; line-height: 1.4;
+}
+.oi-row:hover { text-decoration: none; background: var(--surface-hover); }
+.oi-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; background: var(--surface-hover); }
+.oi-list > li:first-child .oi-row { border-radius: var(--radius) var(--radius) 0 0; }
+.oi-list > li:last-child .oi-row { border-radius: 0 0 var(--radius) var(--radius); }
+.oi-dot { width: 8px; height: 8px; border-radius: 50%; }
+.oi-row.is-urgent .oi-dot { background: var(--bad); }
+.oi-who, .oi-what { display: block; min-width: 0; }
+.oi-who b, .oi-what b, .oi-place, .oi-snip { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.oi-who b, .oi-what b { font-weight: 650; }
+.oi-place, .oi-snip { font-size: 13px; color: var(--muted); font-weight: 400; }
+.oi-row.is-done .oi-who b, .oi-row.is-done .oi-what b { font-weight: 500; color: var(--ink-2); }
+.oi-state { display: flex; gap: 4px 10px; align-items: center; justify-content: flex-end; flex-wrap: wrap; font-size: 13px; color: var(--muted); max-width: 300px; }
+.oi-age { font-size: 13px; color: var(--muted); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.oi-age.is-late { color: var(--bad); font-weight: 650; }
+.oi-age.is-old { color: var(--warn); font-weight: 650; }
+.oi-pager { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 2px 10px; font-size: 13px; color: var(--muted); }
+.oi-keys { display: flex; gap: 6px 16px; flex-wrap: wrap; align-items: center; margin: 12px 2px 0; font-size: 12.5px; color: var(--muted); }
+@media (hover: none), (max-width: 720px) { .oi-keys, .oi-cands kbd { display: none; } }
+
+/* ---------- first run ---------- */
+.oi-start { padding: 22px 22px 20px; }
+.oi-start h2 { font-size: 18px; margin: 0 0 14px; }
+.oi-steps { list-style: none; counter-reset: oi-step; margin: 0 0 6px; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+.oi-steps li { counter-increment: oi-step; display: grid; align-content: start; grid-template-columns: 30px minmax(0, 1fr); column-gap: 10px; font-size: 13.5px; }
+.oi-steps li::before {
+  content: counter(oi-step); grid-row: 1 / span 2; width: 28px; height: 28px; border: 1px solid var(--line-strong); border-radius: 50%;
+  display: grid; place-items: center; font-weight: 650; font-size: 13px; color: var(--ink-2);
+}
+.oi-steps li b { font-weight: 650; }
+.oi-steps li span { font-size: 13px; color: var(--muted); line-height: 1.5; }
+.oi-start .btn-row form { margin: 0; }
+
+/* ---------- one email ---------- */
+.oi-nav { display: inline-flex; align-items: center; gap: 6px; }
+.oi-pos { font-size: 13px; color: var(--muted); white-space: nowrap; padding: 0 4px; font-variant-numeric: tabular-nums; }
+.oi-head-done { margin: 0; }
+.oi-tags { display: inline-flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-left: 8px; }
+.subtitle:has(.oi-tags) { font-size: 13px; }
+.oi-msg { display: grid; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); gap: 14px; align-items: start; }
+.oi-main, .oi-side { min-width: 0; }
+.oi-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; line-height: 1.6; color: var(--ink); }
+.oi-sent { white-space: normal; }
+.oi-sent p { margin: 0 0 10px; }
+.oi-sent p:last-child { margin-bottom: 0; }
+#oi-draft { width: 100%; font: 14px/1.55 var(--font); }
+.oi-again { margin: 0 0 14px; }
+.oi-again > summary.btn { display: inline-flex; list-style: none; color: var(--ink-2); padding: 7px 13px; }
+.oi-again > summary.btn::-webkit-details-marker { display: none; }
+.oi-again[open] > summary.btn { margin-bottom: 12px; }
+
+.oi-person-name { margin: 0 0 2px; font-size: 15px; }
+.oi-role { font-size: 13px; color: var(--muted); margin-left: 4px; }
+.oi-person-place { margin: 0 0 10px; font-size: 13.5px; color: var(--ink-2); }
+.oi-lines { list-style: none; margin: 0 0 10px; padding: 0; display: grid; gap: 4px; font-size: 13.5px; }
+.oi-lines li { display: grid; grid-template-columns: 52px minmax(0, 1fr); gap: 8px; }
+.oi-lines span { color: var(--muted); font-size: 13px; }
+.oi-lines a { overflow-wrap: anywhere; }
+.oi-person .oi-why { margin-bottom: 4px; }
+.oi-unknown { font-size: 13.5px; line-height: 1.5; margin: 0 0 12px; color: var(--ink-2); }
+.oi-unknown b { color: var(--ink); }
+.oi-could { margin: 0 0 6px; font-size: 13px; font-weight: 650; }
+.oi-cands { display: grid; gap: 6px; margin: 0 0 14px; }
+.oi-cands form { margin: 0; }
+.oi-cands .btn { width: 100%; justify-content: flex-start; gap: 10px; text-align: left; white-space: normal; padding: 8px 12px; font-size: 13.5px; }
+.oi-cands .btn b { display: block; font-weight: 650; }
+.oi-cand-place { display: block; font-size: 13px; font-weight: 400; color: var(--muted); }
+.oi-pick .check { font-size: 13px; overflow-wrap: anywhere; }
+.oi-wrong { margin: 4px 0 8px; }
+.oi-bar { display: none; }
+
+/* ---------- setup + people ---------- */
+.oi-setup { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; margin-bottom: 14px; }
+.oi-setup > .card { margin-bottom: 0; }
+.oi-step-done { margin: 0 0 10px; padding: 8px 11px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13px; color: var(--ink-2); }
+.oi-step-done > span { font-weight: 700; color: var(--ink); margin-right: 4px; }
+.oi-addr { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 0 0 12px; }
+.oi-addr code { padding: 7px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface-2); font-size: 13.5px; overflow-wrap: anywhere; }
+.oi-danger { margin: 0 0 14px; padding: 2px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); }
+.oi-danger > summary { color: var(--muted); }
+.oi-danger[open] { padding-bottom: 14px; }
+.oi-danger .field { max-width: 280px; }
+.oi-add-person { margin: 0 0 14px; padding: 2px 14px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--surface); }
+.oi-add-person[open] { padding-bottom: 14px; }
+.oi-wide { overflow-x: auto; }
+@media (min-width: 641px) { .oi-wide .tbl { min-width: 880px; } }
+.oi-wide .tbl td { font-size: 13px; vertical-align: top; }
+.oi-edit { max-width: 760px; }
+
+/* ---------- narrower screens ---------- */
+@media (max-width: 1100px) {
+  .oi-row { grid-template-columns: 8px minmax(0, 190px) minmax(0, 1fr) auto 60px; }
+  .oi-state { max-width: 200px; }
+}
+@media (max-width: 900px) {
+  .oi-msg, .oi-setup { grid-template-columns: minmax(0, 1fr); }
+  /* nobody identified yet: that question comes before the email itself */
+  .oi-msg.oi-unfiled .oi-side { order: -1; }
+  .oi-steps { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 720px) {
+  .oi-row {
+    grid-template-columns: 8px minmax(0, 1fr) auto; grid-template-areas: "dot who age" ". what what" ". state state";
+    row-gap: 3px; column-gap: 10px; align-items: start; padding: 12px 16px;
+  }
+  .oi-dot { grid-area: dot; margin-top: 6px; }
+  .oi-who { grid-area: who; }
+  .oi-what { grid-area: what; }
+  .oi-state { grid-area: state; justify-content: flex-start; max-width: none; margin-top: 2px; }
+  .oi-age { grid-area: age; }
+  .oi-snip { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+}
+@media (max-width: 640px) {
+  .oi-tabs .tabs { overflow-x: visible; }
+  .oi-tabs .tabs a { flex: 1 1 auto; min-height: 44px; padding: 12px 6px; text-align: center; }
+  .oi-find input[type="search"], .oi-find select, .oi-find .btn { height: 44px; }
+  .oi-find input[type="search"] { flex-basis: 100%; }
+  .oi-find select { flex: 1 1 130px; }
+  [data-oi] .btn, [data-oi] .btn-sm, .oi-edit .btn, .oi-danger .btn, .oi-strip .btn, .oi-nav .btn {
+    min-height: 44px; padding-left: 14px; padding-right: 14px; font-size: 13px;
+  }
+  [data-oi] details > summary, .oi-danger > summary, .oi-add > summary, .oi-clear { min-height: 44px; display: flex; align-items: center; }
+  [data-oi] details > summary { display: list-item; padding: 12px 0; }
+  .oi-lines a { display: inline-block; padding: 6px 0; }
+  .oi-start { padding: 18px 16px; }
+  .oi-start .btn-row > *, .oi-start .btn-row form .btn { width: 100%; }
+  /* the two things done on every email stay under the thumb */
+  .oi-head-done { display: none; }
+  [data-oi="message"] { padding-bottom: 76px; }
+  .oi-bar {
+    display: flex; gap: 8px; position: fixed; left: 0; right: 0; bottom: 0; z-index: 40;
+    padding: 8px 16px calc(8px + env(safe-area-inset-bottom, 0px)); background: var(--surface); border-top: 1px solid var(--line);
+  }
+  .oi-bar form { flex: 1 1 0; margin: 0; }
+  .oi-bar .btn { width: 100%; min-height: 44px; }
+  .oi-bar > .btn { flex: 1 1 0; }
+}
+@media print { .oi-bar, .oi-keys, .oi-find, .oi-nav { display: none !important; } }

@@ -18,7 +18,7 @@ import {
   buildQuote, quotedRent, funnelStats, roundRobinAssign, highExposureFloorplans, LEAD_SOURCES, completeNextTask,
 } from './service.ts';
 import { registerDashboardExtras } from '../m2_portfolio/pages.ts';
-import { isLiveOrg, deliveryNote } from '../../lib/sim/messaging.ts';
+import { isLiveOrg, deliveryNote, outboundStatus } from '../../lib/sim/messaging.ts';
 
 registerNav('Leasing', { href: '/leads', label: 'Leads', perm: 'leasing:view', match: ['/leads'] });
 registerNav('Leasing', { href: '/tours', label: 'Tours', perm: 'leasing:view' });
@@ -54,6 +54,18 @@ registerDashboardExtras((ctx, propertyId) => {
 });
 
 const LEAD_STATUSES = ['new', 'contacted', 'touring', 'toured', 'applied', 'leased', 'lost'];
+
+/** The flash after an action that writes an email to a lead (tour
+ * confirmation, quote): it says what happened to THAT email. Nothing is
+ * written for a lead with no address; a demo keeps its simulated "sent"; a
+ * live organization reads "saved, not emailed" until delivery is switched on,
+ * and from then on the delivery note for an email that is really going out. */
+function emailedFlash(ctx: Ctx, leadId: string, say: { none: string; demo: string; saved: string; onItsWay: string }): string {
+  const hasEmail = !!q1<{ email: string | null }>('SELECT email FROM leads WHERE id=? AND org_id=?', leadId, ctx.orgId)?.email;
+  if (!hasEmail) return say.none;
+  if (!isLiveOrg(ctx)) return say.demo;
+  return outboundStatus(ctx, 'email') === 'queued' ? `${say.onItsWay}. ${deliveryNote(ctx, 'email')}.` : say.saved;
+}
 
 export function routes(r: Router): void {
   // ---------- lead inbox ----------
@@ -319,12 +331,13 @@ export function routes(r: Router): void {
 
   r.post('/leads/:id/message', requirePerm('comms:send'), (rq) => {
     const ctx = rq.ctx as Ctx;
+    const channel: 'email' | 'sms' = rq.body.channel === 'sms' ? 'sms' : 'email';
     try {
-      messageLead(ctx, rq.params.id!, String(rq.body.channel || 'email') as 'email' | 'sms', String(rq.body.subject || ''), String(rq.body.body || ''));
+      messageLead(ctx, rq.params.id!, channel, String(rq.body.subject || ''), String(rq.body.body || ''));
     } catch (e) {
       return redirect(`/leads/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/leads/${rq.params.id}`, `${deliveryNote(ctx)}.`);
+    return redirect(`/leads/${rq.params.id}`, `${deliveryNote(ctx, channel)}.`);
   });
 
   r.post('/leads/:id/call', requirePerm('leasing:manage'), (rq) => {
@@ -358,7 +371,12 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect(`/leads/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/leads/${rq.params.id}`, isLiveOrg(ctx) ? 'Tour booked. The confirmation was not emailed — it is saved in the Outbox, because email delivery is not connected yet.' : 'Tour booked — confirmation sent.');
+    return redirect(`/leads/${rq.params.id}`, emailedFlash(ctx, rq.params.id!, {
+      none: 'Tour booked. No confirmation was written — this lead has no email address on file.',
+      demo: 'Tour booked — confirmation sent.',
+      saved: 'Tour booked. The confirmation was not emailed — it is saved in the Outbox, because email delivery is not connected yet.',
+      onItsWay: 'Tour booked',
+    }));
   });
 
   r.post('/tours/:id/complete', requirePerm('leasing:manage'), (rq) => {
@@ -387,7 +405,12 @@ export function routes(r: Router): void {
     } catch (e) {
       return redirect(`/leads/${rq.params.id}`, (e as Error).message, 'err');
     }
-    return redirect(`/leads/${rq.params.id}`, isLiveOrg(ctx) ? 'Quote built. It was not emailed — the message is saved in the Outbox, because email delivery is not connected yet.' : 'Quote built and emailed.');
+    return redirect(`/leads/${rq.params.id}`, emailedFlash(ctx, rq.params.id!, {
+      none: 'Quote built. It was not emailed — this lead has no email address on file.',
+      demo: 'Quote built and emailed.',
+      saved: 'Quote built. It was not emailed — the message is saved in the Outbox, because email delivery is not connected yet.',
+      onItsWay: 'Quote built',
+    }));
   });
 
   // ---------- tours schedule ----------

@@ -3,6 +3,7 @@ import { id } from './ids.ts';
 import { nowIso, addDays, assertDate } from './dates.ts';
 import { sysCtx, type Ctx } from './auth.ts';
 import { emit, deliverWebhooks } from './events.ts';
+import { deliverEmailQueue } from './email.ts';
 import { log } from './log.ts';
 
 /** Jobs & scheduling (§3.1): a jobs registry + in-process scheduler. All
@@ -238,6 +239,8 @@ export function startPoller(intervalMs = 60000): { stop: () => void } {
     } catch (e) {
       log.error('poller', e);
     }
+    // queued email (retries and anything a restart interrupted)
+    deliverEmailQueue().catch((e) => log.error('email_deliver', e));
     // Retention, in its own try so a failure here never costs a tick of real
     // work, and in bounded bites so clearing a backlog (the first deploy after
     // months of a row a minute) cannot hold the one thread everyone shares.

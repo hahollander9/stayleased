@@ -34,17 +34,22 @@ function slugify(s: string): string {
 // ---------- setup hub ----------
 
 interface HubCard { href: string; title: string; desc: string; perm?: string; icon: string; demoOnly?: boolean; group?: HubGroup; }
-type HubGroup = 'data' | 'configure' | 'administer';
+type HubGroup = 'data' | 'yours' | 'configure' | 'administer';
 const HUB_GROUPS: [HubGroup, string][] = [
-  ['data', 'Other ways in'],
   ['configure', 'Set your rules'],
+  ['yours', 'Your data'],
+  ['data', 'Other ways in'],
   ['administer', 'Run the company'],
 ];
 const HUB: HubCard[] = [
   { href: '/welcome', title: 'Getting started', desc: 'The step-by-step walkthrough, with the option to skip what you do not need.', perm: 'properties:manage', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11', group: 'data' },
-  { href: '/setup/connections', title: 'Connections', desc: 'AI brain, payments, bank feeds, listings — what\'s live and what\'s coming.', perm: 'properties:manage', icon: 'M9 12h6M8 7H6a5 5 0 0 0 0 10h2M16 7h2a5 5 0 0 1 0 10h-2' , group: 'configure' },
+  { href: '/setup/connections', title: 'Connections', desc: 'Turn on real email, and see what else is connected: text messages, bank feed, payments, listings, AI.', perm: 'properties:manage', icon: 'M9 12h6M8 7H6a5 5 0 0 0 0 10h2M16 7h2a5 5 0 0 1 0 10h-2' , group: 'configure' },
+  { href: '/setup#import-history', title: 'Import history', desc: 'Every file you have uploaded, and what each one added.', perm: 'properties:manage', icon: 'M12 8v4l3 2M3 12a9 9 0 1 0 3-6.7M3 4v4h4', group: 'yours' },
+  { href: '/admin/export', title: 'Export your data', desc: 'Download everything you have entered, as spreadsheets.', perm: 'admin:settings', icon: 'M12 3v12m0 0-4-4m4 4 4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2', group: 'yours' },
+  { href: '/outbox', title: 'Sent messages', desc: 'Every message that went out, and whether it was delivered.', perm: 'comms:view', icon: 'M22 2 11 13M22 2l-7 20-4-9-9-4z', group: 'yours' },
+  { href: '/all-pages', title: 'All pages', desc: 'Every page in StayLeased on one screen, with a line saying what each is for.', icon: 'M4 6h16M4 12h16M4 18h10', group: 'data' },
   { href: '/setup/wizard', title: 'Add a property', desc: 'Guided wizard — property details, a floorplan, and its units.', perm: 'properties:manage', icon: 'M3 21h18M5 21V7l7-4 7 4v14M9 21v-6h6v6' , group: 'data' },
-  { href: '/admin/settings', title: 'Organization settings', desc: 'Policies, fees, and defaults for your whole portfolio.', perm: 'admin:settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5A7 7 0 0 0 19 12z' , group: 'configure' },
+  { href: '/admin/settings', title: 'Settings', desc: 'Late fees, policies and defaults for your whole company.', perm: 'admin:settings', icon: 'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6zM19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 3h-4l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1l.4 2.6h4l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5A7 7 0 0 0 19 12z' , group: 'configure' },
   { href: '/admin/billing', title: 'Billing', desc: 'Your StayLeased plan, the unit count it is based on, and past invoices.', perm: 'admin:billing', icon: 'M2 9h20M2 7a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2zM6 15h4' , group: 'administer' },
   { href: '/admin/staff', title: 'Staff & roles', desc: 'Invite users and assign roles and property scope.', perm: 'admin:staff', icon: 'M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8zM23 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75' , group: 'administer' },
   { href: '/admin/roles', title: 'Permission matrix', desc: 'Review exactly what each role can do.', perm: 'admin:staff', icon: 'M9 11l3 3L22 4M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11' , group: 'administer' },
@@ -78,17 +83,26 @@ export function routes(r: Router): void {
         ? `${ready.done} of ${ready.total} set up · ${ready.next.length ? `next: ${ready.next[0]!.title.toLowerCase()}` : 'everything is in place'}`
         : 'Configure your portfolio and administer StayLeased.',
       content: html`
+        <nav class="setup-jump" aria-label="On this page">
+          <span class="sj-label">On this page</span>
+          ${when(!!ready, () => html`<a href="#checklist">Checklist</a>`)}
+          ${when(canImport, () => html`<a href="#upload">Upload your records</a><a href="#import-history">Import history</a>`)}
+          <a href="#company">Settings, connections and your team</a>
+        </nav>
         ${kpis([
           { label: 'Properties', value: String(propCount), href: '/properties' },
           { label: 'Units', value: String(unitCount), href: '/units' },
           { label: 'Active leases', value: String(leaseCount), href: '/leases' },
           { label: 'People with logins', value: String(staffCount), href: '/admin/staff' },
         ])}
+        <div id="checklist" class="find-anchor"></div>
         ${when(!!ready, () => readinessPanel(ctx))}
         ${when(canImport, () => html`
           <div class="setup-section-head" id="upload">Bring your data in</div>
           <p class="muted small" style="margin:-4px 0 12px 2px">Upload whatever your old system exports — rent rolls, spreadsheets, signed lease PDFs. Columns are mapped for you, you confirm, and one apply builds the portfolio.</p>
-          ${importSections(rq)}`)}
+          ${importSections(rq)}
+          <div id="import-history" class="find-anchor-end"></div>`)}
+        <div id="company" class="find-anchor"></div>
         ${join(HUB_GROUPS.map(([g, label]) => {
           const list = cards.filter((c) => (c.group || 'administer') === g);
           if (!list.length) return null;

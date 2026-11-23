@@ -279,6 +279,7 @@ export function scheduleMass(
  * 'recorded' (not delivered) and the recipient + mass rows say so. */
 export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped: number; deferred: number } {
   const done = outboundStatus(ctx); // 'sent' (demo) | 'recorded' (live — nothing left the building)
+  const doneEmail = outboundStatus(ctx, 'email'); // 'queued' when this live org's email is really delivered
   const origin = messageOrigin(ctx);
   let sent = 0;
   let skipped = 0;
@@ -288,6 +289,7 @@ export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped
     ctx.orgId, date,
   );
   for (const m of due) {
+    let emailed = 0; // per message: an email blast must not make the next, text-only one read as sent
     run(`UPDATE mass_messages SET status='sending' WHERE id=?`, m.id);
     const pend = q<any>(`SELECT * FROM mass_recipients WHERE mass_id=? AND status IN ('pending','deferred_quiet')`, m.id);
     let anyDeferred = false;
@@ -318,7 +320,9 @@ export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped
           body: renderMerge(ctx, m.body, rec) + unsubscribe,
           propertyId: resident.property_id, entity: 'mass_message', entityId: m.id, personId: resident.id, templateKey: 'mass',
         });
-        run(`UPDATE mass_recipients SET status=?, outbox_id=?, sent_at=? WHERE id=?`, done, oid, nowIso(), rc.id);
+        // email may really be going out now (lib/email.ts): the recipient row follows the outbox row
+        run(`UPDATE mass_recipients SET status=?, outbox_id=?, sent_at=? WHERE id=?`, doneEmail, oid, nowIso(), rc.id);
+        if (doneEmail === 'queued') emailed++;
         sent++;
       } else if (rc.channel === 'sms') {
         if (prefs.smsOptout) {
@@ -349,7 +353,7 @@ export function runMassMessages(ctx: Ctx, date: string): { sent: number; skipped
       const counts = q1<any>(
         `SELECT SUM(status IN ('sent','recorded')) AS s, SUM(status LIKE 'skipped%') AS k FROM mass_recipients WHERE mass_id=?`, m.id,
       );
-      run(`UPDATE mass_messages SET status=?, sent_at=?, sent_count=?, skipped_count=? WHERE id=?`, done, nowIso(), counts?.s || 0, counts?.k || 0, m.id);
+      run(`UPDATE mass_messages SET status=?, sent_at=?, sent_count=?, skipped_count=? WHERE id=?`, emailed ? 'sent' : done, nowIso(), counts?.s || 0, counts?.k || 0, m.id);
     }
   }
   return { sent, skipped, deferred };
@@ -403,7 +407,7 @@ registerJob({
   describe: 'Delivers scheduled mass messages and announcement echoes — consent and quiet hours enforced per recipient.',
   run: (ctx, date) => {
     const r = runMassMessages(ctx, date);
-    const verb = isLiveOrg(ctx) ? 'saved to the Outbox (not delivered — email and text are not connected)' : 'sent';
+    const verb = !isLiveOrg(ctx) ? 'sent' : outboundStatus(ctx, 'email') === 'queued' ? 'written (email is delivered for real; texts are saved to the Outbox, not delivered)' : 'saved to the Outbox (not delivered — email and text are not connected)';
     return r.sent || r.skipped || r.deferred ? `${r.sent} ${verb}, ${r.skipped} skipped, ${r.deferred} deferred (quiet hours)` : 'nothing scheduled';
   },
 });

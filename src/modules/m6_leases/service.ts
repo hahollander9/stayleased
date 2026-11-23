@@ -11,7 +11,8 @@ import { getSetting, getSettingMerged, scorerMode } from '../../lib/settings.ts'
 import { latestAssessment } from '../m19_scoring/service.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { audit } from '../../lib/audit.ts';
-import { sendEmail } from '../../lib/sim/messaging.ts';
+import { sendEmail, messageOrigin } from '../../lib/sim/messaging.ts';
+import { esc } from '../../lib/html.ts';
 import { Pdf } from '../../lib/pdf.ts';
 import { putFile, getFile } from '../../lib/files.ts';
 import { PDFDocument } from 'pdf-lib';
@@ -231,6 +232,9 @@ function addendaConditions(ctx: Ctx, leaseId: string): Set<string> {
 
 export function startSignatureRequest(ctx: Ctx, leaseId: string, kind: 'lease' | 'renewal', packet: { fileId: string; sha256: string }, signers: PacketSigner[], baseUrl: string): string {
   const reqId = id('sig');
+  // links in an email come from the configured origin, never the Host header
+  // the request happened to carry; the demo with no origin keeps the caller's
+  const linkBase = messageOrigin(ctx) || baseUrl;
   tx(() => {
     insert('signature_requests', {
       id: reqId, org_id: ctx.orgId, lease_id: leaseId, kind, status: 'out',
@@ -247,7 +251,7 @@ export function startSignatureRequest(ctx: Ctx, leaseId: string, kind: 'lease' |
       if (s.role !== 'countersigner') {
         sendEmail(ctx, {
           to: s.email, toName: s.name, subject: `Your lease is ready to sign`,
-          body: `<p>Hi ${s.name.split(' ')[0]},</p><p>Your lease packet is ready. Review and sign here:</p><p><a href="${baseUrl}/sign/${t}">${baseUrl}/sign/${t}</a></p><p>The document is fingerprinted (SHA-256 ${packet.sha256.slice(0, 16)}…) so everyone signs exactly the same packet.</p>`,
+          body: `<p>Hi ${esc(s.name.split(' ')[0] ?? '')},</p><p>Your lease packet is ready. Review and sign here:</p><p><a href="${linkBase}/sign/${t}">${linkBase}/sign/${t}</a></p><p>The document is fingerprinted (SHA-256 ${packet.sha256.slice(0, 16)}…) so everyone signs exactly the same packet.</p>`,
           entity: 'signature_request', entityId: reqId, templateKey: 'esign_invite',
         });
       }
@@ -312,10 +316,13 @@ export function recordSignature(
   if (lease.status === 'out_for_signature') run(`UPDATE leases SET status='partially_signed' WHERE id=?`, lease.id);
   const onlyCounter = remaining.every((x) => x.role === 'countersigner');
   if (onlyCounter) {
+    // absolute in a live org — an inbox has no page for '/sign/…' to be
+    // relative to; the demo with no origin configured keeps the relative link
+    const linkBase = messageOrigin(orgCtx);
     for (const c of remaining) {
       sendEmail(orgCtx, {
         to: c.email, toName: c.name, subject: 'Lease ready for countersignature',
-        body: `<p>All residents have signed. Countersign here to execute the lease:</p><p><a href="/sign/${c.token}">/sign/${c.token}</a></p>`,
+        body: `<p>All residents have signed. Countersign here to execute the lease:</p><p><a href="${linkBase}/sign/${c.token}">${linkBase}/sign/${c.token}</a></p>`,
         entity: 'signature_request', entityId: req.id, templateKey: 'esign_countersign',
       });
     }

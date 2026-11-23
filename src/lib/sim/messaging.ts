@@ -3,6 +3,7 @@ import { id } from '../ids.ts';
 import { nowIso } from '../dates.ts';
 import type { Ctx } from '../auth.ts';
 import { env } from '../env.ts';
+import { emailLive, kickEmailQueue } from '../email.ts';
 
 /** EmailGateway / SmsGateway simulators (§3.4): outbox pattern. Nothing
  * actually sends (demo orgs store 'sent' as part of the simulation; live orgs
@@ -23,6 +24,11 @@ export interface OutboundMessage {
   entityId?: string | null;
   threadId?: string | null;
   personId?: string | null;
+  /** Write the row but do not deliver it, whatever the organization's email
+   * switch says. For mail nobody deliberately chose to send right now: bulk
+   * portal invitations from an import, and anything started by a member of the
+   * public. Staff can read it in the Outbox and send it on purpose. */
+  hold?: boolean;
 }
 
 /** M15 registers this to thread every outbound message + simulate opens */
@@ -44,16 +50,26 @@ export function isLiveOrg(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): boole
  * been delivered to anyone, because no email/SMS rail is connected. Nothing may
  * move a 'recorded' row to 'sent' or 'opened' except a real provider. */
 export const RECORDED = 'recorded';
-export function outboundStatus(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): 'sent' | 'recorded' {
-  return isLiveOrg(ctx) ? RECORDED : 'sent';
+export const QUEUED = 'queued';
+/** `channel` matters since the email rail arrived (lib/email.ts): a live org
+ * with delivery switched on gets `queued` for email — a real provider then
+ * moves it to sent, failed or bounced — while text messages, which still have
+ * no rail, stay `recorded`. */
+export function outboundStatus(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }, channel: 'email' | 'sms' = 'sms'): 'sent' | 'recorded' | 'queued' {
+  if (!isLiveOrg(ctx)) return 'sent';
+  return channel === 'email' && emailLive(ctx) ? QUEUED : RECORDED;
 }
 
 /** One sentence for flash messages after anything that calls send(): what
  * actually happened to the message. Live orgs: saved, not delivered. */
-export function deliveryNote(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): string {
-  return isLiveOrg(ctx)
-    ? 'Saved to the Outbox — email and text delivery are not connected yet'
-    : 'Sent (see Message console)';
+export function deliveryNote(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }, channel?: 'email' | 'sms' | 'held'): string {
+  if (!isLiveOrg(ctx)) return 'Sent (see Message console)';
+  if (!emailLive(ctx)) return 'Saved to the Outbox — email and text delivery are not connected yet';
+  // say what happened to THIS message when the caller knows what it wrote
+  if (channel === 'email') return 'Email is on its way — the Outbox shows when it is delivered';
+  if (channel === 'sms') return 'Saved to the Outbox — text messages are not connected yet, so it was not delivered';
+  if (channel === 'held') return 'Saved to the Outbox, not emailed — open it there to send it';
+  return 'Email is on its way — the Outbox shows when it is delivered. Text messages are not connected yet';
 }
 
 /** Absolute origin for links inside a message body (an inbox has no page for
@@ -68,6 +84,9 @@ export function messageOrigin(ctx: Pick<Ctx, 'orgId'> & { orgKind?: string }): s
 export function deliveryLabel(status: string | null | undefined): string {
   const s = String(status ?? '');
   if (s === RECORDED) return 'Saved — not delivered';
+  if (s === QUEUED) return 'Sending';
+  if (s === 'failed') return 'Not delivered';
+  if (s === 'bounced') return 'Bounced';
   if (s === 'received') return 'Received';
   if (s === 'sent') return 'Sent';
   if (s === 'opened') return 'Opened';
@@ -76,6 +95,7 @@ export function deliveryLabel(status: string | null | undefined): string {
 
 export function send(ctx: Ctx, msg: OutboundMessage): string {
   const mid = id('msg');
+  const status = msg.hold && isLiveOrg(ctx) ? RECORDED : outboundStatus(ctx, msg.channel);
   insert('outbox_messages', {
     id: mid,
     org_id: ctx.orgId,
@@ -92,7 +112,7 @@ export function send(ctx: Ctx, msg: OutboundMessage): string {
     entity_id: msg.entityId || null,
     thread_id: msg.threadId || null,
     person_id: msg.personId || null,
-    status: outboundStatus(ctx),
+    status,
     sent_by: ctx.userId,
     created_at: nowIso(),
     business_date: ctx.businessDate,
@@ -102,6 +122,7 @@ export function send(ctx: Ctx, msg: OutboundMessage): string {
   } catch {
     /* threading must never break a send */
   }
+  if (status === QUEUED) kickEmailQueue();
   return mid;
 }
 

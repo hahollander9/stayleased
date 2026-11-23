@@ -116,6 +116,39 @@ export function fmtTs(iso: string | null | undefined, tz = 'America/Denver'): st
   }
 }
 
+/** How long ago, the way a person says it at a glance: "Just now", "20 min",
+ * "3 h", "Yesterday", then "Nov 18" (with the year once it differs). A time
+ * that has not happened yet is shown as its date. Pair it with the full
+ * `fmtTs` in a title so the exact moment is one hover away. */
+export function fmtAge(iso: string | null | undefined, now: Date = new Date(), tz = 'America/Denver'): string {
+  if (!iso) return '—';
+  const then = new Date(iso);
+  if (Number.isNaN(then.getTime())) return '—';
+  const day = (d: Date): string => {
+    try {
+      return new Intl.DateTimeFormat('en-CA', { timeZone: tz, year: 'numeric', month: '2-digit', day: '2-digit' }).format(d);
+    } catch {
+      return d.toISOString().slice(0, 10);
+    }
+  };
+  const a = day(then);
+  const b = day(now);
+  const ms = now.getTime() - then.getTime();
+  const short = (): string => {
+    const { y, m, day: dd } = parts(a);
+    return y === +b.slice(0, 4) ? `${MONTHS[m - 1]} ${dd}` : `${MONTHS[m - 1]} ${dd}, ${y}`;
+  };
+  if (ms < 0) return short();
+  const mins = Math.floor(ms / 60000);
+  if (mins < 1) return 'Just now';
+  if (mins < 60) return `${mins} min`;
+  const gap = diffDays(b, a);
+  const hours = Math.floor(mins / 60);
+  if (gap === 0 || (gap === 1 && hours < 12)) return `${hours} h`;
+  if (gap === 1) return 'Yesterday';
+  return short();
+}
+
 export function dowIdx(d: DateStr): number {
   return toUtc(d).getUTCDay();
 }

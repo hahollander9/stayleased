@@ -79,11 +79,13 @@ export function routes(r: Router): void {
     const ctx = rq.ctx as Ctx;
     if (!canApproveMoney(ctx)) return forbidden();
     const { pos, invoices, jes, deposits, total } = moneyApprovals(ctx);
+    const draftsWaiting = can(ctx, 'ai:view') ? val<number>("SELECT COUNT(*) FROM ai_actions WHERE org_id=? AND status='proposed'", ctx.orgId) || 0 : 0;
     return shell(rq, {
       title: 'Approvals',
       active: '/approvals',
       subtitle: total ? `${total} item${total === 1 ? '' : 's'} waiting on a decision` : 'Nothing is waiting on you.',
       content: html`
+        ${when(draftsWaiting > 0, () => html`<p class="also-waiting">Also waiting for your OK: <a href="/ai">${draftsWaiting} ${draftsWaiting === 1 ? 'message' : 'messages'} drafted for you</a></p>`)}
         ${when(pos.length, () => card(html`Purchase orders over threshold <span class="badge warn">${pos.length}</span>`, tbl(
           [{ label: 'PO' }, { label: 'Vendor' }, { label: 'Property' }, { label: 'Needed by' }, { label: 'Total', num: true }, { label: '' }],
           pos.map((po) => ({

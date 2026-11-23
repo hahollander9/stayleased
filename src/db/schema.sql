@@ -1876,6 +1876,7 @@ CREATE TABLE IF NOT EXISTS mass_recipients (
   sent_at TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_massrcpt ON mass_recipients(org_id, mass_id, status);
+CREATE INDEX IF NOT EXISTS idx_massrcpt_outbox ON mass_recipients(outbox_id);
 
 -- ---------- Phase 14: revenue intelligence (M13) ----------
 
@@ -2432,3 +2433,14 @@ CREATE TABLE IF NOT EXISTS owner_distribution_shares (
   created_at TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_ownerdist_share ON owner_distribution_shares(org_id, owner_id);
+
+-- addresses a live org's email must not be sent to again: a hard bounce or a
+-- spam complaint reported by the provider (lib/email.ts)
+CREATE TABLE IF NOT EXISTS email_suppressions (
+  id TEXT PRIMARY KEY,
+  org_id TEXT NOT NULL,
+  address TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE (org_id, address)
+);

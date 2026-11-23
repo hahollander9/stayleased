@@ -774,8 +774,9 @@ function summaryBits(s: Partial<import('./import_apply.ts').ApplySummary>, live 
   if (s.balancesCents) bits.push(`$${(s.balancesCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })} in balances`);
   if (s.depositsCents) bits.push(`$${(s.depositsCents / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })} in deposits held`);
   if (s.contactUpdates) bits.push(`${s.contactUpdates} contact update${s.contactUpdates === 1 ? '' : 's'}`);
-  // a live organization has no email rail: the logins exist, the invitations
-  // sit in the Outbox, and saying "sent" would be a claim nobody can keep
+  // an import never delivers invitations, email rail or not (portalAccessFor
+  // holds them): the logins exist, the invitations sit in the Outbox, and
+  // saying "sent" would be a claim nobody can keep
   if (s.portalInvites) bits.push(live ? portalInviteNote(s.portalInvites, true) : `${s.portalInvites} portal invite${s.portalInvites === 1 ? '' : 's'} sent`);
   return bits;
 }

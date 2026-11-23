@@ -2544,3 +2544,126 @@ Eighteen held up, and all are fixed here with a regression test apiece (#132).
 
 Tests: `fxr_recv` (9), `fxr_acct` (7), `fxr_lease` (6), plus one in `fx_main`. Gates: `tsc --noEmit`
 clean · unit 759/759 · full seeded e2e 218/218. DECISIONS #132 appended against the current tail.
+
+## 2026-11-22 — Email that actually sends
+
+Asked for in one line: "make it so it can send emails". Until now a live organization's
+messages were written to the Outbox and went nowhere (#129 made the product say so).
+
+- **`src/lib/email.ts`** — the first real resident-facing rail. Postmark or Resend, chosen by
+  env. `send()` still only writes a row (it runs inside transactions everywhere and cannot
+  wait on a network call); a live org with email on gets `queued` instead of `recorded`, and
+  the queue is drained right after the write and again on every poller tick. Statuses:
+  `queued → sent | failed`, later `bounced`. Temporary failures back off 1/5/30/120 minutes,
+  five attempts, then `failed` with the provider's reason on the row.
+- **Three gates, all re-checked at the moment of sending**: the server is configured, the
+  organization is `live`, and the organization's own switch (`email_delivery`, off by
+  default) is on. The demo cannot send whatever is set.
+- **Guards**: reserved and fixture domains (`.demo`, `.test`, `example.com`…) are refused
+  before the provider sees them; subjects are flattened to one line; a per-org daily cap
+  holds mail back rather than failing it; a hard bounce or spam complaint puts the address on
+  that organization's do-not-email list; one message is handed off by one caller at a time,
+  so the poller, the post-write kick and "send now" cannot produce two copies. Logs carry the
+  message id and reason, never the address or the body.
+- **`POST /webhooks/email`** — bounces and complaints from the provider. Unauthenticated like
+  the Stripe route; a shared secret compared in constant time is its authentication, and an
+  event can only touch a message whose provider id this server recorded.
+- **One Inbox can answer**: the message page has a real "Send reply" form (the suggestion is
+  the starting text; with no suggestion the box is blank). The operator's text is escaped
+  into paragraphs. The message records that it was answered and links to the Outbox row.
+- **Connections** shows the true state (not set up / set up and off / delivering) and has
+  "Send me a test email", which works before the switch is on — that is what it is for.
+- **Outbox** shows Sending / Sent / Not delivered / Bounced with the reason, and "Try again"
+  on a failed email. Mass messages report `sent` only when email really left.
+- **Settings → Communications**: "Send email for real" and "Replies go to".
+- Tests: `tests/fx_email.test.ts`, 19 tests through an injected transport — nothing touches
+  the network. Text messages are unchanged: saved, not delivered.
+- To switch it on in production: DEPLOY.md → "Real email".
+
+## 2026-11-22 — Email, second pass: what three reviewers found before it merged
+
+The rail above went to three reviewers told to break it (abuse, delivery, every existing
+caller) before the PR was merged (#132). They found that turning on a real rail changes the
+meaning of code that was written when nothing left the building.
+
+- **Mail a stranger starts is held, not delivered.** The public tour form would have mailed a
+  confirmation — with the visitor's own unescaped HTML in it — to any address typed into it,
+  from the operator's name. Now: the confirmation and its reminder are written `recorded`
+  (`hold: true` on `send()`), names are capped, the time must be an open slot, and every
+  interpolated value in the leasing emails is escaped. The same hold applies to portal
+  invitations created by an import (a hundred one-time passwords at the moment of apply, while
+  the screen said "not emailed") and to an AI leasing reply nobody approved. Held mail has a
+  "Send this email" button in the Outbox.
+- **Sanitized once, at the rail.** `mailSafeHtml()` in `lib/email.ts`: a short list of plain
+  tags, every attribute removed, links only http(s)/mailto with relative ones made absolute,
+  no images/forms/scripts. Covers every current and future caller.
+- **No blind repeat.** An unanswered provider call (timeout, dropped connection, a restart
+  mid-send) is not retried on Postmark — the row stops with "not known whether this was
+  delivered". Resend gets an `Idempotency-Key` from the outbox id, so there it is retried.
+- **The server's fault is not the message's.** Missing configuration makes mail wait with an
+  accurate note; a rejected key is retried; any 2xx is accepted.
+- **Fair queue.** A pass runs until nothing is due, one-to-one mail goes ahead of mass mail,
+  a capped organization's due rows are deferred together, and a kick during a pass asks for
+  another.
+- **Followers follow.** A mass message's recipient lines and sent count now track the real
+  outbox status; One Inbox's "reply sent" banner reads the live status; flashes across
+  leasing, leases, renewals and messages say what actually happened (`deliveryNote(ctx,
+  channel)`); links in e-signature and application emails are absolute and come from
+  configuration, never a Host header; provider error text no longer reaches the log.
+- Tests: `tests/fx_email.test.ts` (26), `tests/fxm_public.test.ts` (10),
+  `tests/fxm_leases.test.ts` (6), `tests/fxm_inbox.test.ts` (8). 809 unit tests passing.
+- `src/ui/parts/*.css` are appended to `theme.css` when served, so a feature's styles can be
+  worked on without colliding in the base sheet.
+
+## 2026-11-22 — Findable, One Inbox as a daily tool, and one palette
+
+Asked for: "it may be a little hard to find things… more idiot proof but not over-simplified",
+"polish One Inbox completely", and "the best colour palette for the whole site". Three audits
+(each looked at the running product at 1440 and 390, light and dark), then three builders on
+disjoint files.
+
+**Findability** — the audit ran eleven everyday tasks as a new office manager. Search returned
+nothing for "payment", "late", "notice", "import", "email", "bills", "sent"; Standard mode had
+no menu path to notices, the approval queue, Reports or Export; sent mail was "Outbox" under
+the gear at `/dev/messages`; `/settings`, `/outbox`, `/payments`, `/help` were bare 404s.
+- **Find anything**: the search box matches the Standard label, the Advanced label and a
+  central keyword map (`FIND_WORDS` in `src/ui/ui.ts`), plus places that are in no menu
+  (`EXTRA_DESTS`). Nineteen everyday queries are pinned to a sensible first hit.
+- **All pages** (`GET /all-pages`, `src/modules/m25_find/`): generated from the nav registry so
+  it cannot drift; plain headings, one line each, a no-script filter, a tag on Advanced-only
+  pages. Linked from the gear, the drawer, every Standard dropdown and the signed-in 404.
+- **Menus**: Standard gains Send a notice, Waiting for your OK, Sent messages, Reports; the
+  gear gains Connections and Export your data. Nothing left Advanced. The mobile drawer and
+  the desktop bar render from one model. Tab titles follow the Standard label; pages outside
+  the current menu get a fallback breadcrumb.
+- **Sent messages**: the Outbox is at `/outbox` (`/dev/messages` still answers), outbound
+  only by default, template code names only in Advanced.
+- **Record a payment**: `/receivables/payment` picks a household and opens that lease's
+  payment panel; buttons on Who owes me, Seriously behind and Home.
+- **Connections** leads with six plain lines (Email, Text messages, Bank feed, Resident
+  payments, Listings, AI); server detail is collapsed. 23 alias redirects for guessed URLs.
+- Not done, by choice: Home and `/ai` keep different button words where they mean different
+  things; the Setup hub's upload forms were not reordered.
+
+**One Inbox** — verdict was "honest and calm, but a prototype of a triage tool".
+- The loop carries its view: Mark done goes to the next email, with Undo; Previous / "3 of
+  10" / Next; "Send and mark done". Search, building and kind filters; honest paging.
+- Rows are a fixed grid so names line up; no pill for the normal case, amber for "Unknown
+  sender" / "2 possible people", red only for Urgent; relative age.
+- One vocabulary ("Who is this?"), an identity block with phones, re-filing folded away when
+  already right, type-to-find instead of a long select, a reply path for unknown senders,
+  drafts signed with the user and company (never "[Your name]"), a composer that keeps what
+  was typed, a People page, a three-step first run, keyboard keys (j/k/e/r, /), and the 390px
+  defects fixed. Styles live in `src/ui/parts/oneinbox.css`.
+
+**Palette — "Evergreen on warm paper"** (DECISIONS #136). Brand moves from emerald `#059669`
+to pine `#0A6B4E` (dark: fill `#0E7557`, links/focus `#5CCBA2`); one warm neutral family for
+app and marketing; paid / due / late are leaf green, ochre and brick red, deliberately off the
+brand hue; steel blue is info only; fills are flat. Every token name is kept; every literal in
+`theme.css` now goes through a token; charts use `ramp()` / `--series-n`. Measured contrast on
+the shipped values: lowest body-text pair 4.61 (light), 5.06 (dark); lowest UI pair 3.19.
+og-image and favicon regenerated. **Owed**: the marketing hero screenshots
+(`src/ui/mk-assets/*.png`) are captures of the old palette and need re-shooting.
+
+Tests: 832 unit; new `tests/find_pages.test.ts`, `tests/oi_*.test.ts`. The shared two-org
+fixture no longer depends on which suite creates it first.

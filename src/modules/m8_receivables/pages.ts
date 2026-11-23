@@ -1,6 +1,7 @@
 import { html, raw, when, join, type Child } from '../../lib/html.ts';
 import { redirect, notFound, badRequest, fileRes, type Router, type Rq } from '../../lib/http.ts';
-import { requirePerm, propFilter, canAccessProperty, type Ctx } from '../../lib/auth.ts';
+import { requirePerm, propFilter, canAccessProperty, can, type Ctx } from '../../lib/auth.ts';
+import { uiMode } from '../../lib/uimode.ts';
 import { q, q1, val, run, insert } from '../../lib/db.ts';
 import { id } from '../../lib/ids.ts';
 import { nowIso, fmtDate, monthKey, addMonths, addDays, fmtMonth, diffDays } from '../../lib/dates.ts';
@@ -103,8 +104,8 @@ const PAYMENT_STATUS_LABEL: Record<string, string> = {
 };
 
 /** small drop-down panel used by the lease header actions */
-function actionPanel(label: string, body: Child, width = 300): Child {
-  return html`<details style="position:relative">
+function actionPanel(label: string, body: Child, width = 300, open = false): Child {
+  return html`<details style="position:relative" ${open ? 'open' : ''}>
     <summary class="btn btn-ghost" style="list-style:none">${label}</summary>
     <div style="position:absolute;right:0;top:42px;z-index:50;background:var(--surface);border:1px solid var(--line);border-radius:10px;box-shadow:var(--shadow-lg);padding:14px;width:${width}px">
       ${body}
@@ -126,16 +127,38 @@ export function routes(r: Router): void {
     for (let i = 11; i >= 0; i--) months.push(monthKey(addMonths(ctx.businessDate, -i)));
     const trends = months.map((m) => receivablesStats(ctx, m, propId));
     const props = q<any>(`SELECT id, name FROM properties WHERE org_id=?${propFilter(ctx, 'id').sql} ORDER BY name`, ctx.orgId, ...propFilter(ctx, 'id').params);
+    const standard = uiMode(ctx) === 'standard';
+    const canRecord = can(ctx, 'payments:record');
+    // Standard's menu calls this page "Who owes me", and it opened on seven
+    // rate tiles and two trend charts. The people who owe come first there;
+    // the analytics follow. Advanced keeps the analyst's order.
+    const owing = aging.slice().sort((x, y) => y.balance - x.balance);
+    const whoOwes = card(html`Who owes${owing.length ? html` <span class="badge">${owing.length}</span>` : ''}`, html`${tbl(
+      [{ label: 'Household' }, { label: 'Unit' }, { label: 'Property' }, { label: 'Owes', num: true }, ...(canRecord ? [{ label: '', nosort: true }] : [])],
+      owing.slice(0, 15).map((x) => ({
+        href: `/leases/${x.lease_id}`,
+        cells: [
+          html`<b>${x.household_name}</b>`, x.unit_number, x.property_name, html`<b>${usd(x.balance)}</b>`,
+          ...(canRecord ? [html`<a class="small" href="/leases/${x.lease_id}?panel=payment">Record payment</a>`] : []),
+        ],
+      })),
+      { empty: 'Nobody owes anything. Everyone is paid up.', foot: owing.length ? ['Total owed', '', '', usd(agingTotal), ...(canRecord ? [''] : [])] : undefined },
+    )}${when(owing.length > 15, () => html`<p class="small muted" style="padding:8px 14px 12px;margin:0">Showing the 15 largest of ${owing.length}. ${can(ctx, 'collections:manage')
+      ? html`<a href="/delinquency">See every household that is behind</a>`
+      : html`<a href="/residents?view=households&amp;sort=balance&amp;dir=desc">See every household</a>`}</p>`)}`, { flush: true });
     return shell(rq, {
       title: 'Receivables',
       active: '/receivables',
-      subtitle: `Collections & payment analytics · ${fmtMonth(mk)}`,
-      actions: html`<a class="btn btn-ghost" href="/receivables/latefees">Late fee run</a> <a class="btn btn-ghost" href="/receivables/lockbox">${isLiveOrg(ctx) ? 'Record a batch of checks' : 'Lockbox import'}</a>`,
+      subtitle: standard
+        ? `Who has a balance, and how collecting went in ${fmtMonth(mk)}`
+        : `Collections & payment analytics · ${fmtMonth(mk)}`,
+      actions: html`${when(canRecord, () => html`<a class="btn" href="/receivables/payment">Record a payment</a> `)}<a class="btn btn-ghost" href="/receivables/latefees">Late fee run</a> <a class="btn btn-ghost" href="/receivables/lockbox">${isLiveOrg(ctx) ? 'Record a batch of checks' : 'Lockbox import'}</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Month', select('month', months.slice().reverse().map((m): [string, string] => [m, fmtMonth(m)]), mk))}
           ${field('Property', select('property', props.map((p): [string, string] => [p.id, p.name]), propId || '', { blank: 'All properties' }))}
         </form>
+        ${when(standard, () => whoOwes)}
         ${kpis([
           { label: 'Billed', value: usd(stats.billed), sub: fmtMonth(mk) },
           { label: 'Collected', value: usd(stats.collected), tone: 'ok' },
@@ -166,7 +189,70 @@ export function routes(r: Router): void {
             { label: '61–90', value: Math.round(sums.d61 / 100), tone: 'bad' },
             { label: '90+', value: Math.round(sums.d90 / 100), tone: 'bad' },
           ], { centerValue: usd(agingTotal).replace('.00', ''), centerLabel: 'open (dollars)' });
-        })())}`,
+        })())}
+        ${when(!standard, () => whoOwes)}`,
+    });
+  });
+
+  // ---------- record a payment: find the household first ----------
+  // "Record payment" was a button on one lease's page, four clicks from the
+  // menu, with nothing under Money that said "payment". This is the front door:
+  // type a name or a unit, pick the household, and land on its lease with the
+  // payment form already open.
+  r.get('/receivables/payment', requirePerm('payments:record'), (rq) => {
+    const ctx = rq.ctx as Ctx;
+    const query = (rq.query.get('q') || '').trim().slice(0, 80);
+    const pf = propFilter(ctx, 'l.property_id');
+    type Hh = { id: string; household_name: string; unit_number: string; property_name: string; status: string; people: string | null };
+    const find = (extra: string, params: unknown[], limit: number): Hh[] => q<Hh>(
+      `SELECT l.id, l.household_name, u.unit_number, p.name AS property_name, l.status,
+              (SELECT GROUP_CONCAT(r.first_name || ' ' || r.last_name, ', ') FROM household_members hm JOIN residents r ON r.id=hm.resident_id WHERE hm.lease_id=l.id) AS people
+       FROM leases l JOIN units u ON u.id=l.unit_id JOIN properties p ON p.id=l.property_id
+       WHERE l.org_id=? AND l.status IN ('active','month_to_month','notice','ended')${pf.sql}${extra}
+       ORDER BY (l.status='ended'), l.household_name LIMIT ${limit}`,
+      ctx.orgId, ...pf.params, ...params,
+    );
+    // Word starts, not substrings: "ma" should find Martin and Maya, not every
+    // name with those two letters somewhere in it. A unit matches anywhere
+    // ("311" finds C-311).
+    const starts = `${query}%`;
+    const found = query
+      ? find(` AND (l.household_name LIKE ? OR l.household_name LIKE ? OR u.unit_number LIKE ? OR EXISTS (SELECT 1 FROM household_members hm JOIN residents r ON r.id=hm.resident_id
+            WHERE hm.lease_id=l.id AND (r.first_name LIKE ? OR r.last_name LIKE ? OR r.first_name || ' ' || r.last_name LIKE ? OR r.email LIKE ?)))`,
+        [starts, `% ${query}%`, `%${query}%`, starts, starts, starts, starts], 40)
+      : [];
+    // before anything is typed: the households most likely to be the answer
+    const owing = query ? [] : agingRows(ctx, {}).sort((x, y) => y.balance - x.balance).slice(0, 12);
+    const pick = (leaseId: string): string => `/leases/${leaseId}?panel=payment`;
+    return shell(rq, {
+      title: 'Record a payment',
+      active: '/receivables',
+      crumbs: [[uiMode(ctx) === 'standard' ? 'Who owes me' : 'Receivables', '/receivables']],
+      subtitle: 'For a check, cash or money order you have received. Find the household, then enter the amount.',
+      content: html`
+        <form method="get" action="/receivables/payment" class="pay-find" role="search">
+          <label for="pay-q">Who paid?</label>
+          <div class="pay-find-row">
+            <input id="pay-q" name="q" type="search" value="${query}" placeholder="A name or a unit number" autocomplete="off" ${query ? '' : 'autofocus'} />
+            <button class="btn" type="submit">Find</button>
+          </div>
+        </form>
+        ${query
+          ? card(`${found.length === 40 ? 'First 40 matches' : `${found.length} match${found.length === 1 ? '' : 'es'}`} for \u201c${query}\u201d`, found.length
+            ? html`<ul class="pay-list">${found.map((h) => html`<li><a href="${pick(h.id)}">
+                <span class="pay-who"><b>${h.household_name}</b>${h.people && h.people !== h.household_name ? html`<span class="sub">${h.people}</span>` : ''}</span>
+                <span class="pay-where">Unit ${h.unit_number} · ${h.property_name}${h.status === 'ended' ? ' · moved out' : ''}</span>
+                <span class="pay-owes">${(() => { const b = leaseBalance(ctx, h.id); return b > 0 ? html`owes <b>${usd(b)}</b>` : b < 0 ? `${usd(-b)} credit` : 'paid up'; })()}</span>
+              </a></li>`)}</ul>`
+            : emptyState('Nobody by that name or unit', 'Check the spelling, or try just the last name or the unit number.'), { flush: found.length > 0 })
+          : card('Households that owe the most', owing.length
+            ? html`<ul class="pay-list">${owing.map((h) => html`<li><a href="${pick(h.lease_id)}">
+                <span class="pay-who"><b>${h.household_name}</b></span>
+                <span class="pay-where">Unit ${h.unit_number} · ${h.property_name}</span>
+                <span class="pay-owes">owes <b>${usd(h.balance)}</b></span>
+              </a></li>`)}</ul>`
+            : emptyState('Everyone is paid up', 'Type a name or a unit above to record a payment anyway.'), { flush: owing.length > 0 })}
+        <p class="small muted">A stack of checks to enter at once? <a href="/receivables/lockbox">${isLiveOrg(ctx) ? 'Record a batch of checks' : 'Lockbox import'}</a>.</p>`,
     });
   });
 
@@ -365,7 +451,7 @@ export function routes(r: Router): void {
       subtitle: `${pastDue.length} past-due household${pastDue.length === 1 ? '' : 's'} · ${usd(pastDueTotal)} past due`
         + (currentTotal > 0 ? ` · ${usd(currentTotal)} current, not yet due` : '')
         + ` · as of ${fmtDate(ctx.businessDate)}`,
-      actions: html`<a class="btn btn-ghost" href="/delinquency/export">Export CSV</a>`,
+      actions: html`${when(can(ctx, 'payments:record'), () => html`<a class="btn" href="/receivables/payment">Record a payment</a> `)}<a class="btn btn-ghost" href="/delinquency/export">Export CSV</a>`,
       content: html`
         <form method="get" class="toolbar" data-autosubmit>
           ${field('Property', select('property', props.map((p): [string, string] => [p.id, p.name]), propId || '', { blank: 'All properties' }))}
@@ -994,7 +1080,7 @@ function statementForm(ctx: Ctx, lease: any): Child {
     <p class="small" style="margin:10px 0 0"><a href="/leases/${lease.id}/ledger.csv">Download the full ledger (CSV)</a></p>`;
 }
 
-registerLeaseAction((ctx, lease) => {
+registerLeaseAction((ctx, lease, opts) => {
   if (!ctx.perms.has('payments:record') || !['active', 'month_to_month', 'notice', 'ended'].includes(lease.status)) return null;
   const balance = leaseBalance(ctx, lease.id);
   return actionPanel('Record payment', html`
@@ -1004,7 +1090,7 @@ registerLeaseAction((ctx, lease) => {
         ${field('Reference #', input('reference', { placeholder: 'check number' }))}
         <button class="btn" style="width:100%">Post payment</button>
       </form>
-      ${when(!processorConnected(ctx), () => html`<p class="small muted" style="margin:8px 0 0">Records money already received. Card and bank-draft collection is not connected for this account.</p>`)}`);
+      ${when(!processorConnected(ctx), () => html`<p class="small muted" style="margin:8px 0 0">Records money already received. Card and bank-draft collection is not connected for this account.</p>`)}`, 300, opts?.panel === 'payment');
 });
 
 registerLeaseAction((ctx, lease) => {

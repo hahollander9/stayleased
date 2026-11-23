@@ -9,7 +9,7 @@ import {
 } from '../src/modules/m23_oneinbox/service.ts';
 import { SAMPLE_ROSTER, SAMPLE_MAIL } from '../src/modules/m23_oneinbox/sample.ts';
 import { toCsv } from '../src/lib/csv.ts';
-import { q1 } from '../src/lib/db.ts';
+import { q1, run } from '../src/lib/db.ts';
 import { fixtureTwoOrgs, startTestServer, loginAs, get, post } from './harness.ts';
 
 /** One Inbox files an email to a person automatically only on strong
@@ -117,15 +117,22 @@ test('sorting: kind by best fit, urgency by danger words, mailbox as a last hint
   assert.equal(classify(M({ text: 'hello there' }), null).category, 'other');
 });
 
-test('no reply is suggested for an unidentified sender; replies promise a response, not an outcome', () => {
-  assert.equal(suggestReply('repair', 'urgent', null), null);
-  const r = suggestReply('repair', 'urgent', LIST[0]!)!;
+test('replies promise a response, not an outcome; an unidentified sender is asked who they are', () => {
+  const r = suggestReply('repair', 'urgent', LIST[0]!);
   assert.match(r, /^Hi Denise,/);
   assert.match(r, /911/);
   assert.match(r, /Oakwood Terrace, Unit 1/);
   for (const cat of ['repair', 'payment', 'agency', 'owner', 'leasing', 'other'] as const) {
-    assert.doesNotMatch(suggestReply(cat, 'normal', LIST[0]!)!, /waive|will be fixed by|you owe|\$\d/i);
+    assert.doesNotMatch(suggestReply(cat, 'normal', LIST[0]!), /waive|will be fixed by|you owe|\$\d/i);
+    // nobody identified: the draft names no person and no household, only asks
+    const ask = suggestReply(cat, 'normal', null);
+    assert.match(ask, /^Hello,/);
+    assert.match(ask, /your name, your building and unit number, and a phone number/);
+    assert.doesNotMatch(ask, /Denise|Oakwood|Unit \d|waive|you owe|\$\d/i);
   }
+  const urgent = suggestReply('other', 'urgent', null);
+  assert.match(urgent, /contacting someone about this now/);
+  assert.match(urgent, /call 911/);
 });
 
 test('helpers: phones, subject keys', () => {
@@ -162,6 +169,8 @@ const ctxA = (): any => ({ orgId: fx.orgA, userId: fx.userAId, userName: 'Tester
 
 before(async () => {
   fx = fixtureTwoOrgs();
+  // other suites share these two organizations: start from an empty mailbox
+  for (const t of ['oi_messages', 'oi_contacts']) { run(`DELETE FROM ${t} WHERE org_id=?`, fx.orgA); run(`DELETE FROM ${t} WHERE org_id=?`, fx.orgB); }
   const s = await startTestServer();
   base = s.base;
   close = s.close;
@@ -201,22 +210,26 @@ test('the sample lands in the right piles', async () => {
   assert.equal(counts(orgA).open, SAMPLE_MAIL.length);
 });
 
-test('screens: list, message, setup; an unidentified sender gets no draft', async () => {
+test('screens: list, message, setup; an unidentified sender gets a draft that asks who they are', async () => {
   const list = await get(base, '/one-inbox?view=needs_filing', cookieA);
   assert.equal(list.status, 200);
   assert.match(list.text, /Quick question/);
   assert.doesNotMatch(list.text, /Kitchen sink leaking/);
-  const water = q1<any>(`SELECT id FROM oi_messages WHERE subject='water'`)!.id;
+  const water = q1<any>(`SELECT id FROM oi_messages WHERE subject='water' AND org_id=?`, fx.orgA)!.id;
   const page = await get(base, `/one-inbox/m/${water}`, cookieA);
-  assert.match(page.text, /No reply is suggested until this email is filed/);
-  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking'`)!.id;
+  // nobody knows who this is, and it is urgent: there is still something to send
+  assert.match(page.text, /We could not tell who sent this/);
+  assert.match(page.text, /We are contacting someone about this now/);
+  assert.match(page.text, /call 911/);
+  assert.doesNotMatch(page.text, /\[Your name\]/);
+  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking' AND org_id=?`, fx.orgA)!.id;
   assert.match((await get(base, `/one-inbox/m/${sink}`, cookieA)).text, /Hi Denise,/);
   assert.match((await get(base, '/one-inbox/setup', cookieA)).text, /inbox-[a-f0-9]{10}@/);
   assert.notEqual((await get(base, '/one-inbox', '')).status, 200);
 });
 
 test('another org cannot see or act on this org’s mail', async () => {
-  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking'`)!.id;
+  const sink = q1<any>(`SELECT id FROM oi_messages WHERE subject='Kitchen sink leaking' AND org_id=?`, fx.orgA)!.id;
   assert.equal((await get(base, `/one-inbox/m/${sink}`, cookieB)).status, 404);
   assert.equal((await post(base, `/one-inbox/m/${sink}/done`, {}, cookieB)).status, 404);
   assert.doesNotMatch((await get(base, '/one-inbox?view=open', cookieB)).text, /Kitchen sink leaking/);

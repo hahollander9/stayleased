@@ -333,7 +333,7 @@ export function ilsIntakeCard(ctx: Ctx): Raw {
   const props = q<any>(`SELECT id, slug, name FROM properties WHERE org_id=? AND status != 'archived' ORDER BY name`, ctx.orgId);
   if (!props.length) return html``;
   const armed = !!inboundToken();
-  return card('ILS lead email — automatic intake', html`
+  return card('Inquiries from listing sites (Zillow, Apartments.com)', html`
     <p class="muted small" style="margin-top:0">Every listing site (Zillow, Apartments.com, Zumper…) delivers inquiries by email.
       Set the address below as the <b>lead email on each listing</b> — or auto-forward your current lead inbox to it — and every
       inquiry lands here as a guest card with the prospect's message threaded, cadence started, and the Leasing AI answering

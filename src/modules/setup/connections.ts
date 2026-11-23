@@ -1,4 +1,4 @@
-import { html, raw, when, type Raw } from '../../lib/html.ts';
+import { html, when, type Raw } from '../../lib/html.ts';
 import { redirect, type Router } from '../../lib/http.ts';
 import { requireStaff, type Ctx } from '../../lib/auth.ts';
 import { audit } from '../../lib/audit.ts';
@@ -9,6 +9,7 @@ import { dbPath } from '../../lib/db.ts';
 import { isAbsolute } from 'node:path';
 import { shell, card, statusBadge, dl } from '../../ui/ui.ts';
 import { ilsIntakeCard } from '../m3_crm/ils_email.ts';
+import { emailRailStatus } from '../m15_comms/email_rail.ts';
 
 /** Connections — one honest page about every external rail.
  * What's live is labeled live; what's simulated says so in plain words; what
@@ -25,6 +26,7 @@ interface Rail {
 }
 
 function rails(ctx: Ctx): Rail[] {
+  const mail = emailRailStatus(ctx);
   const ai = llmStatus();
   const live = ctx.orgKind === 'live';
   return [
@@ -82,10 +84,8 @@ function rails(ctx: Ctx): Rail[] {
     },
     {
       key: 'messaging', name: 'Email & SMS delivery',
-      desc: live
-        ? 'Messages compose, thread and audit fully, but nothing reaches a real phone or inbox until a delivery provider is connected. Every message is saved in the Outbox marked “Saved — not delivered”, so staff can pass it on another way. The resident portal does not show messages yet.'
-        : 'Outbox simulator — messages are recorded and visible, not delivered externally.',
-      status: live ? 'waitlist' : 'simulated',
+      desc: live ? mail.line : 'Outbox simulator — messages are recorded and visible, not delivered externally.',
+      status: live ? (mail.state === 'live' ? 'live' : 'waitlist') : 'simulated',
     },
     {
       key: 'pms_sync', name: 'Buildium · AppFolio · Yardi live sync',
@@ -127,11 +127,85 @@ function platformStatusCard(ctx: Ctx): Raw {
   `);
 }
 
+/** The six things an owner asks about, each answered in a word.
+ *
+ * The page used to open on "Platform status" — where the database file lives,
+ * which environment variable opens signup — and reach email in the ninth card.
+ * The person who came to turn on email is not the person who runs the server.
+ * So: a plain list first, one line and one button each; everything about the
+ * server folds away below under a heading that says who it is for. */
+interface Line { key: string; name: string; state: 'on' | 'off' | 'practice'; says: string; action: Raw | null; extra?: Raw | null }
+
+function statusLines(ctx: Ctx, requested: string[]): Line[] {
+  const live = ctx.orgKind === 'live';
+  const mail = emailRailStatus(ctx);
+  const ai = llmStatus();
+  const ask = (key: string): Raw => (requested.includes(key)
+    ? html`<span class="pill">Requested ✓</span>`
+    : html`<form method="post" action="/setup/connections/request"><input type="hidden" name="rail" value="${key}" /><button class="btn btn-ghost" type="submit">Tell me when it is ready</button></form>`);
+  const practice = (says: string): Pick<Line, 'state' | 'says'> => ({ state: 'practice', says });
+  return [
+    {
+      key: 'email', name: 'Email',
+      ...(live
+        ? { state: mail.state === 'live' ? 'on' as const : 'off' as const, says: mail.line }
+        : practice('The practice company never sends real email. Messages are written and saved under Sent messages so you can see exactly what would go out.')),
+      action: !live ? html`<a class="btn btn-ghost" href="/outbox">Sent messages</a>`
+        : mail.state === 'off' ? ask('messaging')
+          : html`<a class="btn${mail.state === 'live' ? ' btn-ghost' : ''}" href="/admin/settings?section=communications">${mail.state === 'live' ? 'Email settings' : 'Turn it on'}</a>`,
+      // the test send works before the switch is on — that is its point
+      extra: live && mail.state !== 'off'
+        ? html`<form method="post" action="/setup/connections/test-email"><button class="btn btn-ghost" type="submit">Send me a test email</button></form>`
+        : null,
+    },
+    {
+      key: 'sms', name: 'Text messages',
+      ...(live
+        ? { state: 'off' as const, says: 'Texts are written and saved, and do not reach a phone yet. Open one under Sent messages to read it and pass it on yourself.' }
+        : practice('Texts are written and saved, never sent to a phone.')),
+      action: live ? ask('sms') : null,
+    },
+    {
+      key: 'bank', name: 'Bank feed',
+      ...(live
+        ? { state: 'off' as const, says: 'Your bank does not send transactions here automatically yet. Enter your opening balance in Setup, then upload a statement file or match by hand under Bank accounts.' }
+        : practice('The practice company has a pretend bank feed, so reconciling can be tried end to end.')),
+      action: live ? ask('bank') : html`<a class="btn btn-ghost" href="/banking">Bank accounts</a>`,
+    },
+    {
+      key: 'payments', name: 'Resident payments',
+      ...(live
+        ? { state: 'off' as const, says: 'Residents cannot pay by card or bank draft through StayLeased yet. Record the checks, cash and money orders you receive; your books stay right. Your own StayLeased subscription is billed separately, and for real — see Billing.' }
+        : practice('Payments settle, bounce and deposit like the real thing, with no real money. Your own StayLeased subscription is billed separately, and for real — see Billing.')),
+      action: live ? ask('payments') : null,
+    },
+    {
+      key: 'ils', name: 'Listings',
+      ...(live
+        ? { state: 'off' as const, says: 'Vacancies are not pushed to Zillow or Apartments.com yet. Your own property websites and inquiry forms work now, and inquiries those sites email you can be read in automatically (below).' }
+        : practice('Pretend inquiries arrive each day as if from Zillow and Apartments.com.')),
+      action: live ? ask('ils') : null,
+    },
+    {
+      key: 'ai', name: 'AI',
+      state: ai.live ? 'on' : live ? 'off' : 'practice',
+      says: ai.live
+        ? 'On. It answers Ask StayLeased, reads lease PDFs and helps match columns when you upload a file. Drafts for residents always wait for your OK.'
+        : 'The built-in practice version is answering. Drafts are still written from your own records and still wait for your OK; the live AI is switched on by whoever runs the server.',
+      action: html`<form method="post" action="/setup/connections/test-ai"><button class="btn btn-ghost" type="submit">Test connection</button></form>`,
+    },
+  ];
+}
+
+const STATE_WORD: Record<Line['state'], string> = { on: 'On', off: 'Not connected', practice: 'Practice only' };
+
 export function routes(r: Router): void {
   r.get('/setup/connections', requireStaff, (rq) => {
     const ctx = rq.ctx as Ctx;
     const requested = getSetting<string[]>(ctx, 'integration_interest') || [];
-    const list = rails(ctx);
+    // the six above have their own lines; these are everything else
+    const inList = new Set(['ai', 'payments', 'bank', 'ils', 'messaging']);
+    const list = rails(ctx).filter((x) => !inList.has(x.key));
     const working = list.filter((x) => x.status === 'live');
     const rest = list.filter((x) => x.status !== 'live');
     const railCard = (rail: Rail): Raw => html`
@@ -140,7 +214,6 @@ export function routes(r: Router): void {
         <div class="muted small" style="flex:1">${rail.desc}</div>
         ${when(!!rail.note, () => html`<div class="callout bad" style="margin:8px 0 0">${rail.note}</div>`)}
         <div class="btn-row" style="margin-top:10px">
-          ${when(rail.key === 'ai', () => html`<form method="post" action="/setup/connections/test-ai"><button class="btn" type="submit">Test connection</button></form>`)}
           ${when(rail.key === 'imports', () => html`<a class="btn" href="/setup/import">Try an import</a>`)}
           ${when(!!rail.href && rail.key !== 'imports', () => html`<a class="btn btn-ghost" href="${rail.href}">Open</a>`)}
           ${when(rail.status === 'waitlist', () =>
@@ -149,19 +222,31 @@ export function routes(r: Router): void {
               : html`<form method="post" action="/setup/connections/request"><input type="hidden" name="rail" value="${rail.key}" /><button class="btn btn-ghost" type="submit">Request access</button></form>`)}
         </div>
       </div>`;
+    const lines = statusLines(ctx, requested);
+    const on = lines.filter((l) => l.state === 'on').length;
     return shell(rq, {
       title: 'Connections',
       active: '/setup/connections',
       crumbs: [['Setup', '/setup'], ['Connections']],
       subtitle: ctx.orgKind === 'live'
-        ? 'What\'s working, what\'s coming, and proof either way. Simulated rails are labeled, always.'
-        : 'The demo org runs every external rail on deterministic simulators, so the whole product works offline.',
+        ? `${on} of ${lines.length} connected. Anything not connected still works inside StayLeased — it just does not reach the outside world yet.`
+        : 'This is the practice company: everything works, and nothing reaches a real inbox, phone or bank.',
       content: html`
-        ${platformStatusCard(ctx)}
+        ${card('What is connected', html`<ul class="cx-list">
+          ${lines.map((l) => html`<li class="cx-line">
+            <div class="cx-name"><b>${l.name}</b><span class="cx-state ${l.state}">${STATE_WORD[l.state]}</span></div>
+            <p class="cx-says">${l.says}</p>
+            <div class="cx-act">${l.action}${l.extra || ''}</div>
+          </li>`)}
+        </ul>`, { flush: true })}
         ${ilsIntakeCard(ctx)}
-        ${card('Working now', html`<div class="conn-grid">${working.map(railCard)}</div>`)}
-        ${card(ctx.orgKind === 'live' ? 'Coming soon — join the waitlist' : 'Simulated in the demo world', html`<div class="conn-grid">${rest.map(railCard)}</div>`)}
-        ${when(ctx.orgKind === 'demo', () => raw('<p class="muted small">Tip: in a live customer org this page shows waitlists instead of simulators — nothing simulated ever poses as a real rail.</p>'))}
+        ${when(working.length, () => card('Working now', html`<div class="conn-grid">${working.map(railCard)}</div>`))}
+        ${when(rest.length, () => card(ctx.orgKind === 'live' ? 'Coming soon — join the waitlist' : 'Simulated in the demo world', html`<div class="conn-grid">${rest.map(railCard)}</div>`))}
+        <details class="cx-server">
+          <summary>For whoever runs the server</summary>
+          <p class="muted small">Where the data is kept, which AI model answers, and whether new companies can sign up. Nothing here needs changing to use StayLeased day to day.</p>
+          ${platformStatusCard(ctx)}
+        </details>
       `,
     });
   });

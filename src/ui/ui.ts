@@ -16,7 +16,7 @@ import { uiMode, type UiMode } from '../lib/uimode.ts';
 const ASSET_V: string = (() => {
   try {
     const h = createHash('sha1');
-    for (const f of ['src/ui/theme.css', 'src/ui/app.js']) h.update(readFileSync(pjoin(ROOT, f)));
+    for (const f of ['src/ui/theme.css', 'src/ui/app.js', 'src/ui/parts/oneinbox.css', 'src/ui/parts/find.css']) { try { h.update(readFileSync(pjoin(ROOT, f))); } catch { /* a part may not exist */ } }
     return h.digest('hex').slice(0, 8);
   } catch {
     return 'dev';
@@ -40,7 +40,7 @@ export function logo(size = 22, color = 'currentColor'): Raw {
 /** Two-tone StayLeased wordmark (mark + name). onDark tints the mark + accent
  * for placement on the dark chrome; otherwise it uses the brand accent token. */
 export function wordmark(size = 22, onDark = false): Raw {
-  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, onDark ? '#34D399' : 'var(--brand)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
+  return html`<span class="wordmark ${onDark ? 'on-dark' : ''}">${logo(size, 'var(--accent)')}<span class="wm-text">Stay<span class="wm-accent">Leased</span></span></span>`;
 }
 
 // ---------- nav registry ----------
@@ -101,7 +101,7 @@ const SECTION_TO_TAB: Record<string, string> = {
   Property: 'Property', Operations: 'Operations', Marketing: 'Leasing',
   Intelligence: 'Reports', Admin: 'Setup', Developer: 'Setup',
 };
-const HREF_TO_TAB: Record<string, string> = { '/inbox': 'Messages', '/one-inbox': 'Messages', '/comms': 'Messages' };
+const HREF_TO_TAB: Record<string, string> = { '/inbox': 'Messages', '/one-inbox': 'Messages', '/comms': 'Messages', '/outbox': 'Messages' };
 
 /** Grouped dropdowns (nav consolidation pass): the big tabs organize their
  * many pages into labeled clusters instead of one flat column, so a menu
@@ -156,19 +156,46 @@ const STANDARD_TABS: StdTab[] = [
   { label: 'Money', groups: [
     ['Coming in', [['/receivables', 'Who owes me'], ['/delinquency', 'Seriously behind'], ['/deposits', 'Deposits I\u2019m holding'], ['/weekly-report', 'Weekly action report']]],
     ['Going out', [['/ap', 'Bills'], ['/approvals', 'Bills and spending to OK']]],
-    ['Your books', [['/statements', 'Money in and out'], ['/banking', 'Bank accounts']]],
+    ['Your books', [['/statements', 'Money in and out'], ['/banking', 'Bank accounts'], ['/reports', 'Reports']]],
   ] },
   { label: 'Units', groups: [
     [null, [['/properties', 'Properties'], ['/units', 'Units']]],
   ] },
   { label: 'People', groups: [
-    ['Residents', [['/inbox', 'Inbox'], ['/one-inbox', 'One Inbox'], ['/residents', 'Residents'], ['/leases', 'Leases'], ['/renewals', 'Leases ending soon']]],
+    // The two inboxes sat side by side as "Inbox" and "One Inbox" with nothing
+    // to tell them apart, and the page that shows what was SENT lived under the
+    // gear. Everything about messages is now one group, in the order of a day:
+    // read, approve what was drafted, send to everyone, check what went out.
+    ['Messages', [['/inbox', 'Inbox'], ['/one-inbox', 'Shared mailbox (One Inbox)'], ['/ai', 'Waiting for your OK'], ['/comms', 'Send a notice'], ['/outbox', 'Sent messages']]],
+    ['Residents', [['/residents', 'Residents'], ['/leases', 'Leases'], ['/renewals', 'Leases ending soon']]],
     ['New renters', [['/leads', 'Inquiries'], ['/tours', 'Tours'], ['/applications', 'Applicants'], ['/placement-scorecard', 'Placement scorecard']]],
   ] },
   { label: 'Repairs', groups: [
     [null, [['/workorders', 'Repairs'], ['/myday', 'My day'], ['/turns', 'Getting units ready'], ['/vendors', 'Vendors']]],
   ] },
 ];
+
+/** A few words under a menu label where the label alone leaves a question —
+ * which of two inboxes, what "waiting" is waiting. Shown in the dropdown and
+ * on the All pages index; never in the sub-nav row, which has no room. */
+const NAV_HINTS: Record<string, string> = {
+  '/inbox': 'conversations with residents',
+  '/one-inbox': 'mail forwarded from your office address',
+  '/ai': 'drafts written for you',
+  '/comms': 'to a whole building at once',
+  '/outbox': 'and whether each was delivered',
+};
+
+/** Advanced names its tabs for departments; these are the same five plain
+ * headings Standard uses, so the All pages index and a search result say
+ * "Money" in either mode. */
+const TAB_TO_HEADING: Record<string, string> = {
+  Dashboard: 'Home', Financials: 'Money', Property: 'Units', Residents: 'People', Leasing: 'People',
+  Messages: 'People', Operations: 'Repairs', Reports: 'Reports', Setup: 'Setup and your company',
+};
+/** The Advanced menu names that differ from Standard's, for one page each:
+ * the label a menu shows when the module's own would not say what it is. */
+const ADVANCED_LABELS: Record<string, string> = { '/one-inbox': 'Shared mailbox (One Inbox)' };
 
 /** One resolved Standard tab: the module's own NavItem, relabelled. */
 interface StdResolved { label: string; home: boolean; groups: { heading: string | null; items: NavItem[] }[] }
@@ -184,9 +211,14 @@ function visible(ctx: Ctx, it: NavItem): boolean {
   return true;
 }
 
-function standardTabs(ctx: Ctx): StdResolved[] {
+function registeredByHref(): Map<string, NavItem> {
   const registered = new Map<string, NavItem>();
   for (const items of navSections.values()) for (const it of items) if (!registered.has(it.href)) registered.set(it.href, it);
+  return registered;
+}
+
+function standardTabs(ctx: Ctx): StdResolved[] {
+  const registered = registeredByHref();
   return STANDARD_TABS.map((t) => ({
     label: t.label,
     home: !!t.home,
@@ -217,12 +249,10 @@ function tabItems(ctx: Ctx): Map<string, NavItem[]> {
   const out = new Map<string, NavItem[]>();
   for (const [sec, items] of navSections) {
     for (const it of items) {
-      if (it.perm && !can(ctx, it.perm)) continue;
-      if (it.demoOnly && ctx.orgKind === 'live') continue;
-      if (it.show && !it.show(ctx)) continue;
+      if (!visible(ctx, it)) continue;
       const tab = HREF_TO_TAB[it.href] || SECTION_TO_TAB[sec] || 'Reports';
       const list = out.get(tab) || [];
-      list.push(it);
+      list.push(ADVANCED_LABELS[it.href] ? { ...it, label: ADVANCED_LABELS[it.href]! } : it);
       out.set(tab, list);
     }
   }
@@ -276,59 +306,82 @@ function modeSwitch(r: Rq, mode: UiMode, where: 'bar' | 'drawer'): Raw {
   </form>`;
 }
 
-function standardBar(ctx: Ctx, active: string, sw: Raw): Raw {
-  const link = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`;
-  return html`<nav class="modulebar" data-mode="standard" aria-label="Navigation">${join(standardTabs(ctx).map((t, idx) => {
+/** One navigation, two renderings. The desktop bar and the phone drawer used
+ * to be built separately, and drifted: the drawer named its sections after the
+ * internal registry (Money, Intelligence, Admin) while the bar said Financials
+ * and Reports, listed the inboxes under a different heading, and skipped the
+ * adaptive `show` test, so it offered pages the bar hid. Both now read this. */
+interface NavTab { label: string; home: boolean; groups: { heading: string | null; items: NavItem[] }[] }
+
+function advancedTabs(ctx: Ctx): NavTab[] {
+  const tabs = tabItems(ctx);
+  const out: NavTab[] = [];
+  for (const label of TAB_ORDER) {
+    if (label === 'Dashboard') { out.push({ label, home: true, groups: [] }); continue; }
+    let items = tabs.get(label) || [];
+    if (!items.length) continue;
+    // read first, sent last: the Outbox registers early (it is an admin page) but belongs at the end
+    if (label === 'Messages') items = [...items.filter((i) => i.href !== '/outbox'), ...items.filter((i) => i.href === '/outbox')];
+    const groups = TAB_GROUPS[label];
+    if (!groups) { out.push({ label, home: false, groups: [{ heading: null, items }] }); continue; }
+    const claimed = new Set<NavItem>();
+    const buckets = groups.map(([g, prefixes]) => ({
+      heading: g as string | null,
+      items: items.filter((i) => {
+        const hit = prefixes.some((p) => inGroup(i.href, p));
+        if (hit) claimed.add(i);
+        return hit;
+      }),
+    })).filter((x) => x.items.length);
+    const head = items.filter((i) => !claimed.has(i));
+    out.push({ label, home: false, groups: [...(head.length ? [{ heading: null, items: head }] : []), ...buckets] });
+  }
+  return out;
+}
+
+function navModel(ctx: Ctx, mode: UiMode): NavTab[] {
+  return mode === 'standard' ? standardTabs(ctx) : advancedTabs(ctx);
+}
+
+/** What Standard leaves out of one tab, by name — the last line of each
+ * Standard dropdown. Without it nothing in Standard says more pages exist, and
+ * a person who cannot find Budgets concludes the product has no budgets. */
+function moreInAdvanced(ctx: Ctx, tabLabel: string): string[] {
+  const std = new Set(standardNavHrefs());
+  const out: string[] = [];
+  for (const [tab, items] of tabItems(ctx)) {
+    if (TAB_TO_HEADING[tab] !== tabLabel) continue;
+    for (const i of items) if (!std.has(i.href) && !i.href.startsWith('/hub/') && !out.includes(i.label)) out.push(i.label);
+  }
+  return out;
+}
+
+function moduleBar(ctx: Ctx, active: string, mode: UiMode, sw: Raw): Raw {
+  const std = mode === 'standard';
+  const link = (i: NavItem): Raw => {
+    const hint = std ? NAV_HINTS[i.href] : undefined;
+    return html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}" ${itemActive(active, i) ? raw('aria-current="page"') : ''}>${i.label}${hint ? html`<span class="mhint">${hint}</span>` : ''}</a>`;
+  };
+  const homeLabel = std ? 'Home' : 'Dashboard';
+  const homeActive = std ? HOME_ACTIVE(active) : active === '/';
+  return html`<nav class="modulebar" data-mode="${mode}" aria-label="${std ? 'Navigation' : 'Modules'}">${join(navModel(ctx, mode).map((t, idx) => {
     if (t.home) {
-      return html`<a class="mtab-btn ${HOME_ACTIVE(active) ? 'active' : ''}" href="/">${TAB_ICONS.Home}Home</a>`;
+      return html`<a class="mtab-btn ${homeActive ? 'active' : ''}" href="/">${TAB_ICONS[homeLabel]}${homeLabel}</a>`;
     }
     const all = t.groups.flatMap((g) => g.items);
     const act = all.some((i) => itemActive(active, i));
     // A tab with one page is a link, not a menu with one entry in it.
-    if (all.length === 1) {
+    if (std && all.length === 1) {
       return html`<a class="mtab-btn ${act ? 'active' : ''}" href="${all[0]!.href}">${TAB_ICONS[t.label]}${t.label}</a>`;
     }
-    const body = t.groups.map((g) => html`${g.heading && t.groups.length > 1 ? html`<span class="mgroup" role="presentation">${g.heading}</span>` : raw('')}${g.items.map(link)}`);
+    const body = t.groups.map((g) => html`${g.heading && (!std || t.groups.length > 1) ? html`<span class="mgroup" role="presentation">${g.heading}</span>` : raw('')}${g.items.map(link)}`);
+    const more = std ? moreInAdvanced(ctx, t.label) : [];
+    const moreLine = !std ? raw('') : html`<a class="mmore" href="/all-pages#${t.label.toLowerCase()}">${more.length
+      ? html`<span class="mmore-what">More in Advanced: ${more.slice(0, 3).join(', ')}${more.length > 3 ? '…' : ''}</span>`
+      : raw('')}<span class="mmore-go">All pages</span></a>`;
     return html`<div class="mtab ${act ? 'active' : ''}">
-      <button class="mtab-btn" data-toggle="#st-${idx}" aria-haspopup="true">${TAB_ICONS[t.label]}${t.label}${CARET}</button>
-      <div class="menu mmenu" id="st-${idx}">${body}</div>
-    </div>`;
-  }))}<div class="modulebar-end">${sw}</div></nav>`;
-}
-
-function moduleBar(ctx: Ctx, active: string, mode: UiMode, sw: Raw): Raw {
-  if (mode === 'standard') return standardBar(ctx, active, sw);
-  const tabs = tabItems(ctx);
-  return html`<nav class="modulebar" data-mode="advanced" aria-label="Modules">${join(TAB_ORDER.map((label, idx) => {
-    if (label === 'Dashboard') {
-      return html`<a class="mtab-btn ${active === '/' ? 'active' : ''}" href="/">${TAB_ICONS.Dashboard}Dashboard</a>`;
-    }
-    const items = tabs.get(label) || [];
-    if (!items.length) return null;
-    const act = items.some((i) => itemActive(active, i));
-    const link = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`;
-    const groups = TAB_GROUPS[label];
-    let menuBody: Raw;
-    if (!groups) {
-      menuBody = html`${items.map(link)}`;
-    } else {
-      const claimed = new Set<NavItem>();
-      const buckets = groups.map(([g, prefixes]) => ({
-        g,
-        list: items.filter((i) => {
-          const hit = prefixes.some((p) => inGroup(i.href, p));
-          if (hit) claimed.add(i);
-          return hit;
-        }),
-      })).filter((b) => b.list.length);
-      const head = items.filter((i) => !claimed.has(i));
-      menuBody = html`${head.map(link)}${buckets.map((b) => html`<span class="mgroup" role="presentation">${b.g}</span>${b.list.map(link)}`)}`;
-    }
-    return html`<div class="mtab ${act ? 'active' : ''}">
-      <button class="mtab-btn" data-toggle="#mt-${idx}" aria-haspopup="true">${TAB_ICONS[label]}${label}${CARET}</button>
-      <div class="menu mmenu" id="mt-${idx}">
-        ${menuBody}
-      </div>
+      <button class="mtab-btn" data-toggle="#${std ? 'st' : 'mt'}-${idx}" aria-haspopup="true">${TAB_ICONS[t.label]}${t.label}${CARET}</button>
+      <div class="menu mmenu" id="${std ? 'st' : 'mt'}-${idx}">${body}${moreLine}</div>
     </div>`;
   }))}<div class="modulebar-end">${sw}</div></nav>`;
 }
@@ -336,28 +389,23 @@ function moduleBar(ctx: Ctx, active: string, mode: UiMode, sw: Raw): Raw {
 /** Entrata-style white second-row sub-nav: when the current page belongs to a
  * module tab, its sibling pages render as a horizontal row under the red bar
  * (the dropdowns remain for cross-module jumps). Dashboard and unmapped pages
- * (e.g. /setup) render no sub-nav. */
+ * (e.g. /setup) render no sub-nav.
+ *
+ * A long Standard tab (People has twelve pages) shows the active page's own
+ * group — its messages, or its residents — rather than a row that scrolls off
+ * the edge; the dropdown still holds the whole tab. */
 function subNav(ctx: Ctx, active: string, mode: UiMode): Raw {
-  if (mode === 'standard') {
-    for (const t of standardTabs(ctx)) {
-      const items = t.groups.flatMap((g) => g.items);
-      if (items.length > 1 && items.some((i) => itemActive(active, i))) {
-        return html`<nav class="subnav" aria-label="${t.label} pages">
-          ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}" ${itemActive(active, i) ? raw('aria-current="page"') : ''}>${i.label}</a>`)}
-        </nav>`;
-      }
+  for (const t of navModel(ctx, mode)) {
+    if (t.home) continue;
+    let items = t.groups.flatMap((g) => g.items);
+    if (!items.some((i) => itemActive(active, i))) continue;
+    if (mode === 'standard') {
+      if (items.length < 2) return html``;
+      if (items.length > 9) items = t.groups.find((g) => g.items.some((i) => itemActive(active, i)))!.items;
     }
-    return html``;
-  }
-  const tabs = tabItems(ctx);
-  for (const label of TAB_ORDER) {
-    if (label === 'Dashboard') continue;
-    const items = tabs.get(label) || [];
-    if (items.length && items.some((i) => itemActive(active, i))) {
-      return html`<nav class="subnav" aria-label="${label} pages">
-        ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}" ${itemActive(active, i) ? raw('aria-current="page"') : ''}>${i.label}</a>`)}
-      </nav>`;
-    }
+    return html`<nav class="subnav" aria-label="${t.label} pages">
+      ${items.map((i) => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}" ${itemActive(active, i) ? raw('aria-current="page"') : ''}>${i.label}</a>`)}
+    </nav>`;
   }
   return html``;
 }
@@ -374,37 +422,56 @@ function subNav(ctx: Ctx, active: string, mode: UiMode): Raw {
  * Advanced's — scheduled jobs and integrations are plumbing an owner running
  * the everyday work has no reason to open. */
 const GEAR_GROUPS: [heading: string, hrefs: string[], advancedOnly?: true][] = [
-  ['Your organization', ['/admin/settings', '/admin/staff', '/admin/billing', '/admin/lease-templates']],
-  ['Records', ['/admin/audit', '/dev/messages']],
+  ['Your organization', ['/admin/settings', '/setup/connections', '/admin/staff', '/admin/billing', '/admin/lease-templates']],
+  ['Records', ['/outbox', '/admin/export', '/admin/audit']],
   ['System', ['/admin/jobs', '/admin/api', '/verticals'], true],
   ['Demo tools', ['/dev/sim']],
 ];
+/** Gear pages no module registers as navigation: reached from the gear, from
+ * the Setup page, and — now — from Find anything and the All pages index. */
+const GEAR_EXTRA: NavItem[] = [
+  { href: '/admin/billing', label: 'Billing', perm: 'admin:billing', match: ['/admin/billing'] },
+  { href: '/setup/connections', label: 'Connections', perm: 'properties:manage', match: ['/setup/connections'] },
+];
+/** Labels the gear gives a page when the module's own is written for another
+ * place: the Outbox is "Sent messages" wherever a person looks for sent mail. */
+const GEAR_LABELS: Record<string, string> = { '/outbox': 'Sent messages', '/setup/connections': 'Connections (email, bank, payments)' };
 
-function setupMenu(ctx: Ctx, active: string, mode: UiMode): Raw {
-  const admin = tabItems(ctx).get('Setup') || [];
-  // Billing is not a registered nav page — it is reached from here and only here.
-  if (can(ctx, 'admin:billing')) admin.push({ href: '/admin/billing', label: 'Billing', match: ['/admin/billing'] });
-  if (!admin.length && !can(ctx, 'properties:manage')) return html``;
+/** The gear's contents for this person, grouped; `std` marks what Standard shows. */
+function gearGroups(ctx: Ctx): { heading: string; items: NavItem[]; advOnly: boolean }[] {
+  const tabs = tabItems(ctx);
+  const admin = [...(tabs.get('Setup') || [])];
+  // The Outbox sits under Messages in the Advanced bar; it stays in the gear too.
+  for (const items of tabs.values()) for (const i of items) if (i.href === '/outbox' && !admin.includes(i)) admin.push(i);
+  for (const x of GEAR_EXTRA) if (visible(ctx, x)) admin.push(x);
   const byHref = new Map(admin.map((i) => [i.href, i]));
   const claimed = new Set<string>();
   const groups = GEAR_GROUPS.map(([heading, hrefs, advOnly]) => {
-    const items = hrefs.flatMap((h) => (byHref.has(h) ? [byHref.get(h)!] : []));
+    const items = hrefs.flatMap((h) => (byHref.has(h) ? [{ ...byHref.get(h)!, label: GEAR_LABELS[h] || byHref.get(h)!.label }] : []));
     items.forEach((i) => claimed.add(i.href));
     return { heading, items, advOnly: !!advOnly };
   });
-  const stray = admin.filter((i) => !claimed.has(i.href));
-  groups.find((g) => g.heading === 'System')!.items.push(...stray);
-  const shown = groups.filter((g) => g.items.length && (mode === 'advanced' || !g.advOnly));
+  groups.find((g) => g.heading === 'System')!.items.push(...admin.filter((i) => !claimed.has(i.href)));
+  return groups.filter((g) => g.items.length);
+}
+
+const isGearPath = (active: string): boolean => active.startsWith('/setup') || active.startsWith('/admin') || active === '/all-pages';
+
+function setupMenu(ctx: Ctx, active: string, mode: UiMode): Raw {
+  const groups = gearGroups(ctx);
+  if (!groups.length && !can(ctx, 'properties:manage')) return html``;
+  const shown = groups.filter((g) => mode === 'advanced' || !g.advOnly);
   const link = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(active, i) ? 'active' : ''}">${i.label}</a>`;
   return html`<div class="usermenu">
-    <button class="icon-btn ${active.startsWith('/setup') || active.startsWith('/admin') ? 'active' : ''}" data-toggle="#setup-pop" aria-label="Setup and administration" title="Setup &amp; administration">${GEAR}</button>
+    <button class="icon-btn ${isGearPath(active) ? 'active' : ''}" data-toggle="#setup-pop" aria-label="Setup and administration" title="Setup &amp; administration">${GEAR}</button>
     <div class="menu gearmenu" id="setup-pop">
       <div class="menu-head">Setup &amp; administration</div>
       ${when(can(ctx, 'properties:manage'), () => html`<span class="mgroup" role="presentation">Your portfolio</span>
-        <a href="/setup" class="${active.startsWith('/setup') && active !== '/setup/wizard' ? 'active' : ''}">Setup hub</a>
+        <a href="/setup" class="${active === '/setup' ? 'active' : ''}">Setup</a>
         <a href="/setup#upload">Upload your data</a>
         <a href="/setup/wizard" class="${active === '/setup/wizard' ? 'active' : ''}">Add a property</a>`)}
       ${shown.map((g) => html`<span class="mgroup" role="presentation">${g.heading}</span>${g.items.map(link)}`)}
+      <a class="mmore" href="/all-pages"><span class="mmore-go">All pages</span></a>
     </div>
   </div>`;
 }
@@ -439,35 +506,197 @@ const searchProviders: SearchProvider[] = [];
 export function registerSearch(fn: SearchProvider): void {
   searchProviders.push(fn);
 }
-/** Every registered nav destination this user may open, matched by name. The
- * record providers answer "who is Maya Torres"; this answers "where is the
- * dispatch board" — which is the other half of what people type into a search
- * box, and previously returned nothing at all. Pages rank below records: a
- * resident named Parker outranks the parking page. */
-function navHits(ctx: Ctx, query: string): SearchHit[] {
-  const needle = query.toLowerCase();
-  const hits: SearchHit[] = [];
+// ---------- find anything ----------
+// The search box matched only the Advanced page names, by prefix. "payment",
+// "late", "notice", "import", "email", "bills" and "sent" each returned nothing,
+// and so did "who owes" — Standard's own menu words. It now knows three things
+// about every destination: the name each mode gives it, the words people type
+// when they want it, and the places that are in no menu at all.
+
+/** The words people type, by href, strongest first. ONE map, here, rather than
+ * a `keywords` field on forty registerNav calls in forty files: the vocabulary
+ * is a single editorial decision and reads as one. An entry for an href nobody
+ * registered is simply never used. */
+const FIND_WORDS: Record<string, string[]> = {
+  '/': ['home', 'dashboard', 'start', 'overview'],
+  '/receivables': ['owes', 'late', 'rent', 'late rent', 'who owes', 'owe', 'owed', 'unpaid', 'balance', 'balances', 'collections', 'receivables', 'payments'],
+  '/delinquency': ['behind', 'seriously behind', 'delinquent', 'delinquency', 'past due', 'overdue', 'eviction', 'payment plan', 'late'],
+  '/deposits': ['deposit', 'deposits', 'security deposit', 'move out', 'refund'],
+  '/weekly-report': ['weekly', 'action report', 'appfolio', 'follow up'],
+  '/ap': ['bills', 'bill', 'invoices', 'invoice', 'payables', 'pay a vendor', 'checks'],
+  '/approvals': ['approvals', 'sign off', 'spending', 'purchase approval', 'approve'],
+  '/statements': ['profit', 'income', 'income statement', 'profit and loss', 'balance sheet', 'cash flow', 'statements', 'what i made'],
+  '/banking': ['bank', 'bank accounts', 'reconcile', 'reconciliation', 'bank feed'],
+  '/gl': ['accounting', 'books', 'ledger', 'journal', 'chart of accounts', 'general ledger'],
+  '/periods': ['close the books', 'month end', 'close'],
+  '/budgets': ['budget', 'budgets'],
+  '/utilities': ['utilities', 'water', 'electric', 'gas', 'meters'],
+  '/reserves': ['reserves', 'capital'],
+  '/owners': ['owners', 'owner statement', 'distributions'],
+  '/properties': ['properties', 'buildings', 'building', 'address'],
+  '/units': ['units', 'apartments', 'vacant', 'vacancy', 'empty', 'rent roll'],
+  '/map': ['map'],
+  '/insurance': ['insurance', 'renters insurance', 'risk'],
+  '/inbox': ['email', 'messages', 'message', 'conversations', 'reply', 'texts', 'text', 'mail', 'calls'],
+  '/one-inbox': ['shared mailbox', 'one inbox', 'mailbox', 'office email', 'forwarded mail'],
+  '/comms': ['notice', 'notices', 'announcement', 'announcements', 'mass message', 'everyone', 'whole building', 'templates', 'communications'],
+  '/outbox': ['sent', 'sent messages', 'outbox', 'delivered', 'delivery', 'bounced', 'did it send'],
+  '/residents': ['residents', 'tenants', 'tenant', 'renters', 'people', 'directory', 'phone number'],
+  '/leases': ['leases', 'lease', 'households', 'household', 'move in'],
+  '/renewals': ['renewals', 'renew', 'ending soon', 'expiring', 'lease end'],
+  '/leads': ['inquiries', 'leads', 'prospects', 'guest cards'],
+  '/tours': ['tours', 'showings', 'appointments'],
+  '/leasing-center': ['leasing center', 'call center'],
+  '/leasing/analytics': ['funnel', 'conversion'],
+  '/applications': ['applicants', 'applications', 'screening', 'background check'],
+  '/placement-scorecard': ['placement', 'scorecard', 'lead source'],
+  '/marketing/sites': ['website', 'websites', 'property site'],
+  '/marketing/syndication': ['listings', 'syndication', 'zillow'],
+  '/workorders': ['repairs', 'repair', 'maintenance', 'work orders', 'work order', 'fix', 'broken', 'tickets'],
+  '/myday': ['my day', 'my jobs', 'today'],
+  '/dispatch': ['dispatch', 'assign'],
+  '/turns': ['turns', 'make ready', 'getting units ready', 'turnover'],
+  '/inspections': ['inspections', 'inspection'],
+  '/pm': ['preventive', 'filters', 'recurring maintenance'],
+  '/inventory': ['inventory', 'parts', 'supplies'],
+  '/purchasing': ['purchasing', 'purchase orders', 'order'],
+  '/vendors': ['vendors', 'vendor', 'contractors', 'contractor', 'plumber', 'electrician'],
+  '/facilities': ['maintenance analytics'],
+  '/reports': ['reports', 'report', 'rent roll report', 'export'],
+  '/dashboards': ['my dashboard', 'charts'],
+  '/pricing': ['pricing', 'rents', 'raise rent', 'comps', 'market rent'],
+  '/ai': ['approve', 'drafts', 'draft', 'waiting', 'approval queue', 'ai', 'agents', 'needs my ok'],
+  '/ask': ['ask', 'question', 'chat'],
+  '/admin/settings': ['settings', 'late fees', 'fees', 'policies', 'rules', 'preferences'],
+  '/admin/staff': ['staff', 'users', 'team', 'invite', 'roles', 'logins', 'add a user'],
+  '/admin/audit': ['audit', 'who changed', 'history'],
+  '/admin/export': ['export', 'download my data', 'backup', 'csv', 'leave'],
+  '/admin/lease-templates': ['lease templates', 'lease form'],
+  '/admin/jobs': ['scheduled jobs', 'automation'],
+  '/admin/api': ['api', 'integrations', 'webhooks', 'api keys'],
+  '/admin/billing': ['billing', 'subscription', 'my plan', 'what i pay'],
+  '/setup/connections': ['connections', 'connect', 'email', 'turn on email', 'text messages', 'bank feed', 'payments'],
+  '/verticals': ['student', 'affordable', 'military'],
+  '/dev/sim': ['simulator', 'business date', 'time machine'],
+};
+
+/** Places and actions that are in no menu. Each was reachable only through a
+ * card or a button two pages deep — which is exactly what a search box is for. */
+interface ExtraDest { href: string; label: string; heading: string; kind: 'page' | 'action'; perm?: string; words: string[] }
+const EXTRA_DESTS: ExtraDest[] = [
+  { href: '/receivables/payment', label: 'Record a payment', heading: 'Money', kind: 'action', perm: 'payments:record', words: ['payment', 'record payment', 'record a payment', 'rent payment', 'check', 'cash', 'money order', 'paid'] },
+  { href: '/comms/mass/new', label: 'Write a new notice', heading: 'People', kind: 'action', perm: 'comms:mass', words: ['send a notice', 'send notice', 'new notice', 'write a notice'] },
+  { href: '/leases/new', label: 'New lease', heading: 'People', kind: 'action', perm: 'leases:manage', words: ['new lease', 'add lease', 'move in'] },
+  { href: '/leases/new', label: 'Add a resident (new lease)', heading: 'People', kind: 'action', perm: 'leases:manage', words: ['add resident', 'add a resident', 'new resident', 'new tenant', 'add tenant'] },
+  { href: '/vendors/new', label: 'Add a vendor', heading: 'Repairs', kind: 'action', perm: 'vendors:manage', words: ['add vendor', 'add a vendor', 'new vendor', 'new contractor'] },
+  { href: '/workorders/new', label: 'New repair request', heading: 'Repairs', kind: 'action', perm: 'workorders:manage', words: ['new repair', 'new work order', 'report a repair'] },
+  { href: '/setup', label: 'Setup', heading: 'Setup and your company', kind: 'page', words: ['setup', 'set up', 'checklist', 'getting set up'] },
+  { href: '/setup#upload', label: 'Upload your data', heading: 'Setup and your company', kind: 'action', perm: 'properties:manage', words: ['import', 'upload', 'rent roll', 'spreadsheet', 'excel', 'csv', 'yardi', 'appfolio', 'buildium', 'lease pdf', 'move my data'] },
+  { href: '/setup#import-history', label: 'Import history', heading: 'Setup and your company', kind: 'page', perm: 'properties:manage', words: ['import history', 'uploads', 'past imports', 'what i uploaded'] },
+  { href: '/setup/wizard', label: 'Add a property', heading: 'Setup and your company', kind: 'action', perm: 'properties:manage', words: ['add property', 'add a property', 'new property', 'new building', 'add building'] },
+  { href: '/welcome', label: 'Getting started', heading: 'Setup and your company', kind: 'page', perm: 'properties:manage', words: ['getting started', 'walkthrough', 'onboarding', 'first steps'] },
+  { href: '/one-inbox/setup', label: 'Shared mailbox setup', heading: 'People', kind: 'page', perm: 'comms:view', words: ['one inbox setup', 'shared mailbox setup', 'forward my email', 'contact list'] },
+  { href: '/admin/roles', label: 'What each role can do', heading: 'Setup and your company', kind: 'page', perm: 'admin:staff', words: ['permissions', 'permission matrix', 'what can a role do'] },
+  { href: '/me', label: 'My profile and password', heading: 'Setup and your company', kind: 'page', words: ['my profile', 'password', 'change password', 'my account'] },
+  { href: '/all-pages', label: 'All pages', heading: 'Setup and your company', kind: 'page', words: ['all pages', 'everything', 'site map', 'sitemap', 'help', 'where is'] },
+];
+
+/** One place a person can go. */
+export interface Destination {
+  href: string;
+  /** the name this person's mode gives it */
+  label: string;
+  /** the other mode's name, when it differs */
+  alias?: string;
+  /** a few words that tell it from its neighbour */
+  hint?: string;
+  /** one of the plain headings: Home, Money, Units, People, Repairs, Reports, Setup and your company */
+  heading: string;
+  kind: 'page' | 'action';
+  /** false = this person, in Standard, would have to switch to Advanced to see it in a menu */
+  inStandard: boolean;
+  /** false = it is in no menu in either mode */
+  inMenus: boolean;
+  words: string[];
+}
+
+export const DEST_HEADINGS = ['Home', 'Money', 'Units', 'People', 'Repairs', 'Reports', 'Setup and your company'];
+
+/** Every destination this person may open, built from the nav registry, the
+ * gear and the unregistered list above — never a hand-kept copy — so the All
+ * pages index and Find anything cannot drift from the menus. */
+export function destinations(ctx: Ctx, mode: UiMode = uiMode(ctx)): Destination[] {
+  const out: Destination[] = [];
   const seen = new Set<string>();
-  for (const [section, items] of navSections) {
-    for (const item of items) {
-      if (seen.has(item.href)) continue;
-      if (item.perm && !ctx.perms.has(item.perm)) continue;
-      if (item.demoOnly && ctx.orgKind !== 'demo') continue;
-      try {
-        if (item.show && !item.show(ctx)) continue;
-      } catch {
-        continue; /* an adaptive-nav predicate must never break search */
-      }
-      const label = item.label.toLowerCase();
-      // Prefix and word-start matches only. Substring matching turns every
-      // two-letter query into a wall of pages.
-      const words = label.split(/[^a-z0-9]+/).filter(Boolean);
-      if (!label.startsWith(needle) && !words.some((w) => w.startsWith(needle))) continue;
-      seen.add(item.href);
-      hits.push({ kind: 'page', label: item.label, sub: section || 'Dashboard', href: item.href });
-    }
+  const stdLabel = new Map<string, string>();
+  const stdHeading = new Map<string, string>();
+  for (const t of STANDARD_TABS) for (const [, items] of t.groups) for (const [href, label] of items) { stdLabel.set(href, label); stdHeading.set(href, t.label); }
+  const gear = gearGroups(ctx);
+  const gearStd = new Set(gear.filter((g) => !g.advOnly).flatMap((g) => g.items.map((i) => i.href)));
+  const add = (i: NavItem, tab: string): void => {
+    if (seen.has(i.href)) return;
+    seen.add(i.href);
+    const isHub = i.href.startsWith('/hub/');
+    const adv = isHub ? `${tab} overview` : i.href === '/' ? 'Dashboard' : (GEAR_LABELS[i.href] && tab === 'Setup' ? GEAR_LABELS[i.href]! : i.label);
+    const std = i.href === '/' ? 'Home' : stdLabel.get(i.href) || GEAR_LABELS[i.href] || adv;
+    const label = mode === 'standard' ? std : adv;
+    const alias = mode === 'standard' ? adv : std;
+    out.push({
+      href: i.href, label, alias: alias !== label ? alias : undefined, hint: NAV_HINTS[i.href],
+      heading: stdHeading.get(i.href) || TAB_TO_HEADING[tab] || 'Reports',
+      kind: 'page', inMenus: true,
+      inStandard: i.href === '/' || i.href === '/ask' || stdLabel.has(i.href) || gearStd.has(i.href),
+      words: FIND_WORDS[i.href] || [],
+    });
+  };
+  for (const [tab, items] of tabItems(ctx)) for (const i of items) add(i, tab);
+  for (const g of gear) for (const i of g.items) add(i, 'Setup');
+  for (const x of EXTRA_DESTS) {
+    if (x.perm && !can(ctx, x.perm)) continue;
+    out.push({ href: x.href, label: x.label, heading: x.heading, kind: x.kind, inMenus: false, inStandard: true, words: x.words });
   }
-  return hits.sort((a, b) => a.label.length - b.label.length).slice(0, 6);
+  return out;
+}
+
+const wordsOf = (s: string): string[] => s.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+
+/** How well one destination answers a query; 0 = not at all. 81 and up means
+ * the query IS a name or a listed word for it, which is what lets a page
+ * outrank records ("rent" should open Who owes me, not six people named Trent). */
+export function destScore(d: Destination, query: string): number {
+  const needle = query.toLowerCase().trim().replace(/\s+/g, ' ');
+  if (needle.length < 2) return 0;
+  const names = [d.label, d.alias || ''].filter(Boolean).map((n) => n.toLowerCase());
+  if (names.includes(needle)) return 100;
+  const at = d.words.indexOf(needle);
+  if (at >= 0) return Math.max(81, 99.5 - at);
+  if (names.some((n) => n.startsWith(needle))) return 80;
+  const kp = d.words.findIndex((w) => w.startsWith(needle));
+  if (kp >= 0) return 70 - Math.min(kp, 9);
+  // Word-start matches only. Substring matching turns every two-letter query
+  // into a wall of pages.
+  const nameWords = names.flatMap(wordsOf);
+  const all = [...nameWords, ...d.words.flatMap(wordsOf)];
+  const qw = wordsOf(needle);
+  if (!qw.length) return 0;
+  if (qw.every((w) => nameWords.some((x) => x.startsWith(w)))) return 60;
+  if (qw.every((w) => all.some((x) => x.startsWith(w)))) return 50;
+  return 0;
+}
+
+/** Destinations matching a query, best first. `sub` says where it lives, in
+ * the words of the mode the person is in. */
+function navHits(ctx: Ctx, query: string): { hit: SearchHit; score: number }[] {
+  const mode = uiMode(ctx);
+  const best = new Map<string, { hit: SearchHit; score: number }>();
+  for (const d of destinations(ctx, mode)) {
+    const score = destScore(d, query);
+    if (!score) continue;
+    const where = d.kind === 'action' ? d.heading : mode === 'standard' && !d.inStandard ? `${d.heading} · Advanced menus` : d.heading;
+    const key = `${d.href}|${d.label}`;
+    if (!best.has(key) || best.get(key)!.score < score) best.set(key, { hit: { kind: d.kind, label: d.label, sub: where, href: d.href }, score });
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score || a.hit.label.length - b.hit.label.length).slice(0, 8);
 }
 
 export function runSearch(ctx: Ctx, query: string): SearchHit[] {
@@ -480,8 +709,15 @@ export function runSearch(ctx: Ctx, query: string): SearchHit[] {
     }
     if (out.length > 40) break;
   }
-  const records = out.slice(0, 34);
-  return [...records, ...navHits(ctx, query)].slice(0, 40);
+  let pages: { hit: SearchHit; score: number }[] = [];
+  try { pages = navHits(ctx, query); } catch { /* the registry must never break search */ }
+  // A page whose name or listed word IS the query goes first; a looser match
+  // stays below the records, where a resident named Parker still outranks the
+  // parking page.
+  const sure = pages.filter((p) => p.score > 80).map((p) => p.hit);
+  const loose = pages.filter((p) => p.score <= 80).map((p) => p.hit);
+  const records = out.slice(0, 40 - sure.length - Math.min(loose.length, 6));
+  return [...sure, ...records, ...loose].slice(0, 40);
 }
 
 // ---------- shells ----------
@@ -528,27 +764,20 @@ export function shell(r: Rq, opts: ShellOpts): Res {
   const showSwitch = !!ctx.orgId && (ctx.kind === 'staff' || ctx.kind === 'platform');
   const sw = showSwitch ? modeSwitch(r, mode, 'bar') : raw('');
 
-  // The drawer is the phone's whole navigation, so it follows the mode exactly
-  // as the bar does: five plain-language tabs in Standard, every section in
-  // Advanced. It used to list all 56 pages regardless.
-  const drawerLink = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(opts.active, i) ? 'active' : ''}"><span class="dot"></span>${i.label}</a>`;
-  const standardDrawer = (): Raw => join(standardTabs(ctx).map((t) => t.home
-    ? html`<div class="nav-group"><a href="/" class="${HOME_ACTIVE(opts.active) ? 'active' : ''}"><span class="dot"></span>Home</a></div>`
-    : html`<div class="nav-group"><div class="nav-head">${t.label}</div>${t.groups.flatMap((g) => g.items).map(drawerLink)}</div>`));
-  const nav = mode === 'standard' ? standardDrawer() : join(
-    SECTION_ORDER.filter((s) => navSections.has(s)).map((sec) => {
-      const items = (navSections.get(sec) || []).filter((i) => (!i.perm || can(ctx, i.perm)) && !(i.demoOnly && ctx.orgKind === 'live'));
-      if (!items.length) return null;
-      return html`<div class="nav-group">
-        ${sec ? html`<div class="nav-head">${sec}</div>` : null}
-        ${items.map((i) => {
-          const active =
-            opts.active === i.href || (i.match || []).some((m) => opts.active.startsWith(m));
-          return html`<a href="${i.href}" class="${active ? 'active' : ''}"><span class="dot"></span>${i.label}</a>`;
-        })}
-      </div>`;
-    }),
-  );
+  // The drawer is the phone's whole navigation, so it is the SAME navigation:
+  // built from the model the bar renders, with the bar's tab names and its
+  // group headings as small sub-heads, then the gear's pages, then All pages.
+  const drawerLink = (i: NavItem): Raw => html`<a href="${i.href}" class="${itemActive(opts.active, i) ? 'active' : ''}" ${itemActive(opts.active, i) ? raw('aria-current="page"') : ''}><span class="dot"></span>${i.label}</a>`;
+  const homeOn = mode === 'standard' ? HOME_ACTIVE(opts.active) : opts.active === '/';
+  const gearForDrawer = gearGroups(ctx).filter((g) => mode === 'advanced' || !g.advOnly).flatMap((g) => g.items);
+  const nav = html`${join(navModel(ctx, mode).map((t) => t.home
+    ? html`<div class="nav-group"><a href="/" class="${homeOn ? 'active' : ''}"><span class="dot"></span>${mode === 'standard' ? 'Home' : 'Dashboard'}</a></div>`
+    : html`<div class="nav-group"><div class="nav-head">${t.label}</div>${t.groups.map((g) => html`${g.heading && t.groups.length > 1 ? html`<div class="nav-sub">${g.heading}</div>` : raw('')}${g.items.map(drawerLink)}`)}</div>`))}
+    <div class="nav-group nav-more">
+      ${when(mode === 'advanced' && gearForDrawer.length, () => html`<div class="nav-sub">Setup and administration</div>${gearForDrawer.map(drawerLink)}`)}
+      ${when(mode === 'standard' && (can(ctx, 'properties:manage') || gearForDrawer.length), () => html`<a href="/setup" class="${opts.active === '/setup' ? 'active' : ''}"><span class="dot"></span>Setup</a>`)}
+      <a href="/all-pages" class="${opts.active === '/all-pages' ? 'active' : ''}"><span class="dot"></span>All pages</a>
+    </div>`;
 
   const propSwitch = when(props.length > 0, () => html`<form method="post" action="/switch-property" class="prop-switch" data-autosubmit>
     <select name="property_id" aria-label="Property context">
@@ -561,10 +790,38 @@ export function shell(r: Rq, opts: ShellOpts): Res {
   // "Receivables" — the plain words stopped one click in. The page a menu item
   // lands on now carries that item's own words as its heading. Only the exact
   // landing page: a lease or an invoice opened from it keeps its own title.
-  let pageTitle: Child = opts.title;
+  let pageTitle: string = opts.title;
   if (mode === 'standard') {
     for (const t of standardTabs(ctx)) for (const g of t.groups) for (const i of g.items) if (i.href === r.path) pageTitle = i.label;
   }
+
+  // A page reached by a link or by search, that the current menus do not show,
+  // rendered with no highlighted tab, no sub-nav and no breadcrumb: nothing on
+  // the screen said where it lived or how to get back. It now gets one line.
+  let crumbs: [string, string?][] = opts.crumbs || [];
+  let crumbNote: Raw | null = null;
+  if (!crumbs.length && !opts.bareHead && ctx.orgId) {
+    const inBar = navModel(ctx, mode).some((t) => t.groups.some((g) => g.items.some((i) => itemActive(opts.active, i))));
+    if (!inBar && opts.active !== '/' && opts.active !== '/home') {
+      const inGear = gearGroups(ctx).some((g) => g.items.some((i) => itemActive(opts.active, i))) || isGearPath(opts.active);
+      if (inGear) {
+        if (opts.active !== '/setup') crumbs = [['Setup and administration', can(ctx, 'properties:manage') ? '/setup' : undefined]];
+      } else if (mode === 'standard') {
+        for (const [tab, items] of tabItems(ctx)) {
+          if (!items.some((i) => itemActive(opts.active, i))) continue;
+          crumbs = [[TAB_TO_HEADING[tab] || tab]];
+          crumbNote = html` · this page is in the Advanced menus · <a href="/all-pages">All pages</a>`;
+          break;
+        }
+      }
+    }
+  }
+  const mac = /Mac|iPhone|iPad/.test(String(r.raw?.headers?.['user-agent'] || ''));
+  // The handful of places people ask for most, shown before anything is typed.
+  const dests = ctx.orgId ? destinations(ctx, mode) : [];
+  const starters = (['/receivables/payment', '/receivables', '/inbox', '/comms/mass/new', '/workorders', '/setup#upload', '/reports', '/all-pages']
+    .map((h) => dests.find((d) => d.href === h))
+    .filter(Boolean) as Destination[]);
   const body = html`<div class="app">
     <header class="topchrome">
       <div class="brandbar">
@@ -574,7 +831,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         ${when(ctx.orgKind === 'demo' && ctx.kind === 'staff', () => html`<span class="demo-pill" title="This is the shared demo world — simulated rails, demo data. Real customer companies run in live mode with real books.">DEMO</span>`)}
         <div class="spacer"></div>
         ${propSwitch}
-        <button class="searchbtn" data-palette-open type="button"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="stext">Search…</span></button>
+        <button class="searchbtn" data-palette-open type="button" aria-label="Find anything" title="Find a person, a unit or a page"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg><span class="stext">Find anything</span><kbd class="findkbd">${mac ? '\u2318K' : 'Ctrl K'}</kbd></button>
         ${when(can(ctx, 'ai:view'), () => html`<a class="askbtn" href="/ask" data-ask-open title="Ask StayLeased — plain-English answers from your own portfolio data">${raw('<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.8 5.2L19 10l-5.2 1.8L12 17l-1.8-5.2L5 10l5.2-1.8z"/><path d="M19 15l.9 2.6L22.5 18.5l-2.6.9L19 22l-.9-2.6-2.6-.9 2.6-.9z"/></svg>')}<span class="stext">Ask StayLeased</span><kbd class="askkbd">⌘J</kbd></a>`)}
         ${ctx.orgKind === 'demo'
           ? html`<a class="bizdate" href="/dev/sim" title="Simulated business date — open Simulator Console"><span class="bd-label">Business date</span> ${fmtDate(ctx.businessDate)}</a>`
@@ -602,7 +859,7 @@ export function shell(r: Rq, opts: ShellOpts): Res {
         ${when(flash, () => html`<div class="flash ${flash![0]}">${flash![1]}</div>`)}
         ${when(!opts.bareHead, () => html`<div class="page-head">
           <div class="titles">
-            ${when(opts.crumbs?.length, () => html`<div class="crumbs">${join((opts.crumbs || []).map(([label, href]) => (href ? html`<a href="${href}">${label}</a>` : html`<span>${label}</span>`)), raw(' / ').s)}</div>`)}
+            ${when(crumbs.length, () => html`<div class="crumbs">${join(crumbs.map(([label, href]) => (href ? html`<a href="${href}">${label}</a>` : html`<span>${label}</span>`)), raw(' / ').s)}${crumbNote}</div>`)}
             <h1>${pageTitle}</h1>
             ${when(opts.subtitle, () => html`<div class="subtitle">${opts.subtitle}</div>`)}
           </div>
@@ -618,14 +875,20 @@ export function shell(r: Rq, opts: ShellOpts): Res {
     </aside>
   </div>
   <div class="palette-back" id="palette">
-    <div class="palette" role="dialog" aria-label="Global search">
-      <input type="search" placeholder="Search residents, units, leads, vendors, invoices…" aria-label="Search residents, units, leads, vendors and invoices" id="palette-input" autocomplete="off" />
+    <div class="palette" role="dialog" aria-label="Find anything">
+      <input type="search" placeholder="Find a person, a unit or a page — try “late rent” or “export”" aria-label="Find a person, a unit or a page" id="palette-input" autocomplete="off" />
       <div class="results" id="palette-results"><div class="hintbar">Type at least 2 characters</div></div>
+      ${when(starters.length, () => html`<div class="palette-start" aria-label="Common places">
+        <div class="ps-head">Common places</div>
+        ${starters.map((d) => html`<a href="${d.href}"><span class="kind">${d.kind}</span><span><b>${d.label}</b>${d.heading !== d.label ? html` <span class="muted">· ${d.heading}</span>` : ''}</span></a>`)}
+      </div>`)}
       <div class="hintbar">↑↓ navigate · Enter open · Esc close</div>
     </div>
   </div>`;
 
-  return htmlRes(doc(opts.title, body, opts.head ?? null));
+  // The tab, the history entry and the bookmark carry the same words as the
+  // menu item that opened the page: "Who owes me", not "Receivables".
+  return htmlRes(doc(pageTitle, body, opts.head ?? null));
 }
 
 /** Theme boot: an explicit choice (sl_theme cookie, set by the toggle) wins;
@@ -900,7 +1163,7 @@ export function dl(pairs: [Child, Child][]): Raw {
 
 export function tabs(items: { href: string; label: Child; active?: boolean; count?: number }[]): Raw {
   return html`<div class="tabs">${items.map(
-    (t) => html`<a href="${t.href}" class="${t.active ? 'active' : ''}">${t.label}${t.count !== undefined ? html` <span class="badge">${t.count}</span>` : null}</a>`,
+    (t) => html`<a href="${t.href}" class="${t.active ? 'active' : ''}" ${t.active ? raw('aria-current="page"') : ''}>${t.label}${t.count !== undefined ? html` <span class="badge">${t.count}</span>` : null}</a>`,
   )}</div>`;
 }
 

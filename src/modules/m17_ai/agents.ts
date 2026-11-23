@@ -8,7 +8,7 @@ import { getSetting, getSettingMerged, scorerMode, settingIsExplicit } from '../
 import { getDials } from '../../lib/sim/dials.ts';
 import { llm } from '../../lib/sim/llm.ts';
 import { screenFairHousing } from '../../lib/fairhousing.ts';
-import { sendEmail } from '../../lib/sim/messaging.ts';
+import { sendEmail, isLiveOrg } from '../../lib/sim/messaging.ts';
 import { audit } from '../../lib/audit.ts';
 import { registerJob } from '../../lib/jobs.ts';
 import { propose, registerExecutor, aiEnabled, type ActionOutput } from './framework.ts';
@@ -153,12 +153,17 @@ export function handleLeadInbound(ctx: Ctx, leadId: string, message: string): { 
 
 registerExecutor('leasing.send_reply', (ctx, action, output) => {
   const leadId = String(output.leadId);
-  messageLead(ctx, leadId, 'email', String(output.subject || 'Your inquiry'), String(output.draft || ''));
-  let note = 'reply sent';
+  // A reply nobody approved, to an address a stranger typed into a public
+  // form, is written and held in a live organization: the model's words go to
+  // a real inbox only after a person has looked. An approved action carries
+  // the approver and is delivered.
+  const hold = ctx.userId === 'system' && isLiveOrg(ctx);
+  messageLead(ctx, leadId, 'email', String(output.subject || 'Your inquiry'), String(output.draft || ''), { hold });
+  let note = hold ? 'reply written and held in the Outbox' : 'reply sent';
   if (output.tour) {
     const t = output.tour as { date: string; startTime: string };
-    const tourId = bookTour(ctx, { leadId, date: t.date, startTime: t.startTime });
-    note = `reply sent + tour booked ${t.date} ${t.startTime} (${tourId.slice(-6)})`;
+    const tourId = bookTour(ctx, { leadId, date: t.date, startTime: t.startTime, heldConfirmation: hold });
+    note = `${hold ? 'reply held' : 'reply sent'} + tour booked ${t.date} ${t.startTime} (${tourId.slice(-6)})`;
   }
   return note;
 });

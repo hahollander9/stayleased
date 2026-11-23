@@ -392,7 +392,7 @@
       }, 160);
     });
     pInput.addEventListener('keydown', function (e) {
-      var links = pResults.querySelectorAll('a');
+      var links = (pInput.value.trim() ? pResults : (document.querySelector('.palette-start') || pResults)).querySelectorAll('a');
       if (e.key === 'Enter') {
         // Results may still be in flight when Enter is pressed — go as soon as
         // they arrive rather than swallowing the keystroke.
@@ -401,7 +401,7 @@
         var pending = pInput.value.trim();
         if (pending.length < 2) return;
         setTimeout(function () {
-          var later = pResults.querySelectorAll('a');
+          var later = (pInput.value.trim() ? pResults : (document.querySelector('.palette-start') || pResults)).querySelectorAll('a');
           if (later.length) window.location.href = later[0].href;
         }, 320);
         return;
@@ -1026,6 +1026,87 @@
     } else if (el.select) {
       el.select();
       try { document.execCommand('copy'); done(); } catch (err) { /* selection is left for a manual copy */ }
+    }
+  });
+})();
+
+// One Inbox keyboard flow — only on pages that carry a [data-oi] marker, and
+// never while the person is typing in a field. On the list, j / k move through
+// the rows (real focus, so Enter opens and the focus ring is the cursor) and
+// "/" goes to search. On an email, j / k go to the next / previous one in the
+// same view, e marks it done, r goes to the reply, 1-9 pick a "could be"
+// person, and Ctrl or Cmd + Enter in the reply sends it.
+(function () {
+  var root = document.querySelector('[data-oi]');
+  if (!root) return;
+  var kind = root.getAttribute('data-oi');
+  function typing(t) {
+    return !!t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName || ''));
+  }
+  function submit(form, button) {
+    if (!form) return;
+    if (form.requestSubmit) form.requestSubmit(button || undefined);
+    else form.submit();
+  }
+  function move(step) {
+    var rows = Array.prototype.slice.call(root.querySelectorAll('a.oi-row'));
+    if (!rows.length) return;
+    var at = rows.indexOf(document.activeElement);
+    var to = at < 0 ? (step > 0 ? 0 : rows.length - 1) : Math.max(0, Math.min(rows.length - 1, at + step));
+    rows[to].focus();
+    if (rows[to].scrollIntoView) rows[to].scrollIntoView({ block: 'nearest' });
+  }
+  function go(sel) {
+    var a = root.querySelector(sel) || document.querySelector(sel);
+    if (a && a.href) window.location.href = a.href;
+  }
+  document.addEventListener('keydown', function (e) {
+    var t = e.target;
+    if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') {
+      if (t && t.id === 'oi-draft' && t.form) {
+        e.preventDefault();
+        submit(t.form, t.form.querySelector('button[type=submit]'));
+      }
+      return;
+    }
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (typing(t)) {
+      if (e.key === 'Escape' && t.blur) t.blur();
+      return;
+    }
+    // a menu, the search palette or any dialog owns the keyboard while open
+    if (document.querySelector('.menu.open, dialog[open], [role="dialog"]:not([hidden])')) return;
+    var k = e.key;
+    if (k === '/') {
+      var box = document.getElementById('oi-q');
+      if (box) { e.preventDefault(); box.focus(); box.select(); }
+      return;
+    }
+    if (kind === 'list') {
+      if (k === 'j' || k === 'k') { e.preventDefault(); move(k === 'j' ? 1 : -1); }
+      return;
+    }
+    if (kind !== 'message') return;
+    if (k === 'j') { go('a[data-oi-next]'); return; }
+    if (k === 'k') { go('a[data-oi-prev]'); return; }
+    if (k === 'e') {
+      var done = root.querySelector('form[data-oi-done]') || document.querySelector('form[data-oi-done]');
+      if (done) { e.preventDefault(); submit(done); }
+      return;
+    }
+    if (k === 'r') {
+      var draft = document.getElementById('oi-draft');
+      if (!draft) return;
+      e.preventDefault();
+      var shut = draft.closest('details:not([open])');
+      if (shut) shut.open = true;
+      draft.focus();
+      return;
+    }
+    if (/^[1-9]$/.test(k)) {
+      var picks = root.querySelectorAll('[data-oi-pick]');
+      var b = picks[Number(k) - 1];
+      if (b) { e.preventDefault(); submit(b.form, b); }
     }
   });
 })();

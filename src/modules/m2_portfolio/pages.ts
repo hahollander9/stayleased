@@ -708,7 +708,7 @@ function analyticsCards(ctx: Ctx, t: ReturnType<typeof orgTrends>): ReturnType<t
     ${when(t, () => html`${card(`Rolling occupancy · last 12 months`, html`<div class="chart-head-val">${last(t!.occ)}%</div>${barChart(monthLabels, t!.occ, { kind: 'pct', highlightLast: true })}`)}
     <div class="grid cols-2 chart-pair">
       ${card('Collections rate', html`<div class="chart-head-val pos">${last(t!.coll)}%</div>${areaChart(monthLabels, t!.coll, { kind: 'pct' })}<div class="muted small" style="margin-top:6px">Cash applied this month ÷ amounts billed this month. Can top 100% when residents catch up prior balances.</div>`)}
-      ${card('Delinquency', html`<div class="chart-head-val neg">${usd(last(t!.deliq) * 100)}</div>${areaChart(monthLabels, t!.deliq, { kind: 'usd', color: '#f87171' })}`)}
+      ${card('Delinquency', html`<div class="chart-head-val neg">${usd(last(t!.deliq) * 100)}</div>${areaChart(monthLabels, t!.deliq, { kind: 'usd', color: 'var(--mark-bad, #C8372D)' })}`)}
     </div>`)}
     <div class="grid cols-2 chart-pair">
       ${card('Leads by month', barChart(leadLabels, leadVals, { kind: 'num' }))}
@@ -835,9 +835,9 @@ function dashHero(ctx: Ctx, opts: { kicker: string; title: string; sub: string |
   const R = 46, C = 2 * Math.PI * R;
   const ring = raw(`<svg width="108" height="108" viewBox="0 0 108 108" aria-hidden="true">
     <defs><linearGradient id="dring" x1="0" y1="0" x2="1" y2="1">
-      <stop offset="0%" stop-color="#38bdf8"/><stop offset="55%" stop-color="#2563eb"/><stop offset="100%" stop-color="#4f46e5"/>
+      <stop offset="0%" stop-color="#0A6B4E"/><stop offset="100%" stop-color="#0A6B4E"/>
     </linearGradient></defs>
-    <circle cx="54" cy="54" r="${R}" fill="none" stroke="rgba(154,170,196,.14)" stroke-width="9"/>
+    <circle cx="54" cy="54" r="${R}" fill="none" stroke="var(--line)" stroke-width="9"/>
     <circle cx="54" cy="54" r="${R}" fill="none" stroke="url(#dring)" stroke-width="9" stroke-linecap="round"
       stroke-dasharray="${((pct / 100) * C).toFixed(1)} ${C.toFixed(1)}"/>
   </svg>`);
